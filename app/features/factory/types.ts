@@ -1,0 +1,47 @@
+export type FactoryMode = "episode-splice" | "episode-narration" | "external-hook";
+
+export type QualityStatus =
+  | "可以直接生成"
+  | "建议优化后生成"
+  | "停滑能力弱"
+  | "情绪强但信息不足"
+  | "信息清楚但缺少刺激"
+  | "音画不同步"
+  | "悬念锚定缺失"
+  | "过度剧透"
+  | "高点击低转化风险"
+  | "货不对板，禁止批量生成";
+
+export type Draft = {
+  id: string;
+  title: string;
+  mode: FactoryMode;
+  drama: string;
+  hook: string;
+  episodeRange: string;
+  transition: string;
+  language: string;
+  duration: string;
+  ratio: "9:16" | "16:9" | "1:1";
+  qualityStatus: QualityStatus;
+  updatedAt: string;
+  autoSaved: boolean;
+  thumbnailTone: "rose" | "blue" | "violet" | "amber" | "mint";
+  progress: number;
+};
+
+export type FactoryWorkspaceProps = {
+  initialMode?: FactoryMode;
+  editingDraft?: Draft | null;
+  onDraftAutoSave?: (draft: Draft) => void;
+  onOpenDrafts?: () => void;
+  onNotify?: (message: string) => void;
+};
+
+export type FactoryModeDefinition = {
+  id: FactoryMode;
+  name: string;
+  description: string;
+  icon: string;
+  steps: string[];
+};

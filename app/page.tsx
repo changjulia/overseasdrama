@@ -1,60 +1,145 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
+import InspirationWorkspace from "./features/inspiration";
+import DramaLibraryWorkspace from "./features/library";
+import {
+  FactoryWorkspace,
+  initialDrafts,
+  type Draft,
+  type FactoryMode,
+} from "./features/factory";
+import {
+  MyCreations,
+  favoriteMocks,
+  type Favorite,
+} from "./features/creations";
 
-type Nav = "inspire" | "library" | "factory" | "creations";
-type Draft = {id:number;title:string;drama:string;lang:string;format:string;color:string;updated:string};
-type Material = { id:number; title:string; theme:string; structure:string; lang:string; source:string; views:number; spend:number; date:string; color:string; hook:string };
+type Workspace = "inspiration" | "library" | "factory" | "creations";
 
-const materials: Material[] = [
-  {id:1,title:"继承人当众摘下面具",theme:"身份反转",structure:"先果后因",lang:"英语",source:"外部",views:28400000,spend:84200,date:"08-12 10:24",color:"rose",hook:"她不是服务生，而是这家酒店真正的主人"},
-  {id:2,title:"婚礼现场的新娘逃跑",theme:"情感背叛",structure:"冲突前置",lang:"英语",source:"内部",views:19200000,spend:61800,date:"08-12 09:18",color:"blue",hook:"誓言还没说完，她看见了台下的那个人"},
-  {id:3,title:"狼人首领认出禁忌新娘",theme:"狼人奇幻",structure:"悬念递进",lang:"德语",source:"外部",views:14600000,spend:42900,date:"08-11 22:46",color:"violet",hook:"全族都要处决她，只有他闻出了真相"},
-  {id:4,title:"被赶出家门后红裙归来",theme:"女性复仇",structure:"倒叙钩子",lang:"葡萄牙语",source:"内部",views:11800000,spend:38600,date:"08-11 19:32",color:"amber",hook:"三年前他们夺走一切，今晚她来收账"},
-  {id:5,title:"总裁发现孩子叫自己爸爸",theme:"甜宠萌宝",structure:"误会揭晓",lang:"西班牙语",source:"外部",views:9700000,spend:31100,date:"08-11 16:08",color:"mint",hook:"一次偶遇，让五年前的秘密浮出水面"},
-  {id:6,title:"替嫁女孩掀开豪门秘密",theme:"豪门契约",structure:"连续反转",lang:"英语",source:"内部",views:8600000,spend:27400,date:"08-10 21:15",color:"ink",hook:"她以为嫁错了人，却走进一场精心布局"},
+const navItems: Array<{
+  id: Workspace;
+  icon: string;
+  label: string;
+  count?: string;
+}> = [
+  { id: "inspiration", icon: "✦", label: "灵感大屏", count: "128" },
+  { id: "library", icon: "▣", label: "剧库", count: "36" },
+  { id: "factory", icon: "⌁", label: "内容工厂" },
+  { id: "creations", icon: "♡", label: "我的创作" },
 ];
 
-const dramas = [
-  {title:"Goodbye, My Billionaire Husband",cn:"再见，我的亿万富翁丈夫",genre:"都市情感",episodes:82,lang:"英语",status:"投放中",assets:48,color:"rose",progress:100},
-  {title:"The Alpha's Forbidden Bride",cn:"狼王的禁忌新娘",genre:"狼人奇幻",episodes:76,lang:"英语 / 德语",status:"素材测试",assets:32,color:"violet",progress:86},
-  {title:"Revenge Wears Red",cn:"复仇穿红裙",genre:"女性复仇",episodes:68,lang:"葡萄牙语",status:"本地化",assets:16,color:"amber",progress:72},
-  {title:"Contracted to the CEO",cn:"契约总裁",genre:"豪门甜宠",episodes:91,lang:"英语",status:"内容解析",assets:12,color:"blue",progress:48},
-  {title:"Mommy, He Is My Daddy",cn:"妈咪，他是我爸爸",genre:"甜宠萌宝",episodes:64,lang:"西班牙语",status:"待生产",assets:0,color:"mint",progress:24},
-  {title:"The Heiress Returns",cn:"真千金归来",genre:"身份反转",episodes:72,lang:"英语",status:"已入库",assets:8,color:"ink",progress:100},
-];
-
-const Icon=({children}:{children:React.ReactNode})=><i className="nav-icon">{children}</i>;
-const fmt=(n:number)=>n>=10000000?`${(n/10000000).toFixed(1)}千万`:`${(n/10000).toFixed(0)}万`;
-
-function Header({eyebrow,title,desc,action,onAction}:{eyebrow:string;title:string;desc:string;action:string;onAction:()=>void}){
-  return <header className="page-head"><div><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{desc}</p></div><div className="head-actions"><button className="round" aria-label="搜索">⌕</button><button className="round alert" aria-label="通知">♢</button><button className="primary" onClick={onAction}>＋ {action}</button></div></header>
+function resolveFactoryMode(mode: string): FactoryMode {
+  if (mode.includes("解说")) return "episode-narration";
+  if (mode.includes("外搭")) return "external-hook";
+  return "episode-splice";
 }
 
-function Inspiration({toast}:{toast:(s:string)=>void}){
-  const [tab,setTab]=useState<"feed"|"analysis">("feed"),[view,setView]=useState<"grid"|"table">("grid");
-  const [lang,setLang]=useState("全部语种"),[theme,setTheme]=useState("全部主题"),[structure,setStructure]=useState("全部结构"),[sort,setSort]=useState("曝光量");
-  const [selected,setSelected]=useState(materials[0]);
-  const filtered=useMemo(()=>materials.filter(m=>(lang==="全部语种"||m.lang===lang)&&(theme==="全部主题"||m.theme===theme)&&(structure==="全部结构"||m.structure===structure)).sort((a,b)=>sort==="消耗量"?b.spend-a.spend:sort==="抓取时间"?b.date.localeCompare(a.date):b.views-a.views),[lang,theme,structure,sort]);
-  return <><Header eyebrow="DISCOVERY CENTER" title="灵感大屏" desc="捕捉正在跑量的故事与结构，把市场信号变成可复用的内容方法。" action="添加监测源" onAction={()=>toast("监测源配置已打开")}/>
-  <div className="top-tabs"><button className={tab==="feed"?"active":""} onClick={()=>setTab("feed")}><b>01</b> 跑量素材</button><button className={tab==="analysis"?"active":""} onClick={()=>setTab("analysis")}><b>02</b> 结构拆解</button></div>
-  {tab==="feed"?<>
-    <section className="signal-strip"><div><span>今日新抓取</span><strong>1,284</strong><small>较昨日 +18.6%</small></div><div><span>高潜素材</span><strong>86</strong><small>曝光增速 &gt; 35%</small></div><div><span>覆盖语种</span><strong>12</strong><small>英语素材占 46%</small></div><div className="trend"><span>近 7 日素材热度</span><div className="mini-bars">{[28,42,35,58,48,72,88,62,91,78,100,84].map((n,i)=><i key={i} style={{height:n+"%"}} />)}</div></div></section>
-    <div className="toolbar"><select value={lang} onChange={e=>setLang(e.target.value)}><option>全部语种</option><option>英语</option><option>德语</option><option>葡萄牙语</option><option>西班牙语</option></select><select value={theme} onChange={e=>setTheme(e.target.value)}><option>全部主题</option>{[...new Set(materials.map(x=>x.theme))].map(x=><option key={x}>{x}</option>)}</select><select value={structure} onChange={e=>setStructure(e.target.value)}><option>全部结构</option>{[...new Set(materials.map(x=>x.structure))].map(x=><option key={x}>{x}</option>)}</select><span className="grow"/><label>排序 <select value={sort} onChange={e=>setSort(e.target.value)}><option>曝光量</option><option>消耗量</option><option>抓取时间</option></select></label><div className="view-switch"><button className={view==="grid"?"active":""} onClick={()=>setView("grid")}>▦</button><button className={view==="table"?"active":""} onClick={()=>setView("table")}>☷</button></div></div>
-    {view==="grid"?<div className="material-grid">{filtered.map((m,i)=><article className="material" key={m.id} onClick={()=>{setSelected(m);setTab("analysis")}}><div className={`video ${m.color}`}><span className="rank">0{i+1}</span><span className="source">{m.source}素材</span><button aria-label="播放">▶</button><em>00:{22+i*3}</em></div><div className="material-body"><div className="tags"><span>{m.lang}</span><span>{m.theme}</span><span>{m.structure}</span></div><h3>{m.title}</h3><p>{m.hook}</p><dl><div><dt>曝光</dt><dd>{fmt(m.views)}</dd></div><div><dt>消耗</dt><dd>${(m.spend/1000).toFixed(1)}K</dd></div><div><dt>抓取</dt><dd>{m.date}</dd></div></dl></div></article>)}</div>:<div className="data-table"><div className="data-row data-head"><span>素材</span><span>语种 / 主题</span><span>叙事结构</span><span>曝光量</span><span>消耗量</span><span>抓取时间</span></div>{filtered.map(m=><button className="data-row" key={m.id} onClick={()=>{setSelected(m);setTab("analysis")}}><span><i className={`tiny ${m.color}`}>▶</i><b>{m.title}</b></span><span>{m.lang} · {m.theme}</span><span>{m.structure}</span><span><strong>{fmt(m.views)}</strong></span><span>${m.spend.toLocaleString()}</span><span>{m.date}</span></button>)}</div>}
-  </>:<Analysis item={selected} setItem={setSelected}/>}</>
+export default function Home() {
+  const [workspace, setWorkspace] = useState<Workspace>("inspiration");
+  const [factoryMode, setFactoryMode] = useState<FactoryMode>("episode-splice");
+  const [editingDraft, setEditingDraft] = useState<Draft | null>(null);
+  const [drafts, setDrafts] = useState<Draft[]>(initialDrafts);
+  const [favorites, setFavorites] = useState<Favorite[]>(favoriteMocks);
+  const [toast, setToast] = useState("");
+
+  const notify = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2400);
+  };
+
+  const openFactory = (mode: FactoryMode, draft: Draft | null = null) => {
+    setFactoryMode(mode);
+    setEditingDraft(draft);
+    setWorkspace("factory");
+  };
+
+  const saveDraft = (draft: Draft) => {
+    setDrafts((current) => [draft, ...current.filter((item) => item.id !== draft.id)]);
+    notify("视频已生成，并自动保存至「我的草稿」");
+  };
+
+  const reuseDraft = (draft: Draft) => {
+    const copy = {
+      ...draft,
+      id: `${draft.id}-copy-${Date.now()}`,
+      title: `${draft.title} · 复用版`,
+      updatedAt: "刚刚",
+      autoSaved: true,
+      progress: 0,
+    };
+    setDrafts((current) => [copy, ...current]);
+    openFactory(copy.mode, copy);
+    notify("已复制为新草稿，可继续编辑");
+  };
+
+  return (
+    <div className="shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div>L</div>
+          <span><b>Lumina</b><small>STORY INTELLIGENCE</small></span>
+        </div>
+        <nav>
+          <p>内容工作台</p>
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              className={workspace === item.id ? "active" : ""}
+              onClick={() => setWorkspace(item.id)}
+            >
+              <i className="nav-icon">{item.icon}</i>
+              <span>{item.label}</span>
+              {(item.count || item.id === "creations") && (
+                <em>{item.id === "creations" ? drafts.length : item.count}</em>
+              )}
+            </button>
+          ))}
+        </nav>
+        <div className="side-bottom">
+          <button onClick={() => notify("数据源管理即将开放")}><i className="nav-icon">◈</i><span>数据源管理</span></button>
+          <button onClick={() => notify("团队与权限即将开放")}><i className="nav-icon">⚙</i><span>团队与权限</span></button>
+          <div className="sync"><span><i /> 数据同步正常</span><small>最后更新 2 分钟前</small></div>
+          <div className="profile"><div>JC</div><span><b>Julia Chen</b><small>Content Lead</small></span><button>⌄</button></div>
+        </div>
+      </aside>
+
+      <main className="content">
+        {workspace === "inspiration" && (
+          <InspirationWorkspace
+            onOpenFactory={() => openFactory("external-hook")}
+            onFavoriteChange={(_, favorite) => notify(favorite ? "已收藏素材" : "已取消收藏")}
+          />
+        )}
+        {workspace === "library" && (
+          <DramaLibraryWorkspace
+            onImportDrama={() => notify("已打开短剧导入任务")}
+            onEnterFactory={({ mode }) => openFactory(resolveFactoryMode(mode))}
+          />
+        )}
+        {workspace === "factory" && (
+          <FactoryWorkspace
+            key={`${factoryMode}-${editingDraft?.id ?? "new"}`}
+            initialMode={factoryMode}
+            editingDraft={editingDraft}
+            onDraftAutoSave={saveDraft}
+            onOpenDrafts={() => setWorkspace("creations")}
+            onNotify={notify}
+          />
+        )}
+        {workspace === "creations" && (
+          <MyCreations
+            drafts={drafts}
+            favorites={favorites}
+            onContinueEdit={(draft) => openFactory(draft.mode, draft)}
+            onReuseDraft={reuseDraft}
+            onUseFavorite={(_, mode) => openFactory(mode)}
+            onRemoveFavorite={(id) => setFavorites((current) => current.filter((item) => item.id !== id))}
+            onNotify={notify}
+          />
+        )}
+      </main>
+      {toast && <div className="toast"><i>✓</i>{toast}</div>}
+    </div>
+  );
 }
-
-function Analysis({item,setItem}:{item:Material;setItem:(m:Material)=>void}){
-  return <div className="analysis-layout"><aside className="analysis-list"><div className="panel-title"><div><h2>关键素材</h2><p>按结构价值排序</p></div><span>{materials.length}</span></div>{materials.map(m=><button className={item.id===m.id?"active":""} key={m.id} onClick={()=>setItem(m)}><i className={`tiny ${m.color}`}>▶</i><span><b>{m.title}</b><small>{m.theme} · {fmt(m.views)}曝光</small></span><em>→</em></button>)}</aside><main className="analysis-main"><section className="analysis-hero"><div className={`portrait ${item.color}`}><span>KEY CREATIVE</span><button>▶</button><em>00:28</em></div><div><div className="tags"><span>{item.lang}</span><span>{item.theme}</span><span>{item.structure}</span></div><h2>{item.title}</h2><p>“{item.hook}”</p><div className="big-metrics"><span><small>总曝光</small><b>{fmt(item.views)}</b></span><span><small>消耗</small><b>${(item.spend/1000).toFixed(1)}K</b></span><span><small>3 秒留存</small><b>72.8%</b></span></div></div></section><section className="analysis-cards"><article><div className="section-label">01 · 内容主题</div><h3>身份压制 → 证据出现 → 权力关系瞬间倒置</h3><p>观众先代入女主受辱处境，再通过“真实身份”获得情绪补偿。核心爽点清晰，跨文化理解成本低。</p><div className="keyword-cloud"><span>公开羞辱</span><span>隐藏身份</span><span>阶级反转</span><span>女性成长</span></div></article><article><div className="section-label">02 · 视频结构</div><div className="timeline"><span><i style={{width:"18%"}}/><b>0–3s</b><small>冲突钩子</small></span><span><i style={{width:"31%"}}/><b>3–11s</b><small>持续压迫</small></span><span><i style={{width:"29%"}}/><b>11–21s</b><small>证据揭晓</small></span><span><i style={{width:"22%"}}/><b>21–28s</b><small>反转卡点</small></span></div><p className="insight">✦ 高贡献结构：第 2.4 秒出现第一次言语冲突，第 18 秒完成身份揭晓，反转后 1.8 秒切断形成追剧欲。</p></article></section><section className="shot-panel"><div className="panel-title"><div><h2>03 · 视频分镜脚本分析</h2><p>镜头、对白、情绪与剪辑意图逐帧对齐</p></div><button>导出脚本 ↗</button></div><div className="shots">{[["00:00–00:03","近景 · 手持推进","“你连站在这里的资格都没有。”","冲突前置，人物脸部占画面 62%"],["00:03–00:09","双人中景 · 正反打","女主沉默，旁人持续嘲讽","用停顿积累情绪势能"],["00:09–00:18","特写 · 证件入画","“把董事名单拿给她看。”","关键道具作为身份反转证据"],["00:18–00:28","全景 → 女主特写","全场安静，经理低头致歉","权力关系翻转后卡断，承接正片"]].map((s,i)=><div className="shot" key={s[0]}><i>0{i+1}</i><span className={`shot-thumb ${item.color}`}>▶</span><span><b>{s[0]}</b><small>{s[1]}</small></span><span><b>{s[2]}</b><small>{s[3]}</small></span><em>{[94,88,96,91][i]}</em></div>)}</div></section></main></div>
-}
-
-function Library({toast}:{toast:(s:string)=>void}){const [detail,setDetail]=useState<typeof dramas[0]|null>(null); if(detail)return <><button className="back" onClick={()=>setDetail(null)}>← 返回剧库</button><section className="drama-detail"><div className={`detail-cover ${detail.color}`}><small>LUMINA ORIGINAL</small><strong>{detail.title.split(" ").slice(0,2).join(" ")}</strong><span>{detail.genre}</span></div><div className="detail-copy"><span className="eyebrow">DRAMA PROFILE</span><h1>{detail.title}</h1><h3>{detail.cn}</h3><p>她以为离开是故事的终点，却不知道真正的身份与复仇才刚刚开始。每一次选择，都在把她推向无法回头的真相。</p><div className="detail-stats"><span><small>剧集</small><b>{detail.episodes} 集</b></span><span><small>语种</small><b>{detail.lang}</b></span><span><small>素材资产</small><b>{detail.assets} 条</b></span><span><small>状态</small><b>{detail.status}</b></span></div><button className="primary" onClick={()=>toast("已进入该剧内容工作台")}>进入内容工作台 →</button></div></section><section className="episode-panel"><div className="panel-title"><div><h2>剧集列表</h2><p>共 {detail.episodes} 集 · 已解析前 24 集</p></div><button>批量管理</button></div><div className="episodes">{Array.from({length:12},(_,i)=><button key={i}><span className={`episode-thumb ${detail.color}`}>▶<em>{18+i}:24</em></span><b>第 {String(i+1).padStart(2,"0")} 集</b><small>{i<8?"已解析 · 6 个高能点":"等待解析"}</small></button>)}</div></section></>;return <><Header eyebrow="DRAMA LIBRARY" title="剧库" desc="统一管理已入库短剧、剧集信息与内容资产状态。" action="导入短剧" onAction={()=>toast("导入短剧窗口已打开")}/><div className="library-toolbar"><div className="search">⌕ <input placeholder="搜索剧名、题材或语种…"/></div><button className="active">全部 <b>36</b></button><button>投放中 <b>8</b></button><button>生产中 <b>12</b></button><span>36 部短剧 · 2,842 集</span></div><div className="drama-grid">{dramas.map(d=><article key={d.title} onClick={()=>setDetail(d)}><div className={`drama-cover ${d.color}`}><small>LUMINA · {d.genre}</small><strong>{d.title.split(" ").slice(0,3).join(" ")}</strong><em>{d.episodes} EPISODES</em><button aria-label="打开">→</button></div><div className="drama-body"><div><h3>{d.title}</h3><span className="status">{d.status}</span></div><p>{d.cn} · {d.lang}</p><div className="progress"><i><em style={{width:d.progress+"%"}}/></i><small>{d.assets} 条素材</small></div></div></article>)}</div></>}
-
-function Factory({toast,onDraft}:{toast:(s:string)=>void;onDraft:(d:Draft)=>void}){const [tab,setTab]=useState<"splice"|"feed">("splice");return <><Header eyebrow="CONTENT ENGINE" title="内容工厂" desc="通过剧集拼接与信息流广告，完成可规模化的内容生产。" action="新建生产任务" onAction={()=>toast("新的生产任务已创建")}/><div className="factory-tabs two"><button className={tab==="splice"?"active":""} onClick={()=>setTab("splice")}><i>⌁</i><span><b>剧集拼接</b><small>按叙事逻辑组合连续片段</small></span><em>18</em></button><button className={tab==="feed"?"active":""} onClick={()=>setTab("feed")}><i>↗</i><span><b>信息流</b><small>批量生成投放广告版本</small></span><em>32</em></button></div>{tab==="splice"?<Splice toast={toast}/>:<Feed toast={toast} onDraft={onDraft}/>}</>}
-function Splice({toast}:{toast:(s:string)=>void}){return <div className="splice-layout"><section className="clip-pool"><div className="panel-title"><div><h2>片段池</h2><p>拖入右侧轨道完成叙事拼接</p></div><span>12 个可用</span></div>{materials.slice(0,4).map((m,i)=><button key={m.id}><i className={`tiny ${m.color}`}>▶</i><span><b>{m.title}</b><small>00:{12+i*4} · 情绪峰值 {[92,89,87,85][i]}</small></span><em>＋</em></button>)}</section><section className="editor"><div className="editor-screen"><div><span>9:16 PREVIEW</span><button>▶</button><small>00:00 / 00:32</small></div></div><div className="tracks"><div className="ruler"><span>00:00</span><span>00:08</span><span>00:16</span><span>00:24</span><span>00:32</span></div><div className="track"><b>画面</b><i className="c1">冲突钩子</i><i className="c2">身份证据</i><i className="c3">情绪反转</i></div><div className="track audio"><b>对白</b><i>你没有资格…</i><i>名单拿给她看</i><i>对不起，董事长</i></div></div><button className="primary export" onClick={()=>toast("拼接任务已提交生成")}>生成预览 →</button></section></div>}
-function Feed({toast,onDraft}:{toast:(s:string)=>void;onDraft:(d:Draft)=>void}){return <div className="feed-layout"><section className="feed-builder"><span className="eyebrow">CREATIVE BRIEF</span><h2>创建信息流素材</h2><p>选择内容与策略，批量生成适配不同市场的广告版本。生成结果将自动保存至「我的草稿」。</p><label>选择短剧<select><option>Goodbye, My Billionaire Husband</option><option>The Alpha's Forbidden Bride</option></select></label><label>素材方向<div className="option-grid"><button className="active">身份反转</button><button>冲突前置</button><button>高甜关系</button><button>复仇爽点</button></div></label><div className="two-col"><label>输出时长<select><option>30 秒</option><option>15 秒</option><option>60 秒</option></select></label><label>目标语种<select><option>英语</option><option>葡萄牙语</option><option>德语</option></select></label></div><button className="primary full" onClick={()=>{onDraft({id:Date.now(),title:"身份反转_新版本",drama:"Goodbye, My Billionaire Husband",lang:"英语",format:"30s · 9:16",color:"rose",updated:"刚刚"});toast("已生成素材并自动保存至我的草稿")}}>✦ 生成 12 个素材版本</button></section><section className="queue-panel"><div className="panel-title"><div><h2>生产队列</h2><p>32 个素材正在处理</p></div><button>查看全部</button></div>{["身份揭露_V12","婚礼冲突_V08","复仇归来_V03","禁忌关系_V16"].map((n,i)=><article key={n}><i className={`queue-preview ${["rose","blue","amber","violet"][i]}`}>▶</i><span><b>{n}</b><small>{["英语","英语","葡萄牙语","德语"][i]} · 30s · 9:16</small></span><div><b>{[92,78,64,41][i]}%</b><i><em style={{width:[92,78,64,41][i]+"%"}}/></i></div><em>{i===0?"待审核":"生成中"}</em></article>)}</section></div>}
-
-function MyCreations({toast,drafts,onAddFavorite}:{toast:(s:string)=>void;drafts:Draft[];onAddFavorite:()=>void}){const [tab,setTab]=useState<"favorites"|"drafts">("favorites");const favoriteItems=materials.filter(m=>m.source==="外部").slice(0,2);return <><Header eyebrow="MY CREATIONS" title="我的创作" desc="集中管理收藏的外部信息流开头，以及内容工厂自动保存的视频草稿。" action="新建创作" onAction={()=>toast("已创建空白创作草稿")}/><div className="top-tabs creation-tabs"><button className={tab==="favorites"?"active":""} onClick={()=>setTab("favorites")}><b>01</b> 我的收藏 <em>{favoriteItems.length}</em></button><button className={tab==="drafts"?"active":""} onClick={()=>setTab("drafts")}><b>02</b> 我的草稿 <em>{drafts.length}</em></button></div>{tab==="favorites"?<><div className="collection-head"><div><h2>收藏的信息流开头</h2><p>保存值得复用的外部钩子，随时带入内容工厂继续创作。</p></div><button onClick={onAddFavorite}>＋ 从灵感大屏收藏</button></div><div className="creation-grid">{favoriteItems.map((m,i)=><article key={m.id}><div className={`creation-video ${m.color}`}><span>外部信息流</span><button>▶</button><em>00:0{3+i}</em></div><div><div className="tags"><span>{m.lang}</span><span>{m.theme}</span></div><h3>{m.title}</h3><p>{m.hook}</p><footer><small>收藏于 {i?"昨天":"今天 10:32"}</small><button onClick={()=>toast("已基于该开头创建新草稿")}>复用创作 →</button></footer></div></article>)}</div></>:<><div className="collection-head"><div><h2>自动保存的创作草稿</h2><p>内容工厂每次生成的视频都会出现在这里，可继续编辑或快速复用。</p></div><span>自动保存已开启 · 刚刚同步</span></div><div className="draft-list">{drafts.map((d,i)=><article key={d.id}><i className={`draft-preview ${d.color}`}>▶<em>00:{24+i*2}</em></i><span><b>{d.title}</b><small>{d.drama}</small></span><span><small>规格</small><b>{d.format}</b></span><span><small>语种</small><b>{d.lang}</b></span><span><small>最后编辑</small><b>{d.updated}</b></span><div><button onClick={()=>toast("已打开草稿编辑器")}>继续编辑</button><button onClick={()=>toast("已复制为新草稿")}>复用</button></div></article>)}</div></>}</>}
-
-export default function Home(){const [nav,setNav]=useState<Nav>("inspire"),[toast,setToast]=useState("");const [drafts,setDrafts]=useState<Draft[]>([{id:1,title:"身份揭露_V12",drama:"Goodbye, My Billionaire Husband",lang:"英语",format:"30s · 9:16",color:"rose",updated:"12 分钟前"},{id:2,title:"狼人禁恋_V04",drama:"The Alpha's Forbidden Bride",lang:"德语",format:"25s · 9:16",color:"violet",updated:"昨天 18:42"},{id:3,title:"红裙复仇_V08",drama:"Revenge Wears Red",lang:"葡萄牙语",format:"30s · 9:16",color:"amber",updated:"08-10 21:16"}]);const notify=(s:string)=>{setToast(s);setTimeout(()=>setToast(""),2200)};return <div className="shell"><aside className="sidebar"><div className="brand"><div>L</div><span><b>Lumina</b><small>STORY INTELLIGENCE</small></span></div><nav><p>内容工作台</p><button className={nav==="inspire"?"active":""} onClick={()=>setNav("inspire")}><Icon>✦</Icon><span>灵感大屏</span><em>128</em></button><button className={nav==="library"?"active":""} onClick={()=>setNav("library")}><Icon>▣</Icon><span>剧库</span><em>36</em></button><button className={nav==="factory"?"active":""} onClick={()=>setNav("factory")}><Icon>⌁</Icon><span>内容工厂</span><em>18</em></button><button className={nav==="creations"?"active":""} onClick={()=>setNav("creations")}><Icon>♡</Icon><span>我的创作</span><em>{drafts.length}</em></button></nav><div className="side-bottom"><button><Icon>◈</Icon><span>数据源管理</span></button><button><Icon>⚙</Icon><span>团队与权限</span></button><div className="sync"><span><i/> 数据同步正常</span><small>最后更新 2 分钟前</small></div><div className="profile"><div>JC</div><span><b>Julia Chen</b><small>Content Lead</small></span><button>⌄</button></div></div></aside><main className="content">{nav==="inspire"?<Inspiration toast={notify}/>:nav==="library"?<Library toast={notify}/>:nav==="factory"?<Factory toast={notify} onDraft={d=>setDrafts(x=>[d,...x])}/>:<MyCreations toast={notify} drafts={drafts} onAddFavorite={()=>{setNav("inspire");notify("请在外部信息流素材上点击收藏")}}/>}</main>{toast&&<div className="toast"><i>✓</i>{toast}</div>}</div>}
