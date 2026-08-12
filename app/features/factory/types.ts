@@ -28,6 +28,8 @@ export type Draft = {
   autoSaved: boolean;
   thumbnailTone: "rose" | "blue" | "violet" | "amber" | "mint";
   progress: number;
+  productionStatus?: "自动保存" | "编辑中" | "生成中" | "待质检" | "建议优化" | "通过" | "禁止批量生成" | "待审核" | "已导出";
+  version?: number;
 };
 
 export type FactoryWorkspaceProps = {

@@ -1,0 +1,24 @@
+export type OperationsSection = "sources" | "tasks" | "team";
+
+export type SourceRecord = {
+  id: string;
+  name: string;
+  kind: "广告情报" | "内部投放" | "正片资产";
+  platform: string;
+  markets: string;
+  frequency: string;
+  status: "运行中" | "已暂停" | "待配置";
+  lastSync: string;
+  volume: number;
+};
+
+export type PipelineTask = {
+  id: string;
+  title: string;
+  category: "素材抓取" | "基础分析" | "深度分析" | "剧集解析" | "视频生成";
+  status: "处理中" | "排队中" | "已完成" | "需处理" | "失败";
+  progress: number;
+  owner: string;
+  createdAt: string;
+  cost: string;
+};

@@ -14,8 +14,10 @@ import {
   favoriteMocks,
   type Favorite,
 } from "./features/creations";
+import OperationsWorkspace from "./features/operations";
+import { usePersistentState } from "./hooks/usePersistentState";
 
-type Workspace = "inspiration" | "library" | "factory" | "creations";
+type Workspace = "inspiration" | "library" | "factory" | "creations" | "sources" | "tasks" | "team";
 
 const navItems: Array<{
   id: Workspace;
@@ -27,6 +29,9 @@ const navItems: Array<{
   { id: "library", icon: "▣", label: "剧库", count: "36" },
   { id: "factory", icon: "⌁", label: "内容工厂" },
   { id: "creations", icon: "♡", label: "我的创作" },
+  { id: "sources", icon: "◈", label: "数据源管理", count: "4" },
+  { id: "tasks", icon: "◫", label: "任务中心", count: "8" },
+  { id: "team", icon: "⚙", label: "团队与权限" },
 ];
 
 function resolveFactoryMode(mode: string): FactoryMode {
@@ -39,8 +44,8 @@ export default function Home() {
   const [workspace, setWorkspace] = useState<Workspace>("inspiration");
   const [factoryMode, setFactoryMode] = useState<FactoryMode>("episode-splice");
   const [editingDraft, setEditingDraft] = useState<Draft | null>(null);
-  const [drafts, setDrafts] = useState<Draft[]>(initialDrafts);
-  const [favorites, setFavorites] = useState<Favorite[]>(favoriteMocks);
+  const [drafts, setDrafts] = usePersistentState<Draft[]>("lumina:drafts", initialDrafts);
+  const [favorites, setFavorites] = usePersistentState<Favorite[]>("lumina:favorites", favoriteMocks);
   const [toast, setToast] = useState("");
 
   const notify = (message: string) => {
@@ -82,9 +87,10 @@ export default function Home() {
         </div>
         <nav>
           <p>内容工作台</p>
-          {navItems.map((item) => (
+          {navItems.map((item, index) => (
+            <div key={item.id} className="nav-entry">
+            {index === 4 && <p className="nav-group">运营与系统</p>}
             <button
-              key={item.id}
               className={workspace === item.id ? "active" : ""}
               onClick={() => setWorkspace(item.id)}
             >
@@ -94,11 +100,10 @@ export default function Home() {
                 <em>{item.id === "creations" ? drafts.length : item.count}</em>
               )}
             </button>
+            </div>
           ))}
         </nav>
         <div className="side-bottom">
-          <button onClick={() => notify("数据源管理即将开放")}><i className="nav-icon">◈</i><span>数据源管理</span></button>
-          <button onClick={() => notify("团队与权限即将开放")}><i className="nav-icon">⚙</i><span>团队与权限</span></button>
           <div className="sync"><span><i /> 数据同步正常</span><small>最后更新 2 分钟前</small></div>
           <div className="profile"><div>JC</div><span><b>Julia Chen</b><small>Content Lead</small></span><button>⌄</button></div>
         </div>
@@ -108,7 +113,11 @@ export default function Home() {
         {workspace === "inspiration" && (
           <InspirationWorkspace
             onOpenFactory={() => openFactory("external-hook")}
-            onFavoriteChange={(_, favorite) => notify(favorite ? "已收藏素材" : "已取消收藏")}
+            onFavoriteChange={(materialId, favorite) => {
+              if (favorite) setFavorites((current) => current.some(item=>item.id===materialId) ? current : [{id:materialId,title:"来自灵感大屏的收藏素材",kind:"广告实例",hook:"已保存完整钩子分析，可进入内容工厂复用。",language:"英语",theme:"市场跑量",source:"灵感大屏",savedAt:"刚刚",tone:"blue"},...current]);
+              else setFavorites((current) => current.filter(item=>item.id!==materialId));
+              notify(favorite ? "已收藏素材并同步至「我的创作」" : "已取消收藏");
+            }}
           />
         )}
         {workspace === "library" && (
@@ -138,6 +147,9 @@ export default function Home() {
             onNotify={notify}
           />
         )}
+        {workspace === "sources" && <OperationsWorkspace section="sources" onNotify={notify}/>}
+        {workspace === "tasks" && <OperationsWorkspace section="tasks" onNotify={notify}/>}
+        {workspace === "team" && <OperationsWorkspace section="team" onNotify={notify}/>}
       </main>
       {toast && <div className="toast"><i>✓</i>{toast}</div>}
     </div>
