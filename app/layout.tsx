@@ -19,12 +19,12 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol = host.includes("localhost") ? "http" : "https";
   const imageUrl = `${protocol}://${host}/og.png`;
   return {
-    title: "Lumina Growth OS — 海外短剧 AI 增长平台",
-    description: "从选片、素材生产到分发投流，驱动海外短剧增长的 AI 操作系统。",
+    title: "Lumina Story Intelligence — 海外短剧内容平台",
+    description: "从跑量灵感、剧库管理到内容生产，打造海外短剧的内容智能工作台。",
     icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
     openGraph: {
-      title: "Lumina Growth OS",
-      description: "海外短剧 AI 增长平台",
+      title: "Lumina Story Intelligence",
+      description: "海外短剧内容智能工作台",
       images: [{ url: imageUrl, width: 1200, height: 630 }],
     },
     twitter: { card: "summary_large_image", images: [imageUrl] },
