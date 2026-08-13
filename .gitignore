@@ -42,7 +42,11 @@ next-env.d.ts
 /outputs/
 /work/
 /tmp/
-/pb_data/
+# PocketBase business data is versioned as a sanitized seed plus media storage.
+/pb_data/data.db*
+/pb_data/auxiliary.db*
+/pb_data/backups/
+/pb_data/types.d.ts
 .pocketbase.*.log
 .analysis-worker.*.log
 .codex-preview.*.log
