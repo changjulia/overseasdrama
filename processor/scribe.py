@@ -10,8 +10,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import requests
-
 SCRIBE_URL = "https://api.elevenlabs.io/v1/speech-to-text"
 MODEL_ID = "scribe_v2"
 
@@ -69,6 +67,10 @@ def call_scribe(
     keyterms: list[str] | None = None,
     retries: int = 3,
 ) -> dict[str, Any]:
+    try:
+        import requests
+    except ImportError as exc:
+        raise RuntimeError("缺少 requests；请先安装 processor 转写依赖") from exc
     data: dict[str, str] = {
         "model_id": MODEL_ID,
         "diarize": "true",

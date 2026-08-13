@@ -21,4 +21,9 @@ export type PipelineTask = {
   owner: string;
   createdAt: string;
   cost: string;
+  backendId?: string;
+  stage?: "coarse" | "detail" | "precision";
+  episodeNumber?: number;
+  error?: string;
+  logs?: unknown;
 };

@@ -395,6 +395,68 @@
   font-size: 8px;
   margin: 3px 0 0;
 }
+
+/* Task Center is information-dense, but its text should remain comfortably readable. */
+.taskWorkspace .pageHeader span {
+  font-size: 10px;
+}
+.taskWorkspace .pageHeader p,
+.taskWorkspace .pageHeader button {
+  font-size: 13px;
+}
+.taskWorkspace .metric span,
+.taskWorkspace .metric small {
+  font-size: 11px;
+}
+.taskWorkspace .toolbar button,
+.taskWorkspace .search,
+.taskWorkspace .search input {
+  font-size: 13px;
+}
+.taskWorkspace .toolbar button,
+.taskWorkspace .search {
+  height: 38px;
+}
+.taskWorkspace .taskList > button {
+  min-height: 88px;
+  padding: 15px;
+}
+.taskWorkspace .taskList small,
+.taskWorkspace .taskList em,
+.taskWorkspace .taskDetail > small {
+  font-size: 11px;
+  line-height: 1.45;
+}
+.taskWorkspace .taskList b,
+.taskWorkspace .taskProgress > b {
+  font-size: 13px;
+}
+.taskWorkspace .taskProgress small {
+  font-size: 11px;
+}
+.taskWorkspace .taskDetail > h2 {
+  font-size: 20px;
+}
+.taskWorkspace .taskDetail > p {
+  font-size: 13px;
+  line-height: 1.65;
+}
+.taskWorkspace .pipeline b {
+  font-size: 12px;
+}
+.taskWorkspace .pipeline small {
+  font-size: 11px;
+}
+.taskWorkspace .taskFacts dt {
+  font-size: 11px;
+}
+.taskWorkspace .taskFacts dd {
+  font-size: 13px;
+}
+.taskWorkspace .taskDetail footer button {
+  height: 34px;
+  font-size: 12px;
+}
 .danger {
   color: #c14a58 !important;
 }

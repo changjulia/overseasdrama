@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import type { OperationsSection, PipelineTask, SourceRecord } from "./types";
 import styles from "./operations.module.css";
 
@@ -51,58 +51,7 @@ const initialSources: SourceRecord[] = [
   },
 ];
 
-const initialTasks: PipelineTask[] = [
-  {
-    id: "TASK-0821",
-    title: "北美榜单新增素材抓取",
-    category: "素材抓取",
-    status: "处理中",
-    progress: 68,
-    owner: "系统",
-    createdAt: "今天 10:24",
-    cost: "运行 18m",
-  },
-  {
-    id: "TASK-0820",
-    title: "AD-240812-018 钩子深度分析",
-    category: "深度分析",
-    status: "排队中",
-    progress: 12,
-    owner: "Julia",
-    createdAt: "今天 10:18",
-    cost: "预计 $0.42",
-  },
-  {
-    id: "TASK-0819",
-    title: "The Alpha's Forbidden Bride · 前 18 集",
-    category: "剧集解析",
-    status: "需处理",
-    progress: 72,
-    owner: "Mia",
-    createdAt: "今天 09:46",
-    cost: "人物匹配待复核",
-  },
-  {
-    id: "TASK-0818",
-    title: "身份反转 V12 · 12 个多语种版本",
-    category: "视频生成",
-    status: "已完成",
-    progress: 100,
-    owner: "Leo",
-    createdAt: "昨天 18:42",
-    cost: "$3.18",
-  },
-  {
-    id: "TASK-0817",
-    title: "葡语素材批次 OCR",
-    category: "基础分析",
-    status: "失败",
-    progress: 43,
-    owner: "系统",
-    createdAt: "昨天 16:08",
-    cost: "字幕轨损坏",
-  },
-];
+export const initialTasks: PipelineTask[] = [];
 
 const members = [
   {
@@ -142,6 +91,8 @@ const members = [
 export type OperationsWorkspaceProps = {
   section: OperationsSection;
   onNotify?: (message: string) => void;
+  tasks?: PipelineTask[];
+  onTasksChange?: Dispatch<SetStateAction<PipelineTask[]>>;
 };
 
 type OperationDetail = {
@@ -153,17 +104,25 @@ type OperationDetail = {
 export function OperationsWorkspace({
   section,
   onNotify,
+  tasks: sharedTasks,
+  onTasksChange,
 }: OperationsWorkspaceProps) {
   const [sources, setSources] = useState(initialSources);
-  const [tasks, setTasks] = useState(initialTasks);
+  const [localTasks, setLocalTasks] = useState(initialTasks);
+  const tasks = sharedTasks ?? localTasks;
+  const setTasks = onTasksChange ?? setLocalTasks;
   const [sourceModal, setSourceModal] = useState(false);
   const [taskModal, setTaskModal] = useState(false);
   const [inviteModal, setInviteModal] = useState(false);
-  const [selectedTask, setSelectedTask] = useState(tasks[0]);
+  const [selectedTask, setSelectedTask] = useState<PipelineTask | undefined>(tasks[0]);
   const [taskFilter, setTaskFilter] = useState("全部任务");
   const [query, setQuery] = useState("");
   const [detail, setDetail] = useState<OperationDetail | null>(null);
   const notify = (message: string) => onNotify?.(message);
+  useEffect(() => {
+    if (!tasks.length) { setSelectedTask(undefined); return; }
+    setSelectedTask((current) => tasks.find((task) => task.id === current?.id) ?? tasks[0]);
+  }, [tasks]);
 
   if (section === "sources")
     return (
@@ -422,24 +381,27 @@ export function OperationsWorkspace({
     );
 
   if (section === "tasks") {
+    const processingCount = tasks.filter((task) => task.status === "处理中").length;
+    const queuedCount = tasks.filter((task) => task.status === "排队中").length;
+    const reviewCount = tasks.filter((task) => task.status === "需处理").length;
     const visible = tasks.filter(
       (task) =>
         (taskFilter === "全部任务" || task.status === taskFilter) &&
         `${task.title}${task.id}`.toLowerCase().includes(query.toLowerCase()),
     );
     return (
-      <section className={styles.workspace} aria-label="任务中心">
+      <section className={`${styles.workspace} ${styles.taskWorkspace}`} aria-label="任务中心">
         <PageHeader
-          eyebrow="PROCESSING PIPELINE"
+          eyebrow="处理流水线"
           title="任务中心"
           description="统一查看抓取、分析、剧集解析和视频生成任务的状态、成本与异常。"
-          action="＋ 新建处理任务"
-          onAction={() => setTaskModal(true)}
+          action="上传片源后自动创建"
+          onAction={() => notify("解析任务由剧库上传成功后自动创建，避免产生无片源空任务")}
         />
         <div className={styles.metricGrid}>
-          <Metric label="处理中" value="8" hint="并发 5 / 12" />
-          <Metric label="排队中" value="21" hint="预计 18 分钟" />
-          <Metric label="需要人工处理" value="6" hint="复核 SLA 4 小时" />
+          <Metric label="处理中" value={String(processingCount)} hint={`并发 ${processingCount} / 12`} />
+          <Metric label="排队中" value={String(queuedCount)} hint="预计 18 分钟" />
+          <Metric label="需要人工处理" value={String(reviewCount)} hint="复核 SLA 4 小时" />
           <Metric label="今日模型成本" value="$68.42" hint="预算使用 54%" />
         </div>
         <div className={styles.toolbar}>
@@ -467,14 +429,14 @@ export function OperationsWorkspace({
           <div className={styles.taskList}>
             {visible.map((task) => (
               <button
-                className={selectedTask.id === task.id ? styles.activeTask : ""}
+                className={selectedTask?.id === task.id ? styles.activeTask : ""}
                 key={task.id}
                 onClick={() => setSelectedTask(task)}
               >
                 <i className={styles.taskIcon}>◫</i>
                 <span>
                   <small>
-                    {task.id} · {task.category}
+                    任务 #{String(tasks.findIndex((item) => item.id === task.id) + 1).padStart(3, "0")} · {task.category}
                   </small>
                   <b>{task.title}</b>
                   <em>
@@ -493,7 +455,7 @@ export function OperationsWorkspace({
               </button>
             ))}
           </div>
-          <aside className={styles.taskDetail}>
+          {selectedTask ? <aside className={styles.taskDetail}>
             <small>{selectedTask.id} · EXECUTION TRACE</small>
             <h2>{selectedTask.title}</h2>
             <p>任务状态、处理证据和异常均会保留；失败节点可从当前阶段重试。</p>
@@ -563,6 +525,8 @@ export function OperationsWorkspace({
                 查看日志
               </button>
               <button
+                disabled={Boolean(selectedTask.backendId)}
+                title={selectedTask.backendId ? "真实任务重试由服务端 Worker 鉴权接口执行" : undefined}
                 onClick={() => {
                   setTasks((current) =>
                     current.map((t) =>
@@ -578,6 +542,8 @@ export function OperationsWorkspace({
               </button>
               <button
                 className={styles.danger}
+                disabled={Boolean(selectedTask.backendId)}
+                title={selectedTask.backendId ? "当前服务端未开放暂停接口" : undefined}
                 onClick={() => {
                   setTasks((current) =>
                     current.map((t) =>
@@ -590,7 +556,7 @@ export function OperationsWorkspace({
                 暂停任务
               </button>
             </footer>
-          </aside>
+          </aside> : <aside className={styles.taskDetail}><h2>暂无真实任务</h2><p>上传片源并创建解析任务后，这里会显示 PocketBase 队列的实时状态。</p></aside>}
         </div>
         {taskModal && (
           <Modal title="新建处理任务" onClose={() => setTaskModal(false)}>
@@ -634,36 +600,15 @@ export function OperationsWorkspace({
               </label>
             </div>
             <div className={styles.notice}>
-              提交后进入异步队列；此处以前端模拟任务状态，后端接入后将显示真实成本预估。
+              解析任务只会在剧库片源上传成功后由 PocketBase 自动创建；这里不再生成前端模拟任务。
             </div>
             <ModalActions
               onCancel={() => setTaskModal(false)}
               onConfirm={() => {
-                const task: PipelineTask = {
-                  id: `TASK-${Date.now().toString().slice(-4)}`,
-                  title:
-                    (
-                      document.getElementById(
-                        "new-task-title",
-                      ) as HTMLInputElement
-                    )?.value || "新建处理任务",
-                  category: ((
-                    document.getElementById(
-                      "new-task-category",
-                    ) as HTMLSelectElement
-                  )?.value || "基础分析") as PipelineTask["category"],
-                  status: "排队中",
-                  progress: 0,
-                  owner: "Julia",
-                  createdAt: "刚刚",
-                  cost: "等待预估",
-                };
-                setTasks((current) => [task, ...current]);
-                setSelectedTask(task);
                 setTaskModal(false);
-                notify("处理任务已创建并进入队列");
+                notify("请前往剧库上传真实片源，系统会自动创建解析任务");
               }}
-              confirm="创建任务"
+              confirm="前往剧库上传"
             />
           </Modal>
         )}
@@ -680,7 +625,7 @@ export function OperationsWorkspace({
   return (
     <section className={styles.workspace} aria-label="团队与权限">
       <PageHeader
-        eyebrow="WORKSPACE GOVERNANCE"
+        eyebrow="工作区治理"
         title="团队与权限"
         description="管理成员、角色、复核责任和高风险操作权限，所有关键修改保留审计记录。"
         action="＋ 邀请成员"
@@ -931,7 +876,7 @@ function Modal({
       <section className={styles.modal}>
         <header>
           <div>
-            <small>WORKSPACE SETUP</small>
+            <small>工作区设置</small>
             <h2>{title}</h2>
           </div>
           <button aria-label="关闭" onClick={onClose}>

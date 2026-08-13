@@ -1,4 +1,11 @@
-import type { Draft, FactoryModeDefinition, QualityStatus } from "./types";
+import type {
+  Draft,
+  FactoryFlowStep,
+  FactoryModeDefinition,
+  FactoryWorkflow,
+  ProductionGoal,
+  QualityStatus,
+} from "./types";
 
 export const factoryModes: FactoryModeDefinition[] = [
   {
@@ -6,30 +13,61 @@ export const factoryModes: FactoryModeDefinition[] = [
     name: "正片剧集拼接",
     description: "连贯剧情与高光前置，保留因果和付费卡点",
     icon: "⇄",
-    steps: ["选择正片", "拼接策略", "钩子候选", "生成时间线", "钩子质检", "保存草稿"],
+    steps: ["生产目标", "正片承接段", "组合版本", "统一质检"],
   },
   {
     id: "episode-narration",
     name: "正片剧集解说",
     description: "解说句与原片镜头逐句对齐，控制信息密度",
     icon: "◉",
-    steps: ["选择剧情", "解说策略", "设计钩子", "脚本工作台", "生成时间线", "钩子质检", "保存草稿"],
+    steps: ["生产目标", "正片承接段", "解说策略", "组合版本", "统一质检"],
   },
   {
     id: "external-hook",
     name: "外搭钩子＋本剧正片",
     description: "匹配外搭钩子、自然过渡，并核验承诺兑现",
     icon: "↗",
-    steps: ["选择正片", "钩子来源", "钩子推荐", "制作方式", "生成控制", "生成过渡", "时间线", "钩子质检", "保存草稿"],
+    steps: ["生产目标", "正片承接段", "钩子匹配", "过渡生成", "组合版本", "统一质检"],
   },
 ];
+
+export const factoryFlowSteps: FactoryFlowStep[] = [
+  { id: "production-goal", order: 1, name: "生产目标", description: "确定平台、市场、目标与输出规格", state: "active" },
+  { id: "episode-entry", order: 2, name: "正片承接段", description: "选择真实片源及可理解的正片接入点", state: "locked", prerequisite: "production-goal" },
+  { id: "hook-match", order: 3, name: "钩子匹配", description: "从钩子库匹配或发起生成任务", state: "locked", prerequisite: "episode-entry" },
+  { id: "transition", order: 4, name: "过渡生成", description: "连接钩子末段与正片开场", state: "locked", prerequisite: "hook-match" },
+  { id: "combinations", order: 5, name: "组合版本", description: "组合已选资产并提交真实渲染", state: "locked", prerequisite: "transition" },
+  { id: "quality-gate", order: 6, name: "统一质检", description: "检查钩子质量、连通性与承诺兑现", state: "locked", prerequisite: "combinations" },
+];
+
+export const defaultProductionGoal: ProductionGoal = {
+  objective: null,
+  market: "",
+  language: "英语",
+  platform: null,
+  ratio: "9:16",
+  aiGenerationAllowed: false,
+  intensity: "balanced",
+};
+
+/** Empty by design: downstream assets appear only after a source/API returns real results. */
+export const createInitialFactoryWorkflow = (): FactoryWorkflow => ({
+  currentStep: "production-goal",
+  steps: factoryFlowSteps.map((step) => ({ ...step })),
+  goal: { ...defaultProductionGoal },
+  entryPoints: [],
+  hooks: [],
+  transitions: [],
+  combinations: [],
+  qualityReport: { status: "not-connected", findings: [] },
+});
 
 export const qualityOptions: QualityStatus[] = [
   "可以直接生成",
   "建议优化后生成",
   "停滑能力弱",
   "情绪强但信息不足",
-  "信息清楚但缺少刺激",
+  "信息清晰但缺少刺激",
   "音画不同步",
   "悬念锚定缺失",
   "过度剧透",
@@ -37,49 +75,16 @@ export const qualityOptions: QualityStatus[] = [
   "货不对板，禁止批量生成",
 ];
 
+/** Metric labels only; scores must come from a completed quality service response. */
 export const qualityMetrics = [
-  ["停滑能力", 91],
-  ["情绪强度", 88],
-  ["感官刺激", 76],
-  ["戏剧张力", 94],
-  ["信息效率", 82],
-  ["音画匹配", 86],
-  ["悬念强度", 89],
+  "停滑能力",
+  "情绪强度",
+  "感官刺激",
+  "戏剧张力",
+  "信息效率",
+  "音画匹配",
+  "悬念强度",
 ] as const;
 
-export const initialDrafts: Draft[] = [
-  {
-    id: "draft-splice-12",
-    title: "身份揭露 · 高光前置 V12",
-    mode: "episode-splice",
-    drama: "Goodbye, My Billionaire Husband",
-    hook: "董事会身份揭露",
-    episodeRange: "EP 08–12",
-    transition: "动作匹配",
-    language: "英语",
-    duration: "01:18",
-    ratio: "9:16",
-    qualityStatus: "可以直接生成",
-    updatedAt: "12 分钟前",
-    autoSaved: true,
-    thumbnailTone: "rose",
-    progress: 86,
-  },
-  {
-    id: "draft-narration-08",
-    title: "禁忌新娘 · 悬疑追问 V08",
-    mode: "episode-narration",
-    drama: "The Alpha's Forbidden Bride",
-    hook: "为什么狼王没有处决她？",
-    episodeRange: "EP 03–07",
-    transition: "原声高潮",
-    language: "德语",
-    duration: "00:58",
-    ratio: "9:16",
-    qualityStatus: "建议优化后生成",
-    updatedAt: "1 小时前",
-    autoSaved: true,
-    thumbnailTone: "violet",
-    progress: 62,
-  },
-];
+// New workspaces start empty. Drafts shown in the UI must come from user actions.
+export const initialDrafts: Draft[] = [];

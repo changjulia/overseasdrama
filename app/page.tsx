@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import InspirationWorkspace from "./features/inspiration";
 import DramaLibraryWorkspace from "./features/library";
 import {
@@ -16,7 +16,10 @@ import {
   type Favorite,
 } from "./features/creations";
 import OperationsWorkspace from "./features/operations";
+import { initialTasks } from "./features/operations/OperationsWorkspace";
+import type { PipelineTask } from "./features/operations/types";
 import { usePersistentState } from "./hooks/usePersistentState";
+import { listPocketBaseAnalysisTasks } from "./lib/pocketbase-analysis-store";
 
 type Workspace = "inspiration" | "library" | "factory" | "creations" | "sources" | "tasks" | "team";
 
@@ -48,13 +51,38 @@ export default function Home() {
   const [factorySource, setFactorySource] = useState<FactorySourceContext | null>(null);
   const [drafts, setDrafts] = usePersistentState<Draft[]>("lumina:drafts", initialDrafts);
   const [favorites, setFavorites] = usePersistentState<Favorite[]>("lumina:favorites", favoriteMocks);
+  const [tasks, setTasks, tasksReady] = usePersistentState<PipelineTask[]>("lumina:tasks", initialTasks);
   const [toast, setToast] = useState("");
   const [profileOpen, setProfileOpen] = useState(false);
+
+  useEffect(() => {
+    if (!tasksReady) return;
+    setTasks((current) => current.filter((task) => !/^TASK-08(?:17|18|19|20|21)$/.test(task.id)));
+    setDrafts((current) => current.filter((draft) => Boolean(draft.sourceContext)));
+    setFavorites((current) => current.filter((favorite) => Boolean(favorite.previewUrl || favorite.analysis)));
+  }, [setDrafts, setFavorites, setTasks, tasksReady]);
+
+  useEffect(() => {
+    if (!tasksReady) return;
+    const controller = new AbortController();
+    const sync = async () => {
+      try { setTasks(await listPocketBaseAnalysisTasks(controller.signal)); }
+      catch (error) { if (!controller.signal.aborted) console.error("PocketBase task sync failed", error); }
+    };
+    void sync();
+    const timer = window.setInterval(sync, 3000);
+    return () => { controller.abort(); window.clearInterval(timer); };
+  }, [setTasks, tasksReady]);
 
   const notify = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2400);
   };
+
+  const createParsingTask = useCallback((task: { id:string; title:string; status:"处理中"|"排队中"; progress:number; cost:string }) => {
+    if (!tasksReady) return;
+    setTasks((current) => current.some((item) => item.id === task.id) ? current : [{...task,category:"剧集解析",owner:"系统",createdAt:"刚刚"}, ...current]);
+  }, [setTasks, tasksReady]);
 
   const openFactory = (mode: FactoryMode, draft: Draft | null = null, source: FactorySourceContext | null = null) => {
     setFactoryMode(mode);
@@ -65,7 +93,7 @@ export default function Home() {
 
   const saveDraft = (draft: Draft) => {
     setDrafts((current) => [draft, ...current.filter((item) => item.id !== draft.id)]);
-    notify("视频已生成，并自动保存至「我的草稿」");
+    notify("制作草稿已自动保存至「我的草稿」");
   };
 
   const reuseDraft = (draft: Draft) => {
@@ -87,7 +115,7 @@ export default function Home() {
       <aside className="sidebar">
         <div className="brand">
           <div>L</div>
-          <span><b>Lumina</b><small>STORY INTELLIGENCE</small></span>
+          <span><b>Lumina</b><small>短剧智能工作台</small></span>
         </div>
         <nav>
           <p>内容工作台</p>
@@ -100,8 +128,8 @@ export default function Home() {
             >
               <i className={`nav-icon${item.id === "factory" ? " factory-icon" : ""}`}>{item.icon}</i>
               <span>{item.label}</span>
-              {(item.count || item.id === "creations") && (
-                <em>{item.id === "creations" ? drafts.length : item.count}</em>
+              {(item.count || item.id === "creations" || item.id === "tasks") && (
+                <em>{item.id === "creations" ? drafts.length : item.id === "tasks" ? tasks.length : item.id === "library" ? "" : item.count}</em>
               )}
             </button>
             </div>
@@ -109,7 +137,7 @@ export default function Home() {
         </nav>
         <div className="side-bottom">
           <div className="sync"><span><i /> 数据同步正常</span><small>最后更新 2 分钟前</small></div>
-          <div className="profile"><div>JC</div><span><b>Julia Chen</b><small>Content Lead</small></span><button type="button" aria-label="打开账户菜单" aria-expanded={profileOpen} onClick={() => setProfileOpen((value) => !value)}>{profileOpen ? "⌃" : "⌄"}</button>{profileOpen && <div className="profile-menu"><button type="button" onClick={() => { setProfileOpen(false); setWorkspace("team"); }}>团队与权限</button><button type="button" onClick={() => { setProfileOpen(false); notify("个人偏好设置将在账号系统接入后开放"); }}>个人偏好</button></div>}</div>
+          <div className="profile"><div>陈</div><span><b>陈佳</b><small>内容负责人</small></span><button type="button" aria-label="打开账户菜单" aria-expanded={profileOpen} onClick={() => setProfileOpen((value) => !value)}>{profileOpen ? "⌃" : "⌄"}</button>{profileOpen && <div className="profile-menu"><button type="button" onClick={() => { setProfileOpen(false); setWorkspace("team"); }}>团队与权限</button><button type="button" onClick={() => { setProfileOpen(false); notify("个人偏好设置将在账号系统接入后开放"); }}>个人偏好</button></div>}</div>
         </div>
       </aside>
 
@@ -124,12 +152,14 @@ export default function Home() {
             }}
           />
         )}
-        {workspace === "library" && (
+        <div hidden={workspace !== "library"}>
           <DramaLibraryWorkspace
             onImportDrama={() => notify("已打开短剧导入任务")}
-            onEnterFactory={({ dramaId, mode, sourceId }) => openFactory(resolveFactoryMode(mode), null, { kind: "library", id: sourceId ? `${dramaId}-${sourceId}` : String(dramaId), title: `剧库短剧 ID ${dramaId}`, description: sourceId ? `已带入可投放区间 ${sourceId}` : "已带入剧目及当前解析资产。" })}
+            onCreateParsingTask={createParsingTask}
+            onOpenProductionRecord={(title) => { setWorkspace("creations"); notify(`已打开「${title}」对应的创作记录`); }}
+            onEnterFactory={({ dramaId, mode, sourceId, title, cn, genre, language, episodes, freeEpisodes, availableEpisodes, episodeMedia }) => openFactory(resolveFactoryMode(mode), null, { kind: "library", id: sourceId ? `${dramaId}-${sourceId}` : String(dramaId), title, dramaTitle: title, dramaCn: cn, genre, language, episodes, freeEpisodes, availableEpisodes, episodeMedia, description: sourceId ? `${cn} · ${genre} · 已带入可投放区间 ${sourceId}` : `${cn} · ${genre} · 共 ${episodes} 集 · 已连接 ${availableEpisodes.length} 集真实片源` })}
           />
-        )}
+        </div>
         {workspace === "factory" && (
           <FactoryWorkspace
             key={`${factoryMode}-${editingDraft?.id ?? "new"}-${factorySource?.id ?? "direct"}`}
@@ -150,12 +180,14 @@ export default function Home() {
             onUseFavorite={(favorite, mode) => openFactory(mode, null, { kind: "favorite", id: favorite.id, title: favorite.title, description: favorite.hook, language: favorite.language })}
             onOpenInspiration={() => setWorkspace("inspiration")}
             onRemoveFavorite={(id) => setFavorites((current) => current.filter((item) => item.id !== id))}
+            onDraftChange={(draft) => setDrafts((current) => [draft, ...current.filter((item) => item.id !== draft.id)])}
+            onRemoveDraft={(id) => setDrafts((current) => current.filter((item) => item.id !== id))}
             onNotify={notify}
           />
         )}
-        {workspace === "sources" && <OperationsWorkspace section="sources" onNotify={notify}/>}
-        {workspace === "tasks" && <OperationsWorkspace section="tasks" onNotify={notify}/>}
-        {workspace === "team" && <OperationsWorkspace section="team" onNotify={notify}/>}
+        {workspace === "sources" && <OperationsWorkspace section="sources" tasks={tasks} onTasksChange={setTasks} onNotify={notify}/>}
+        {workspace === "tasks" && <OperationsWorkspace section="tasks" tasks={tasks} onTasksChange={setTasks} onNotify={notify}/>}
+        {workspace === "team" && <OperationsWorkspace section="team" tasks={tasks} onTasksChange={setTasks} onNotify={notify}/>}
       </main>
       {toast && <div className="toast"><i>✓</i>{toast}</div>}
     </div>

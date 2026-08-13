@@ -30,6 +30,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.analysis.example
 
 # vercel
 .vercel
@@ -41,6 +42,17 @@ next-env.d.ts
 /outputs/
 /work/
 /tmp/
+/pb_data/
+.pocketbase.*.log
+.analysis-worker.*.log
+.codex-preview.*.log
+pb-hook-test.*.log
+/.analysis-worker-token
+/tools/ffmpeg/
+/tools/ffmpeg-release-essentials.zip
+/.pnpm-store/
+.codex-*.log
+/tmp_content_factory_sources.txt
 *.tsbuildinfo
 
 # local video fixtures and processor outputs

@@ -2,3 +2,26 @@
 /* Extended workspace navigation */
 .sidebar nav{overflow:auto;scrollbar-width:none}.sidebar nav::-webkit-scrollbar{display:none}.sidebar nav p.nav-group{margin-top:16px}.nav-entry{display:block}.factory-icon{font-size:16px;font-weight:700}
 .profile{position:relative}.profile-menu{position:absolute;left:0;right:0;bottom:42px;display:flex;flex-direction:column;gap:3px;padding:5px;border:1px solid #e0e5eb;border-radius:8px;background:#fff;box-shadow:0 10px 28px #27364d20}.profile-menu button{width:100%;height:30px;border:0;border-radius:5px;background:#fff;color:#596678;text-align:left;padding:0 9px;font-size:8px}.profile-menu button:hover{background:#edf4ff;color:#1769e0}
+
+/* Global readability scale: preserve dashboard density without sub-11px UI text. */
+:root{--font-page-title:30px;--font-section-title:20px;--font-card-title:16px;--font-body:14px;--font-caption:12px;--line-body:1.55}
+html{-webkit-text-size-adjust:100%;text-rendering:optimizeLegibility}
+body{font-size:var(--font-body);line-height:var(--line-body);font-family:Inter,"PingFang SC","Microsoft YaHei","Noto Sans SC",system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+:where(button,input,select,textarea){font-size:var(--font-body)!important}
+:where(input,select,textarea){min-height:38px}
+:where(p,li,dt,dd,td,th,label){font-size:13px!important;line-height:1.55}
+:where(small){font-size:var(--font-caption)!important;line-height:1.5}
+:where(h1){font-size:var(--font-page-title)!important;line-height:1.25}
+:where(h2){font-size:var(--font-section-title)!important;line-height:1.35}
+:where(h3){font-size:var(--font-card-title)!important;line-height:1.4}
+.sidebar nav p{font-size:11px}.sidebar nav button,.side-bottom>button{font-size:14px}.sidebar nav em{font-size:11px}
+.brand small,.profile small,.sync small{font-size:11px!important}.profile b{font-size:13px}
+.eyebrow,.section-label{font-size:12px}.page-head p{font-size:13px!important}.top-tabs button{font-size:14px!important}
+.signal-strip span,.factory-summary span{font-size:12px}.signal-strip small,.factory-summary small{font-size:12px!important}
+.toolbar select,.toolbar label,.library-toolbar button{font-size:13px!important;min-height:38px}
+.tags span,.status,.source,.video em{font-size:11px}
+.material h3,.creation-grid h3,.drama-body h3{font-size:16px!important}.material p,.creation-grid p,.drama-body p{font-size:12px!important}
+.material dt,.material dd{font-size:12px!important}.data-row{font-size:13px}.data-head{font-size:12px}
+.panel-title p,.analysis-list button small,.clip-pool button small{font-size:12px!important}.panel-title h2{font-size:18px!important}
+@media(max-width:760px){:root{--font-page-title:26px;--font-section-title:19px}}
+@media(max-width:1100px){.toolbar,.library-toolbar,[class*="_toolbar_"]{flex-wrap:wrap}.grow{min-width:0}[class*="_sort_"]{margin-left:0!important}}

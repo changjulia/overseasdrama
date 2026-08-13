@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lumina.local/schemas/analysis-envelope-1.0.0.json",
+  "title": "Lumina evidence-first analysis envelope",
+  "type": "object",
+  "required": ["schema_version", "analysis_id", "tier", "status", "source", "engine", "warnings"],
+  "properties": {
+    "schema_version": { "const": "1.0.0" },
+    "analysis_id": { "type": "string" },
+    "tier": { "enum": ["coarse", "detail", "precision"] },
+    "status": { "enum": ["succeeded", "failed"] },
+    "source": { "type": "object" },
+    "engine": { "type": "object" },
+    "result": { "type": ["object", "null"] },
+    "error": {
+      "type": ["object", "null"],
+      "properties": { "type": { "type": "string" }, "message": { "type": "string" } },
+      "required": ["type", "message"]
+    },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  },
+  "$defs": {
+    "timecode": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": { "start": { "type": "number", "minimum": 0 }, "end": { "type": "number", "minimum": 0 } }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["kind", "timecode", "confidence", "source", "verification"],
+      "properties": {
+        "kind": { "type": "string" }, "timecode": { "$ref": "#/$defs/timecode" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "episode": { "type": "integer", "minimum": 1 },
+        "source": { "type": "string" }, "verification": { "enum": ["verified", "unverified"] }
+      }
+    },
+    "precisionCandidate": {
+      "type": "object",
+      "required": ["episode", "start", "end", "confidence", "evidence", "verification"],
+      "properties": {
+        "episode": { "type": "integer", "minimum": 1 },
+        "start": { "type": "number", "minimum": 0 },
+        "end": { "type": "number", "exclusiveMinimum": 0 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidence" } },
+        "verification": { "const": "verified" }
+      }
+    }
+  }
+}

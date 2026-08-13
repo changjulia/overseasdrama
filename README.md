@@ -21,7 +21,30 @@ npm install
 npm run dev
 ```
 
+## PocketBase 剧库
+
+剧目元数据、海报和分集视频保存在项目独立的 PocketBase 中。先指定 PocketBase 可执行文件（未指定时脚本使用当前开发机上的默认路径），再启动服务：
+
+```powershell
+$env:POCKETBASE_EXE = "C:\path\to\pocketbase.exe"
+.\scripts\start-pocketbase.ps1
+```
+
+默认地址为 `http://127.0.0.1:8090`，数据写入忽略提交的 `pb_data/`。集合由 `pb_migrations/` 自动创建。如需使用其他地址，启动前设置 `NEXT_PUBLIC_POCKETBASE_URL` 并重新启动前端。
+
 默认开发地址为终端输出的 Local URL。
+
+## 真实三级分析 worker
+
+剧集视频、任务与分析结果全部保存在 PocketBase，不依赖 D1/R2。设置相同令牌后分别启动 PocketBase 和 worker：
+
+```powershell
+$env:LUMINA_WORKER_TOKEN = "replace-with-a-secret"
+.\scripts\start-pocketbase.ps1
+.\scripts\start-analysis-worker.ps1
+```
+
+分析需要 FFmpeg/FFprobe、`processor/requirements-analysis.txt` 中的依赖，以及 `LUMINA_WHISPER_MODEL`、`LUMINA_SEMANTIC_ENDPOINT`、`LUMINA_SEMANTIC_API_KEY`、`LUMINA_SEMANTIC_MODEL`。缺少任一真实能力时任务会进入 `failed` 并保留错误，不会伪造成功。
 
 ## 批量转写
 

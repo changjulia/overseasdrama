@@ -1,0 +1,5 @@
+# Install only on analysis workers; web workers do not need these heavy packages.
+faster-whisper>=1.1,<2
+paddleocr>=2.9,<4
+paddlepaddle>=2.6,<4
+jsonschema>=4.23,<5

@@ -38,7 +38,7 @@ test("keeps the documented frontend modules integrated", async () => {
     readFile(new URL("../app/features/operations/OperationsWorkspace.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(page, /usePersistentState/);
-  assert.match(inspiration, /特殊人物关系/);
+  assert.match(inspiration, /钩子原型/);
   assert.match(inspiration, /人工复核/);
   assert.match(library, /三级解析/);
   assert.match(library, /可投放区间/);
@@ -48,4 +48,24 @@ test("keeps the documented frontend modules integrated", async () => {
   assert.match(creations, /我的草稿/);
   assert.match(operations, /字段与接口可用性/);
   assert.match(operations, /角色权限矩阵/);
+});
+
+test("keeps the content factory production workflow explicit and honest", async () => {
+  const factory = await readFile(new URL("../app/features/factory/FactoryWorkspace.tsx", import.meta.url), "utf8");
+
+  assert.match(factory, /PRODUCTION WORKFLOW/);
+  for (const step of ["生产目标", "正片承接段", "钩子匹配", "过渡生成", "组合版本", "统一质检"]) {
+    assert.ok(factory.includes(step), `missing production workflow step: ${step}`);
+  }
+  assert.match(factory, /当前不生成虚假节点/);
+  assert.match(factory, /等待剧情分析结果/);
+});
+
+test("keeps the real-video preview switchable by connected episode", async () => {
+  const factory = await readFile(new URL("../app/features/factory/FactoryWorkspace.tsx", import.meta.url), "utf8");
+
+  assert.match(factory, /<span>切换剧集<\/span><select value=\{previewEpisode \?\? ""\}/);
+  assert.match(factory, /onChange=\{\(event\) => setPreviewEpisode\(Number\(event\.target\.value\)\)\}/);
+  assert.match(factory, /connectedEpisodes\.map\(\(episode\) => <button[^>]+onClick=\{\(\) => setPreviewEpisode\(episode\)\}/);
+  assert.match(factory, /<video key=\{previewMedia\.url\} src=\{previewMedia\.url\} controls preload="metadata" \/>/);
 });

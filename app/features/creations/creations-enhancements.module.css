@@ -256,6 +256,7 @@
     padding: 18px;
   }
 }
+
 /* Simplified favorite-card actions; comparison returns after real metrics are connected. */
 .libraryTools {
   justify-content: flex-start;
@@ -374,5 +375,112 @@
   }
   .analysisAction {
     grid-column: 1/-1;
+  }
+}
+
+/* Preserve dashboard density without the original 6–9px UI text. */
+.creations > header > div:first-child > span,
+.drawer > header span { font-size: 12px; }
+.creations > header p,
+.tabs button,
+.libraryTools input,
+.sectionHead p,
+.sectionHead > button,
+.filters button,
+.filters select,
+.empty { font-size: 13px; }
+.saveState b,
+.favoriteBody h3,
+.draftTable article b,
+.drawer dd { font-size: 14px; }
+.saveState small,
+.tabs button > i,
+.tabs button > em,
+.preview > span,
+.preview > em,
+.tags span,
+.favoriteBody > p,
+.favoriteBody dt,
+.favoriteBody dd,
+.tableHead,
+.draftTable article small,
+.draftThumb,
+.pass,
+.review,
+.rowActions > button:not(.menuButton),
+.menuButton,
+.favoriteActionBar button,
+.favoriteActionBar select,
+.drawer > p,
+.analysisHero span,
+.drawer dt,
+.drawerActions button { font-size: 12px; }
+.libraryTools > label { height: 40px; }
+.filters button,
+.filters select { height: 36px; }
+.tableHead { min-height: 42px; }
+.draftTable article { min-height: 88px; }
+.rowActions > button:not(.menuButton),
+.menuButton { height: 34px; }
+.menuButton { width: 34px !important; min-width: 34px; flex-basis: 34px; }
+.draftMenu { top: 38px; width: 164px; }
+.favoriteActionBar button,
+.favoriteActionBar select { height: 38px; }
+.favoriteMenu { width: 168px; bottom: 44px; }
+.draftThumb {
+  overflow: hidden;
+  background: #263142;
+}
+.draftThumb video {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+.draftThumb > span {
+  position: relative;
+  z-index: 1;
+}
+.draftThumb em {
+  z-index: 2;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+/* Keep the enlarged actions inside the final table column. */
+.tableHead,
+.draftTable article {
+  grid-template-columns:
+    minmax(280px, 1.55fr)
+    minmax(210px, 1.15fr)
+    minmax(150px, 0.75fr)
+    minmax(190px, 0.9fr)
+    minmax(130px, 0.65fr)
+    minmax(190px, 0.85fr);
+}
+.draftTable {
+  overflow: visible;
+}
+.rowActions {
+  width: 100%;
+  min-width: 190px;
+  justify-content: flex-end;
+}
+.rowActions > button:not(.menuButton) {
+  flex: 1 1 72px;
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 1400px) {
+  .draftTable {
+    overflow-x: auto;
+    overflow-y: visible;
+  }
+  .tableHead,
+  .draftTable article {
+    min-width: 1120px;
   }
 }

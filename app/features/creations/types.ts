@@ -12,6 +12,13 @@ export type Favorite = {
   source: string;
   savedAt: string;
   tone: Draft["thumbnailTone"];
+  previewUrl?: string;
+  previewDuration?: number;
+  analysis?: {
+    summary: string;
+    structure?: string;
+    evidence?: string[];
+  };
 };
 
 export type MyCreationsProps = {
@@ -23,5 +30,7 @@ export type MyCreationsProps = {
   onUseFavorite?: (favorite: Favorite, mode: FactoryMode) => void;
   onOpenInspiration?: () => void;
   onRemoveFavorite?: (favoriteId: string) => void;
+  onDraftChange?: (draft: Draft) => void;
+  onRemoveDraft?: (draftId: string) => void;
   onNotify?: (message: string) => void;
 };
