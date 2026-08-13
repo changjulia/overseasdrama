@@ -21,6 +21,7 @@ export type MyCreationsProps = {
   onContinueEdit?: (draft: Draft) => void;
   onReuseDraft?: (draft: Draft) => void;
   onUseFavorite?: (favorite: Favorite, mode: FactoryMode) => void;
+  onOpenInspiration?: () => void;
   onRemoveFavorite?: (favoriteId: string) => void;
   onNotify?: (message: string) => void;
 };

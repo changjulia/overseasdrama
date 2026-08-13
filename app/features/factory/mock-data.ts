@@ -5,7 +5,7 @@ export const factoryModes: FactoryModeDefinition[] = [
     id: "episode-splice",
     name: "正片剧集拼接",
     description: "连贯剧情与高光前置，保留因果和付费卡点",
-    icon: "⌁",
+    icon: "⇄",
     steps: ["选择正片", "拼接策略", "钩子候选", "生成时间线", "钩子质检", "保存草稿"],
   },
   {

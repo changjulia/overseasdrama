@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { factoryModes, qualityMetrics, qualityOptions } from "./mock-data";
-import type { Draft, FactoryMode, FactoryWorkspaceProps, QualityStatus } from "./types";
+import type { Draft, FactoryMode, FactorySourceContext, FactoryWorkspaceProps, QualityStatus } from "./types";
 import baseStyles from "./factory.module.css";
 import enhancementStyles from "./factory-enhancements.module.css";
 
@@ -10,6 +10,29 @@ const styles = { ...baseStyles, ...enhancementStyles };
 
 type Clip = { id: string; name: string; range: string; tone: "hook" | "bridge" | "story"; seconds: number };
 type ScriptLine = { id: number; text: string; source: string; emotion: string; original: boolean };
+
+const curveSeries = [
+  { label: "情绪", color: "#1769e0", points: "50,142 156,112 262,72 368,94 474,44 580,60" },
+  { label: "冲突", color: "#eb6a45", points: "50,164 156,132 262,148 368,82 474,104 580,54" },
+  { label: "信息", color: "#27a787", points: "50,178 156,160 262,116 368,134 474,84 580,102" },
+  { label: "悬念", color: "#8b5cf6", points: "50,188 156,152 262,170 368,108 474,132 580,76" },
+] as const;
+
+const chartYTicks = [
+  { score: 100, y: 20 },
+  { score: 75, y: 65 },
+  { score: 50, y: 110 },
+  { score: 25, y: 155 },
+  { score: 0, y: 200 },
+] as const;
+
+const chartXTicks = [
+  { label: "0s", x: 50 },
+  { label: "15s", x: 182.5 },
+  { label: "30s", x: 315 },
+  { label: "45s", x: 447.5 },
+  { label: "60s", x: 580 },
+] as const;
 
 const modeData: Record<FactoryMode, { options: string[]; timeline: string[]; review: string[] }> = {
   "episode-splice": {
@@ -51,12 +74,12 @@ function createClips(mode: FactoryMode): Clip[] {
   return modeData[mode].timeline.map((name, index) => ({ id: `${mode}-${index}`, name, range: index === 0 ? "0–6s" : `${index * 10}–${index * 10 + 10}s`, tone: index === 0 ? "hook" : index === 1 ? "bridge" : "story", seconds: index === 0 ? 6 : 10 }));
 }
 
-function buildDraft(mode: FactoryMode, status: QualityStatus, language: string, ratio: Draft["ratio"], version: number): Draft {
+function buildDraft(mode: FactoryMode, status: QualityStatus, language: string, ratio: Draft["ratio"], version: number, episodeRange: string, sourceContext?: FactorySourceContext | null): Draft {
   const definition = factoryModes.find((item) => item.id === mode)!;
-  return { id: `draft-${mode}-${Date.now()}`, title: `${definition.name} · 生成版本 V${version}`, mode, drama: "Goodbye, My Billionaire Husband", hook: mode === "external-hook" ? "婚礼现场身份反转" : mode === "episode-narration" ? "她为什么主动放弃亿万遗产？" : "董事会身份揭露", episodeRange: "EP 08–12", transition: mode === "external-hook" ? "身份反差旁白" : mode === "episode-narration" ? "原声高潮" : "动作匹配", language, duration: mode === "episode-splice" ? "01:18" : "00:58", ratio, qualityStatus: status, updatedAt: "刚刚", autoSaved: true, thumbnailTone: mode === "external-hook" ? "blue" : mode === "episode-narration" ? "violet" : "rose", progress: 100, productionStatus: "待审核", version };
+  return { id: `draft-${mode}-${Date.now()}`, title: `${definition.name} · 生成版本 V${version}`, mode, drama: sourceContext?.kind === "library" ? sourceContext.title : "Goodbye, My Billionaire Husband", hook: sourceContext?.kind !== "library" ? sourceContext?.title ?? (mode === "external-hook" ? "婚礼现场身份反转" : mode === "episode-narration" ? "她为什么主动放弃亿万遗产？" : "董事会身份揭露") : "董事会身份揭露", episodeRange, transition: mode === "external-hook" ? "身份反差旁白" : mode === "episode-narration" ? "原声高潮" : "动作匹配", language: sourceContext?.language ?? language, duration: mode === "episode-splice" ? "01:18" : "00:58", ratio, qualityStatus: status, updatedAt: "刚刚", autoSaved: true, thumbnailTone: mode === "external-hook" ? "blue" : mode === "episode-narration" ? "violet" : "rose", progress: 100, productionStatus: "待审核", version };
 }
 
-export function FactoryWorkspace({ initialMode = "episode-splice", editingDraft, onDraftAutoSave, onOpenDrafts, onNotify }: FactoryWorkspaceProps) {
+export function FactoryWorkspace({ initialMode = "episode-splice", editingDraft, sourceContext, onDraftAutoSave, onOpenDrafts, onNotify }: FactoryWorkspaceProps) {
   const [mode, setMode] = useState<FactoryMode>(editingDraft?.mode ?? initialMode);
   const [step, setStep] = useState(0);
   const [selectedOption, setSelectedOption] = useState(0);
@@ -76,8 +99,13 @@ export function FactoryWorkspace({ initialMode = "episode-splice", editingDraft,
   const [production, setProduction] = useState<"编辑中" | "生成中" | "待审核" | "已导出">("编辑中");
   const [progress, setProgress] = useState(0);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
+  const [episodeSelection, setEpisodeSelection] = useState<"all-free" | "ai" | "custom">("all-free");
+  const [customStart, setCustomStart] = useState(1);
+  const [customEnd, setCustomEnd] = useState(15);
   const definition = useMemo(() => factoryModes.find((item) => item.id === mode)!, [mode]);
   const content = modeData[mode];
+  const episodeRange = episodeSelection === "all-free" ? "EP 01–15" : episodeSelection === "ai" ? "EP 06–12" : `EP ${String(customStart).padStart(2, "0")}–${String(customEnd).padStart(2, "0")}`;
 
   const notifySave = (message = "更改已自动保存") => { setSavedAt("刚刚自动保存"); onNotify?.(message); };
   const selectMode = (next: FactoryMode) => { setMode(next); setStep(0); setSelectedOption(0); setHook(0); setTransition(0); setClips(createClips(next)); setSelectedClip(0); setProduction("编辑中"); setProgress(0); setQualityStatus("建议优化后生成"); };
@@ -89,14 +117,26 @@ export function FactoryWorkspace({ initialMode = "episode-splice", editingDraft,
     if (qualityStatus === "货不对板，禁止批量生成") { onNotify?.("质检未通过：货不对板，禁止批量生成"); return; }
     setProduction("生成中"); setProgress(28); onNotify?.("正在渲染：镜头、字幕与音轨已进入生成队列");
     window.setTimeout(() => setProgress(68), 450);
-    window.setTimeout(() => { const version = versions.length + 1; const draft = buildDraft(mode, qualityStatus, language, ratio, version); onDraftAutoSave?.(draft); setProgress(100); setProduction("待审核"); setSavedAt("刚刚自动保存"); setReviewOpen(true); setVersions((items) => [`V${version} · 生成预览 · 刚刚`, ...items]); onNotify?.("预览生成完成，已自动保存至「我的草稿」"); }, 900);
+    window.setTimeout(() => { const version = versions.length + 1; const draft = buildDraft(mode, qualityStatus, language, ratio, version, episodeRange, sourceContext); onDraftAutoSave?.(draft); setProgress(100); setProduction("待审核"); setSavedAt("刚刚自动保存"); setReviewOpen(true); setVersions((items) => [`V${version} · 生成预览 · 刚刚`, ...items]); onNotify?.("预览生成完成，已自动保存至「我的草稿」"); }, 900);
   };
 
   const sharedContent = <>
     <label>选择短剧<select defaultValue="Goodbye" onChange={() => notifySave()}><option value="Goodbye">Goodbye, My Billionaire Husband</option><option>The Alpha&apos;s Forbidden Bride</option></select></label>
-    <label>剧情范围<select defaultValue="EP 08–12" onChange={() => notifySave()}><option>EP 08–12</option><option>免费集 EP 01–10</option><option>付费集 EP 11–18</option><option>AI 推荐：EP 24–29</option></select></label>
-    <div className={styles.rangeActions}><button type="button">手动选集</button><button type="button" className={styles.primarySoft}>✦ AI 推荐区间</button></div>
-    <div className={styles.aiSummary}><b>✦ AI 区间摘要</b><p>身份压制持续升级，EP 11 完成董事会反转；人物、伏笔和卡点完整，适合 9:16 紧凑剪辑。</p><div><span>主角：Ava</span><span>矛盾：身份压制</span><span>高光 92</span><span>连续性 89</span><span>剧透风险 中</span></div></div>
+    <div className={styles.episodePicker}>
+      <div className={styles.episodePickerHeader}><div><b>选择免费剧集</b><span>当前范围：{episodeRange}</span></div><em>共 15 集免费</em></div>
+      <div className={styles.episodeModes}>
+        <button type="button" className={episodeSelection === "all-free" ? styles.episodeModeSelected : ""} onClick={() => { setEpisodeSelection("all-free"); notifySave("已选择全部免费剧集 EP 01–15"); }}><b>全部免费剧集</b><small>EP 01–15 · 默认</small></button>
+        <button type="button" className={episodeSelection === "ai" ? styles.episodeModeSelected : ""} onClick={() => { setEpisodeSelection("ai"); notifySave("已应用 AI 推荐免费区间 EP 06–12"); }}><b>AI 推荐</b><small>自动选择高表现区间</small></button>
+        <button type="button" className={episodeSelection === "custom" ? styles.episodeModeSelected : ""} onClick={() => { setEpisodeSelection("custom"); notifySave("已切换为自定义免费剧集"); }}><b>自定义</b><small>手动设置起止集数</small></button>
+      </div>
+      {episodeSelection === "ai" && <div className={styles.episodeRecommendation}><span>✦ AI 推荐：EP 06–12</span><p>身份冲突集中、人物关系完整，适合直接进入素材生成。</p></div>}
+      {episodeSelection === "custom" && <div className={styles.customEpisodes}>
+        <label>起始集<select value={customStart} onChange={(event) => { const next = Number(event.target.value); setCustomStart(next); if (customEnd < next) setCustomEnd(next); notifySave(); }}>{Array.from({ length: 15 }, (_, index) => index + 1).map((episode) => <option key={episode} value={episode}>EP {String(episode).padStart(2, "0")}</option>)}</select></label>
+        <span>至</span>
+        <label>结束集<select value={customEnd} onChange={(event) => { setCustomEnd(Number(event.target.value)); notifySave(); }}>{Array.from({ length: 16 - customStart }, (_, index) => customStart + index).map((episode) => <option key={episode} value={episode}>EP {String(episode).padStart(2, "0")}</option>)}</select></label>
+      </div>}
+      <p className={styles.episodeNote}>仅从免费剧集 EP 01–15 中选择，不包含付费内容。</p>
+    </div>
   </>;
 
   const candidates = <div className={styles.candidateList}>{hookCandidates.map((item, index) => <button type="button" key={item.title} className={hook === index ? styles.candidateSelected : ""} onClick={() => { setHook(index); notifySave("钩子候选已更新"); }}><span className={styles.miniPoster}>▶<small>00:06</small></span><span><b>{item.title}</b><small>{item.source} · {item.type}</small><em>{item.tags}</em></span><strong>{item.score}<small>停滑</small></strong><i>剧透 {item.risk}</i></button>)}</div>;
@@ -125,25 +165,75 @@ export function FactoryWorkspace({ initialMode = "episode-splice", editingDraft,
   };
 
   return <section className={styles.workspace} aria-label="内容工厂">
-    <header className={styles.header}><div><span>CONTENT ENGINE</span><h1>内容工厂</h1><p>三种模式均支持选材、钩子设计、时间线编辑、质检、审核与导出。</p></div><div className={styles.headerActions}><span className={styles.autoSave}>● {savedAt}</span><button type="button" onClick={onOpenDrafts}>我的草稿 ↗</button></div></header>
+    <header className={styles.header}><div><span>CONTENT ENGINE</span><h1>内容工厂</h1><p>三种模式均支持选材、钩子设计、时间线编辑、质检、审核与导出。</p></div><div className={styles.headerActions}><button type="button" onClick={onOpenDrafts}>我的草稿 ↗</button></div></header>
     <nav className={styles.modeTabs} aria-label="内容工厂模式">{factoryModes.map((item) => <button type="button" key={item.id} className={mode === item.id ? styles.active : ""} onClick={() => selectMode(item.id)}><i>{item.icon}</i><span><b>{item.name}</b><small>{item.description}</small></span></button>)}</nav>
     <div className={styles.stepper}>{definition.steps.map((label, index) => <button type="button" key={label} className={index === step ? styles.current : index < step ? styles.done : ""} onClick={() => setStep(index)}><i>{index < step ? "✓" : index + 1}</i><span>{label}</span></button>)}</div>
     <div className={styles.mainGrid}>
-      <aside className={styles.sourcePanel}><div className={styles.panelHeading}><div><small>{String(step + 1).padStart(2, "0")} · {definition.steps[step]?.toUpperCase()}</small><h2>{definition.steps[step]}</h2></div><span>AI 已解析</span></div>{renderSource()}</aside>
+      <aside className={styles.sourcePanel}><div className={styles.panelHeading}><div><small>{String(step + 1).padStart(2, "0")} · {definition.steps[step]?.toUpperCase()}</small><h2>{definition.steps[step]}</h2></div><span>AI 已解析</span></div>{sourceContext && <div className={styles.inboundSource}><small>{sourceContext.kind === "inspiration" ? "灵感素材" : sourceContext.kind === "library" ? "剧库输入" : "我的收藏"}</small><b>{sourceContext.title}</b><p>{sourceContext.description}</p><span>输入 ID · {sourceContext.id}</span></div>}{renderSource()}</aside>
       <main className={styles.editorPanel}>
-        <div className={styles.editorTop}><div className={styles.preview}><div><small>{ratio} · LIVE PREVIEW</small><button type="button" aria-label="播放预览">▶</button><span>00:00 / {editingDraft?.duration ?? "01:18"}</span></div></div><aside className={styles.outputControls}><b>输出设置</b><label>画幅<select value={ratio} onChange={(e) => { setRatio(e.target.value as Draft["ratio"]); notifySave(); }}><option>9:16</option><option>16:9</option><option>1:1</option></select></label><label>语种<select value={language} onChange={(e) => { setLanguage(e.target.value); notifySave(); }}><option>英语</option><option>德语</option><option>葡萄牙语</option><option>西班牙语</option></select></label><button className={media.safe ? styles.toggleOn : ""} onClick={() => setMedia({ ...media, safe: !media.safe })}>安全区 {media.safe ? "开" : "关"}</button><button onClick={saveVersion}>＋ 保存新版本</button><details><summary>版本历史 ({versions.length})</summary>{versions.map((x) => <button key={x} onClick={() => onNotify?.(`已切换到 ${x.split(" · ")[0]}`)}>{x}</button>)}</details></aside></div>
+        <div className={styles.editorTop}>
+          <div className={styles.preview} data-testid="preview-canvas">
+            <div className={styles.previewFrame} data-testid="preview-frame" style={{ aspectRatio: ratio === "9:16" ? "9 / 16" : ratio === "16:9" ? "16 / 9" : "1 / 1" }}>
+              {media.safe && <i className={styles.safeGuide} aria-hidden="true"/>}
+              <small>{ratio} · LIVE PREVIEW</small>
+              <button type="button" aria-label={previewPlaying ? "暂停预览" : "播放预览"} aria-pressed={previewPlaying} onClick={() => setPreviewPlaying((value) => !value)}>{previewPlaying ? "Ⅱ" : "▶"}</button>
+              <span>00:00 / {editingDraft?.duration ?? "01:18"}</span>
+            </div>
+          </div>
+          <aside className={styles.outputControls}>
+            <div className={styles.outputHeading}><span>OUTPUT</span><b>输出设置</b></div>
+            <span className={styles.outputHint}>预览按所选画幅自动适应画布</span>
+            <label>画幅<select value={ratio} onChange={(e) => { setRatio(e.target.value as Draft["ratio"]); notifySave(); }}><option>9:16</option><option>16:9</option><option>1:1</option></select></label>
+            <label>语种<select value={language} onChange={(e) => { setLanguage(e.target.value); notifySave(); }}><option>英语</option><option>德语</option><option>葡萄牙语</option><option>西班牙语</option></select></label>
+            <div className={styles.outputActions}><button className={media.safe ? styles.toggleOn : ""} onClick={() => setMedia({ ...media, safe: !media.safe })}>安全区 {media.safe ? "开" : "关"}</button><button onClick={saveVersion}>＋ 保存新版本</button></div>
+            <details><summary>版本历史 ({versions.length})</summary>{versions.map((x) => <button key={x} onClick={() => onNotify?.(`已切换到 ${x.split(" · ")[0]}`)}>{x}</button>)}</details>
+          </aside>
+        </div>
         {mode === "episode-narration" && step >= 3 && <div className={styles.scriptWorkbench}><div><b>解说脚本工作台</b><span>{style} · {language} · {voice}</span></div>{scripts.map((line) => <article key={line.id}><b>{String(line.id).padStart(2, "0")}</b><textarea value={line.text} onChange={(e) => setScripts((items) => items.map((x) => x.id === line.id ? { ...x, text: e.target.value } : x))}/><span>{line.source}<small>{line.emotion} · {line.original ? "保留原声" : "关闭原声"}</small></span><div><button onClick={() => rewriteLine(line.id, "rewrite")}>重写</button><button onClick={() => rewriteLine(line.id, "short")}>缩短</button><button onClick={() => rewriteLine(line.id, "emotion")}>强情绪</button><button onClick={() => rewriteLine(line.id, "suspense")}>强悬念</button><button onClick={() => rewriteLine(line.id, "spoiler")}>降剧透</button></div></article>)}</div>}
         {mode === "external-hook" && step >= 5 && <div className={styles.transition}><div><small>钩子末帧</small><b>婚礼现场 · 戒指落地</b></div><i>{transitionCandidates[transition].title} · {transitionCandidates[transition].duration}<br/><strong>自然度 {transitionCandidates[transition].score}</strong></i><div><small>正片首帧</small><b>EP 08 · 女主推门</b></div></div>}
-        <div className={styles.timelineHead}><div><small>TIMELINE EDITOR</small><h2>结构时间线</h2></div><span>单击片段后可排序、裁切或替换</span></div>
-        <div className={styles.ruler}>{["00:00", "00:15", "00:30", "00:45", "01:00"].map((time) => <span key={time}>{time}</span>)}</div>
-        <div className={styles.timeline}>{clips.map((item, index) => <button type="button" key={item.id} className={`${styles[`${item.tone}Clip`]} ${selectedClip === index ? styles.clipSelected : ""}`} style={{ flex: item.seconds }} onClick={() => setSelectedClip(index)}><b>{item.name}</b><small>{item.range}</small></button>)}</div>
-        <div className={styles.clipTools}><b>已选：{clips[selectedClip]?.name}</b><button onClick={() => moveClip(-1)}>← 前移</button><button onClick={() => moveClip(1)}>后移 →</button><button onClick={() => trimClip(-1)}>左裁 1s</button><button onClick={() => trimClip(1)}>延长 1s</button><button onClick={() => { setClips((items) => items.map((x, i) => i === selectedClip ? { ...x, name: "替换镜头 · EP 10" } : x)); notifySave("镜头已替换"); }}>替换镜头</button></div>
-        <div className={styles.track}><b>音画轨</b>{([["original", "原声"], ["subtitle", `字幕 · ${language}`], ["bgm", "BGM · Tension 04"], ["sfx", "音效 · Hit"]] as const).map(([key, label]) => <button key={key} className={media[key] ? styles.trackOn : ""} onClick={() => { setMedia({ ...media, [key]: !media[key] }); notifySave(); }}>{media[key] ? "✓" : "＋"} {label}</button>)}</div>
+        <section className={styles.timelineSection}>
+          <div className={styles.timelineHead}><div><small>TIMELINE EDITOR</small><h2>结构时间线</h2></div><span>选择片段后，在下方进行排序、裁切和镜头替换</span></div>
+          <div className={styles.ruler}>{["00:00", "00:15", "00:30", "00:45", "01:00"].map((time) => <span key={time}>{time}</span>)}</div>
+          <div className={styles.timeline}>{clips.map((item, index) => <button type="button" key={item.id} className={`${styles[`${item.tone}Clip`]} ${selectedClip === index ? styles.clipSelected : ""}`} style={{ flex: item.seconds }} onClick={() => setSelectedClip(index)}><b>{item.name}</b><small>{item.range}</small></button>)}</div>
+          <div className={styles.clipTools}><b>当前片段：{clips[selectedClip]?.name}</b><button onClick={() => moveClip(-1)}>← 前移</button><button onClick={() => moveClip(1)}>后移 →</button><button onClick={() => trimClip(-1)}>左裁 1s</button><button onClick={() => trimClip(1)}>延长 1s</button><button onClick={() => { setClips((items) => items.map((x, i) => i === selectedClip ? { ...x, name: "替换镜头 · EP 10" } : x)); notifySave("镜头已替换"); }}>替换镜头</button></div>
+          <div className={styles.track}>
+            <div className={styles.trackHeading}>
+              <div>
+                <small>AUDIO &amp; CAPTIONS</small>
+                <b>音画轨</b>
+              </div>
+              <span>分别控制原声、字幕、背景音乐与音效</span>
+            </div>
+            <div className={styles.trackControls}>
+              {([["original", "原声"], ["subtitle", `字幕 · ${language}`], ["bgm", "BGM · Tension 04"], ["sfx", "音效 · Hit"]] as const).map(([key, label]) => (
+                <button key={key} className={media[key] ? styles.trackOn : ""} onClick={() => { setMedia({ ...media, [key]: !media[key] }); notifySave(); }}>
+                  <i>{media[key] ? "✓" : "＋"}</i>
+                  <span>{label}</span>
+                  <small>{media[key] ? "已启用" : "未启用"}</small>
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
       </main>
     </div>
     <section className={styles.qualityGate}><div className={styles.qualityTitle}><div><span>QUALITY GATE</span><h2>统一钩子质检门</h2><p>七项指标、四条曲线、首帧 / 第一句、T1 / T2 和模式专项检查。</p></div><select value={qualityStatus} onChange={(e) => setQualityStatus(e.target.value as QualityStatus)}>{qualityOptions.map((x) => <option key={x}>{x}</option>)}</select></div>
       <div className={styles.metrics}>{qualityMetrics.map(([label, score]) => <div key={label}><span>{label}<b>{score}</b></span><i><em style={{ width: `${score}%` }}/></i></div>)}</div>
-      <div className={styles.reviewGrid}><div className={styles.curves}><b>情绪 / 冲突 / 信息 / 悬念曲线</b>{["情绪", "冲突", "信息", "悬念"].map((label, index) => <div key={label}><span>{label}</span><svg viewBox="0 0 220 30" preserveAspectRatio="none"><polyline points={index % 2 ? "0,25 42,19 86,22 128,8 170,13 220,2" : "0,26 42,23 86,13 128,17 170,5 220,9"}/></svg></div>)}</div><div className={styles.checks}><b>首帧 / 边界 / 专项检查</b><span><i>✓</i>第一帧与第一句话匹配</span><span><i>✓</i>T1 00:06.2 / T2 00:09.4</span>{content.review.map((item, index) => <span key={item}><i className={index === content.review.length - 1 && qualityStatus !== "可以直接生成" ? styles.warn : ""}>{index === content.review.length - 1 && qualityStatus !== "可以直接生成" ? "!" : "✓"}</i>{item}</span>)}</div><div className={styles.diagnosis}><b>滑走风险与修改建议</b><p><strong>00:02.4</strong> 身份冲突台词出现稍晚；建议提前 0.8 秒，并在首帧加入戒指道具。</p><p><strong>钩子末帧 → 正片首帧</strong> 人物一致，动作方向偏差 12°。</p><button type="button" onClick={() => { setQualityStatus("可以直接生成"); setClips((items) => items.map((x, i) => i === 0 ? { ...x, range: "0–5.2s · 已优化" } : x)); notifySave("已应用全部质检建议"); }}>✦ 一键应用全部建议</button></div></div>
+      <div className={styles.reviewGrid}><div className={styles.curves}>
+        <div className={styles.chartHeader}>
+          <div><b>四项指标趋势</b><span>同一坐标系下对比视频全程得分</span></div>
+          <div className={styles.chartLegend}>{curveSeries.map((series) => <span key={series.label}><i style={{ background: series.color }}/>{series.label}</span>)}</div>
+        </div>
+        <div className={styles.chartPlot}>
+          <svg viewBox="0 0 620 235" role="img" aria-label="情绪、冲突、信息和悬念四项指标随视频时间变化的折线图">
+            {chartYTicks.map((tick) => <g key={tick.score}><line x1="50" x2="580" y1={tick.y} y2={tick.y}/><text x="38" y={tick.y + 3} textAnchor="end">{tick.score}</text></g>)}
+            {chartXTicks.map((tick) => <g key={tick.label}><line x1={tick.x} x2={tick.x} y1="20" y2="200"/><text x={tick.x} y="220" textAnchor="middle">{tick.label}</text></g>)}
+            <text className={styles.axisLabel} x="12" y="16">得分</text>
+            <text className={styles.axisLabel} x="588" y="220">时间</text>
+            {curveSeries.map((series) => <g key={series.label} style={{ color: series.color }}><polyline points={series.points}/>{series.points.split(" ").map((point, index) => { const [cx, cy] = point.split(","); return <circle key={`${series.label}-${index}`} cx={cx} cy={cy} r="3"/>; })}</g>)}
+          </svg>
+        </div>
+      </div><div className={styles.checks}><b>首帧 / 边界 / 专项检查</b><span><i>✓</i>第一帧与第一句话匹配</span><span><i>✓</i>T1 00:06.2 / T2 00:09.4</span>{content.review.map((item, index) => <span key={item}><i className={index === content.review.length - 1 && qualityStatus !== "可以直接生成" ? styles.warn : ""}>{index === content.review.length - 1 && qualityStatus !== "可以直接生成" ? "!" : "✓"}</i>{item}</span>)}</div><div className={styles.diagnosis}><b>滑走风险与修改建议</b><p><strong>00:02.4</strong> 身份冲突台词出现稍晚；建议提前 0.8 秒，并在首帧加入戒指道具。</p><p><strong>钩子末帧 → 正片首帧</strong> 人物一致，动作方向偏差 12°。</p><button type="button" onClick={() => { setQualityStatus("可以直接生成"); setClips((items) => items.map((x, i) => i === 0 ? { ...x, range: "0–5.2s · 已优化" } : x)); notifySave("已应用全部质检建议"); }}>✦ 一键应用全部建议</button></div></div>
       {production === "生成中" && <div className={styles.renderProgress}><span><b>正在生成成片</b><small>镜头合成 → 字幕 → 混音 → 编码</small></span><i><em style={{ width: `${progress}%` }}/></i><strong>{progress}%</strong></div>}
       {reviewOpen && <div className={styles.reviewBar}><span><b>预览已生成，等待审核</b><small>V{versions.length} · {ratio} · {language} · 已自动进入我的草稿</small></span><button onClick={() => { setProduction("编辑中"); setReviewOpen(false); }}>返回修改</button><button onClick={() => { setProduction("已导出"); setReviewOpen(false); onNotify?.("审核通过，导出任务已创建"); }}>审核通过并导出</button></div>}
       <footer><span>自动保存：{savedAt} · {production} · 版本历史已开启</span><div><button type="button" onClick={() => onNotify?.("已生成 3 个新钩子候选")}>重新生成钩子</button><button type="button" onClick={saveVersion}>保存草稿</button><button type="button" className={styles.generate} onClick={generate} disabled={production === "生成中"}>{qualityStatus === "货不对板，禁止批量生成" ? "质检阻止生成" : production === "生成中" ? `生成中 ${progress}%` : "生成预览并保存草稿 →"}</button></div></footer>

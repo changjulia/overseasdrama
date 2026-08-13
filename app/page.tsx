@@ -8,6 +8,7 @@ import {
   initialDrafts,
   type Draft,
   type FactoryMode,
+  type FactorySourceContext,
 } from "./features/factory";
 import {
   MyCreations,
@@ -27,7 +28,7 @@ const navItems: Array<{
 }> = [
   { id: "inspiration", icon: "✦", label: "灵感大屏", count: "128" },
   { id: "library", icon: "▣", label: "剧库", count: "36" },
-  { id: "factory", icon: "⌁", label: "内容工厂" },
+  { id: "factory", icon: "⇄", label: "内容工厂" },
   { id: "creations", icon: "♡", label: "我的创作" },
   { id: "sources", icon: "◈", label: "数据源管理", count: "4" },
   { id: "tasks", icon: "◫", label: "任务中心", count: "8" },
@@ -44,18 +45,21 @@ export default function Home() {
   const [workspace, setWorkspace] = useState<Workspace>("inspiration");
   const [factoryMode, setFactoryMode] = useState<FactoryMode>("episode-splice");
   const [editingDraft, setEditingDraft] = useState<Draft | null>(null);
+  const [factorySource, setFactorySource] = useState<FactorySourceContext | null>(null);
   const [drafts, setDrafts] = usePersistentState<Draft[]>("lumina:drafts", initialDrafts);
   const [favorites, setFavorites] = usePersistentState<Favorite[]>("lumina:favorites", favoriteMocks);
   const [toast, setToast] = useState("");
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const notify = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2400);
   };
 
-  const openFactory = (mode: FactoryMode, draft: Draft | null = null) => {
+  const openFactory = (mode: FactoryMode, draft: Draft | null = null, source: FactorySourceContext | null = null) => {
     setFactoryMode(mode);
     setEditingDraft(draft);
+    setFactorySource(source);
     setWorkspace("factory");
   };
 
@@ -92,9 +96,9 @@ export default function Home() {
             {index === 4 && <p className="nav-group">运营与系统</p>}
             <button
               className={workspace === item.id ? "active" : ""}
-              onClick={() => setWorkspace(item.id)}
+              onClick={() => item.id === "factory" ? openFactory("episode-splice") : setWorkspace(item.id)}
             >
-              <i className="nav-icon">{item.icon}</i>
+              <i className={`nav-icon${item.id === "factory" ? " factory-icon" : ""}`}>{item.icon}</i>
               <span>{item.label}</span>
               {(item.count || item.id === "creations") && (
                 <em>{item.id === "creations" ? drafts.length : item.count}</em>
@@ -105,14 +109,14 @@ export default function Home() {
         </nav>
         <div className="side-bottom">
           <div className="sync"><span><i /> 数据同步正常</span><small>最后更新 2 分钟前</small></div>
-          <div className="profile"><div>JC</div><span><b>Julia Chen</b><small>Content Lead</small></span><button>⌄</button></div>
+          <div className="profile"><div>JC</div><span><b>Julia Chen</b><small>Content Lead</small></span><button type="button" aria-label="打开账户菜单" aria-expanded={profileOpen} onClick={() => setProfileOpen((value) => !value)}>{profileOpen ? "⌃" : "⌄"}</button>{profileOpen && <div className="profile-menu"><button type="button" onClick={() => { setProfileOpen(false); setWorkspace("team"); }}>团队与权限</button><button type="button" onClick={() => { setProfileOpen(false); notify("个人偏好设置将在账号系统接入后开放"); }}>个人偏好</button></div>}</div>
         </div>
       </aside>
 
       <main className="content">
         {workspace === "inspiration" && (
           <InspirationWorkspace
-            onOpenFactory={() => openFactory("external-hook")}
+            onOpenFactory={(materialId) => openFactory("external-hook", null, { kind: "inspiration", id: materialId, title: `灵感素材 ${materialId}`, description: "已从灵感大屏带入，保留素材实例与钩子分析关联。" })}
             onFavoriteChange={(materialId, favorite) => {
               if (favorite) setFavorites((current) => current.some(item=>item.id===materialId) ? current : [{id:materialId,title:"来自灵感大屏的收藏素材",kind:"广告实例",hook:"已保存完整钩子分析，可进入内容工厂复用。",language:"英语",theme:"市场跑量",source:"灵感大屏",savedAt:"刚刚",tone:"blue"},...current]);
               else setFavorites((current) => current.filter(item=>item.id!==materialId));
@@ -123,14 +127,15 @@ export default function Home() {
         {workspace === "library" && (
           <DramaLibraryWorkspace
             onImportDrama={() => notify("已打开短剧导入任务")}
-            onEnterFactory={({ mode }) => openFactory(resolveFactoryMode(mode))}
+            onEnterFactory={({ dramaId, mode, sourceId }) => openFactory(resolveFactoryMode(mode), null, { kind: "library", id: sourceId ? `${dramaId}-${sourceId}` : String(dramaId), title: `剧库短剧 ID ${dramaId}`, description: sourceId ? `已带入可投放区间 ${sourceId}` : "已带入剧目及当前解析资产。" })}
           />
         )}
         {workspace === "factory" && (
           <FactoryWorkspace
-            key={`${factoryMode}-${editingDraft?.id ?? "new"}`}
+            key={`${factoryMode}-${editingDraft?.id ?? "new"}-${factorySource?.id ?? "direct"}`}
             initialMode={factoryMode}
             editingDraft={editingDraft}
+            sourceContext={factorySource}
             onDraftAutoSave={saveDraft}
             onOpenDrafts={() => setWorkspace("creations")}
             onNotify={notify}
@@ -142,7 +147,8 @@ export default function Home() {
             favorites={favorites}
             onContinueEdit={(draft) => openFactory(draft.mode, draft)}
             onReuseDraft={reuseDraft}
-            onUseFavorite={(_, mode) => openFactory(mode)}
+            onUseFavorite={(favorite, mode) => openFactory(mode, null, { kind: "favorite", id: favorite.id, title: favorite.title, description: favorite.hook, language: favorite.language })}
+            onOpenInspiration={() => setWorkspace("inspiration")}
             onRemoveFavorite={(id) => setFavorites((current) => current.filter((item) => item.id !== id))}
             onNotify={notify}
           />

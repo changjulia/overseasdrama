@@ -32,9 +32,18 @@ export type Draft = {
   version?: number;
 };
 
+export type FactorySourceContext = {
+  kind: "inspiration" | "library" | "favorite";
+  id: string;
+  title: string;
+  description?: string;
+  language?: string;
+};
+
 export type FactoryWorkspaceProps = {
   initialMode?: FactoryMode;
   editingDraft?: Draft | null;
+  sourceContext?: FactorySourceContext | null;
   onDraftAutoSave?: (draft: Draft) => void;
   onOpenDrafts?: () => void;
   onNotify?: (message: string) => void;

@@ -12,16 +12,17 @@ const styles = { ...baseStyles, ...enhancementStyles };
 const modeName = (mode: FactoryMode) => factoryModes.find((item) => item.id === mode)?.name ?? mode;
 type Drawer = { type: "favorite"; item: Favorite; view: string } | { type: "draft"; item: Draft; view: string } | null;
 
-export function MyCreations({ drafts, favorites = favoriteMocks, initialTab = "favorites", onContinueEdit, onReuseDraft, onUseFavorite, onRemoveFavorite, onNotify }: MyCreationsProps) {
+export function MyCreations({ drafts, favorites = favoriteMocks, initialTab = "favorites", onContinueEdit, onReuseDraft, onUseFavorite, onOpenInspiration, onRemoveFavorite, onNotify }: MyCreationsProps) {
   const [tab, setTab] = useState<"favorites" | "drafts">(initialTab);
   const [modeFilter, setModeFilter] = useState<"all" | FactoryMode>("all");
   const [qualityFilter, setQualityFilter] = useState("全部状态");
   const [query, setQuery] = useState("");
   const [localFavorites, setLocalFavorites] = useState(favorites);
-  const [compare, setCompare] = useState<string[]>([]);
   const [drawer, setDrawer] = useState<Drawer>(null);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [localDrafts, setLocalDrafts] = useState<Draft[]>(drafts);
+  const [selectedModes, setSelectedModes] = useState<Record<string, FactoryMode>>({});
+  const [playingFavorite, setPlayingFavorite] = useState<string | null>(null);
 
   const visibleDrafts = useMemo(() => localDrafts.filter((draft) => {
     const modeOk = modeFilter === "all" || draft.mode === modeFilter;
@@ -32,23 +33,26 @@ export function MyCreations({ drafts, favorites = favoriteMocks, initialTab = "f
   const visibleFavorites = useMemo(() => localFavorites.filter((item) => !query.trim() || `${item.title}${item.hook}${item.kind}${item.theme}`.toLowerCase().includes(query.trim().toLowerCase())), [localFavorites, query]);
 
   const reuse = (draft: Draft) => { const copy = { ...draft, id: `${draft.id}-copy-${Date.now()}`, title: `${draft.title} · 副本`, updatedAt: "刚刚", autoSaved: true, productionStatus: "编辑中" as const, version: (draft.version ?? 1) + 1 }; setLocalDrafts((items) => [copy, ...items]); onReuseDraft?.(copy); onNotify?.("已复制草稿，可在内容工厂继续复用"); };
-  const applyFavorite = (favorite: Favorite, mode: FactoryMode) => { onUseFavorite?.(favorite, mode); onNotify?.(`已将「${favorite.title}」带入${modeName(mode)}`); };
-  const removeFavorite = (item: Favorite) => { setLocalFavorites((items) => items.filter((x) => x.id !== item.id)); setCompare((items) => items.filter((id) => id !== item.id)); onRemoveFavorite?.(item.id); onNotify?.(`已取消收藏「${item.title}」`); };
+  const applyFavorite = (favorite: Favorite, mode: FactoryMode) => { setOpenMenu(null); onUseFavorite?.(favorite, mode); onNotify?.(`已将「${favorite.title}」带入${modeName(mode)}`); };
+  const removeFavorite = (item: Favorite) => { setLocalFavorites((items) => items.filter((x) => x.id !== item.id)); setOpenMenu(null); onRemoveFavorite?.(item.id); onNotify?.(`已取消收藏「${item.title}」`); };
   const updateDraft = (id: string, patch: Partial<Draft>, message: string) => { setLocalDrafts((items) => items.map((draft) => draft.id === id ? { ...draft, ...patch, updatedAt: "刚刚", autoSaved: true } : draft)); setOpenMenu(null); onNotify?.(message); };
-  const toggleCompare = (item: Favorite) => { setCompare((items) => items.includes(item.id) ? items.filter((x) => x !== item.id) : items.length >= 4 ? items : [...items, item.id]); onNotify?.(compare.includes(item.id) ? "已移出对比" : "已加入对比"); };
 
   return <section className={styles.creations} aria-label="我的创作">
     <header><div><span>MY CREATIONS</span><h1>我的创作</h1><p>管理可复用创意资产与内容工厂自动保存的全部生产版本。</p></div><div className={styles.saveState}><i>✓</i><span><b>自动保存已开启</b><small>{localDrafts.length} 个草稿已同步</small></span></div></header>
     <nav className={styles.tabs}><button type="button" className={tab === "favorites" ? styles.active : ""} onClick={() => setTab("favorites")}><i>01</i> 我的收藏 <em>{localFavorites.length}</em></button><button type="button" className={tab === "drafts" ? styles.active : ""} onClick={() => setTab("drafts")}><i>02</i> 我的草稿 <em>{localDrafts.length}</em></button></nav>
-    <div className={styles.libraryTools}><label><span>⌕</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tab === "favorites" ? "搜索标题、主题、类型或钩子" : "搜索草稿、剧目、钩子或语种"}/>{query && <button onClick={() => setQuery("")}>×</button>}</label>{tab === "favorites" && <div><span>对比栏 {compare.length}/4</span><button disabled={compare.length < 2} onClick={() => onNotify?.(`已打开 ${compare.length} 项创意资产对比`)}>开始对比</button><button disabled={!compare.length} onClick={() => setCompare([])}>清空</button></div>}</div>
+    <div className={styles.libraryTools}><label><span>⌕</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tab === "favorites" ? "搜索标题、主题、类型或钩子" : "搜索草稿、剧目、钩子或语种"}/>{query && <button onClick={() => setQuery("")}>×</button>}</label></div>
 
     {tab === "favorites" ? <>
-      <div className={styles.sectionHead}><div><h2>收藏资产</h2><p>广告实例、钩子原型、高光、解说结构与过渡方法均可直接分析、匹配和投入生产。</p></div><button type="button" onClick={() => onNotify?.("已打开灵感大屏收藏列表")}>＋ 从灵感大屏收藏</button></div>
-      <div className={styles.favoriteGrid}>{visibleFavorites.map((item) => <article key={item.id} className={compare.includes(item.id) ? styles.comparing : ""}>
-        <div className={`${styles.preview} ${styles[item.tone]}`}><span>{item.kind}</span><button type="button" aria-label="播放">▶</button><em>00:06</em><label><input type="checkbox" checked={compare.includes(item.id)} onChange={() => toggleCompare(item)}/> 对比</label></div>
+      <div className={styles.sectionHead}><div><h2>收藏资产</h2><p>广告实例、钩子原型、高光、解说结构与过渡方法均可直接分析、匹配和投入生产。</p></div><button type="button" onClick={() => { onOpenInspiration?.(); onNotify?.("已进入灵感大屏，可继续收藏素材"); }}>＋ 从灵感大屏收藏</button></div>
+      <div className={styles.favoriteGrid}>{visibleFavorites.map((item) => <article key={item.id}>
+        <div className={`${styles.preview} ${styles[item.tone]} ${playingFavorite === item.id ? styles.previewPlaying : ""}`}><span>{item.kind}</span><button type="button" aria-label={playingFavorite === item.id ? `暂停预览：${item.title}` : `播放预览：${item.title}`} onClick={() => { const next = playingFavorite === item.id ? null : item.id; setPlayingFavorite(next); onNotify?.(next ? `正在预览「${item.title}」` : "预览已暂停"); }}>{playingFavorite === item.id ? "Ⅱ" : "▶"}</button><em>{playingFavorite === item.id ? "播放中 · 00:03 / 00:06" : "00:06"}</em></div>
         <div className={styles.favoriteBody}><div className={styles.tags}><span>{item.language}</span><span>{item.theme}</span></div><h3>{item.title}</h3><p>{item.hook}</p><dl><div><dt>来源</dt><dd>{item.source}</dd></div><div><dt>收藏</dt><dd>{item.savedAt}</dd></div></dl>
-          <div className={styles.quickActions}><button onClick={() => setDrawer({ type: "favorite", item, view: "完整分析" })}>完整分析</button><button onClick={() => setDrawer({ type: "favorite", item, view: "同原型实例" })}>同原型</button><button onClick={() => setDrawer({ type: "favorite", item, view: "匹配我的剧" })}>匹配我的剧</button></div>
-          <div className={styles.favoriteActions}><button onClick={() => applyFavorite(item, "episode-splice")}>用于剧集拼接</button><button onClick={() => applyFavorite(item, "episode-narration")}>复用解说结构</button><button onClick={() => applyFavorite(item, "external-hook")}>进入外搭模式</button><button type="button" className={styles.more} onClick={() => removeFavorite(item)}>取消收藏</button></div>
+          <div className={styles.favoriteActionBar}>
+            <button type="button" className={styles.analysisAction} onClick={() => { setDrawer({ type: "favorite", item, view: "完整分析" }); setOpenMenu(null); }}>查看分析</button>
+            <div className={styles.createAction}><select aria-label={`选择「${item.title}」的创作模式`} value={selectedModes[item.id] ?? "external-hook"} onChange={(event) => { const next = event.target.value as FactoryMode; setSelectedModes((current) => ({ ...current, [item.id]: next })); onNotify?.(`已选择${modeName(next)}`); }}><option value="external-hook">外搭钩子</option><option value="episode-splice">剧集拼接</option><option value="episode-narration">剧集解说</option></select><button type="button" onClick={() => applyFavorite(item, selectedModes[item.id] ?? "external-hook")}>用于创作</button></div>
+            <button type="button" className={`${styles.favoriteMore} ${openMenu === `favorite-${item.id}` ? styles.favoriteMoreActive : ""}`} aria-label={`更多操作：${item.title}`} aria-expanded={openMenu === `favorite-${item.id}`} onClick={() => setOpenMenu(openMenu === `favorite-${item.id}` ? null : `favorite-${item.id}`)}>•••</button>
+            {openMenu === `favorite-${item.id}` && <div className={styles.favoriteMenu} role="menu"><button type="button" role="menuitem" onClick={() => { setDrawer({ type: "favorite", item, view: "同原型实例" }); setOpenMenu(null); }}>查看同原型实例</button><button type="button" role="menuitem" onClick={() => { setDrawer({ type: "favorite", item, view: "匹配我的剧" }); setOpenMenu(null); }}>匹配我的剧</button><button type="button" role="menuitem" className={styles.removeAction} onClick={() => removeFavorite(item)}>取消收藏</button></div>}
+          </div>
         </div>
       </article>)}</div>
       {!visibleFavorites.length && <div className={styles.empty}>没有找到符合条件的收藏资产。</div>}
