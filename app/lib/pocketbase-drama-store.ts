@@ -217,6 +217,15 @@ export async function updatePocketBaseDramaAnalysis(recordId: string, analysis: 
   return getPocketBaseDrama(recordId);
 }
 
+export async function retryPocketBaseDramaDetail(recordId: string) {
+  await pbFetch(`/api/lumina/analysis/dramas/${encodeURIComponent(recordId)}/retry-detail`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  return getPocketBaseDrama(recordId);
+}
+
 export async function checkPocketBase() {
   const response = await pbFetch("/api/health");
   return response.ok;

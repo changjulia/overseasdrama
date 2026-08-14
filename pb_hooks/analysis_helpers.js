@@ -4,6 +4,13 @@ function authorize(e) {
   if (!expected || supplied !== expected) throw new UnauthorizedError("Invalid analysis worker token");
 }
 
+function authorizeLocalUi(e) {
+  const origin = String(e.requestInfo().headers.origin || "");
+  if (!/^https?:\/\/(localhost|127\.0\.0\.1):3001$/i.test(origin)) {
+    throw new ForbiddenError("Drama retry is only available to the local Lumina UI");
+  }
+}
+
 function createCoarseJob(app, episode) {
   const jobs = app.findCollectionByNameOrId("analysis_jobs");
   const key = `coarse:${episode.id}:v1`;
@@ -97,7 +104,8 @@ function refreshStage(app, dramaId, stage) {
   const drama = app.findRecordById("dramas", dramaId);
   drama.set(`${stage}_status`, status); drama.set(`${stage}_progress`, progress);
   drama.set("parse_state", status === "succeeded" && stage === "precision" ? "succeeded" : `${stage}_${status}`);
+  drama.set("analysis_error", status === "failed" ? `${stage === "detail" ? "细解析" : "精解析"}失败，请查看任务错误` : "");
   app.save(drama);
 }
 
-module.exports = { authorize, createCoarseJob, refreshDrama, refreshStage, ensureDramaStageJob, ensurePrecisionJobs };
+module.exports = { authorize, authorizeLocalUi, createCoarseJob, refreshDrama, refreshStage, ensureDramaStageJob, ensurePrecisionJobs };

@@ -14,6 +14,9 @@ $env:LUMINA_SEMANTIC_API_KEY = "..."
 $env:LUMINA_SEMANTIC_MODEL = "..."
 .\scripts\start-pocketbase.ps1
 .\scripts\start-analysis-worker.ps1
+
+# Recommended: run independent drama/material workers.
+.\scripts\start-analysis-workers.ps1
 ```
 
 只领取并处理一个任务：
@@ -110,6 +113,11 @@ LUMINA_SEMANTIC_MODEL=approved-model-id
 LUMINA_SEMANTIC_PROVIDER=openai-responses # or openai-chat-completions / generic
 LUMINA_COARSE_FRAME_INTERVAL=10
 LUMINA_PRECISION_FRAME_INTERVAL=0.5
+LUMINA_OCR_WORKERS=2
+LUMINA_QWEN_SEGMENT_SECONDS=90
+LUMINA_QWEN_SEGMENT_MIN_DURATION=120
+LUMINA_QWEN_SEGMENT_WORKERS=2
+LUMINA_QWEN_RETRY_DELAY=2
 ```
 
 Recommended Qwen configuration (Alibaba Cloud Model Studio, Beijing legacy

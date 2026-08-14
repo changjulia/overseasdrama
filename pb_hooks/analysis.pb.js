@@ -65,7 +65,13 @@ routerAdd("POST", "/api/lumina/analysis/claim", (e) => {
     drama.set(`${stage}_status`, "running");
     drama.set(`${stage}_progress`, job.getInt("progress"));
     tx.save(drama);
-    claimed = { id: job.id, stage, drama: job.getString("drama"), episode: episode ? episode.id : "", episode_number: episode ? episode.getInt("episode_number") : 0, video: episode ? episode.getString("video") : "", collection_id: episode ? episode.collection().id : "", lease_token: token, lease_until: job.getString("lease_until"), attempt: job.getInt("attempt"), analysis_version: "evidence-first-v1", parameters: job.get("logs") || {} };
+    let parameters = {};
+    try { parameters = JSON.parse(JSON.stringify(job.get("logs") || {})); } catch (_) {}
+    if (stage === "precision" && (!parameters.interval || parameters.interval.start == null || parameters.interval.end == null)) {
+      const parts = job.getString("idempotency_key").split(":");
+      if (parts.length >= 5) parameters = { ...parameters, interval: { start: Number(parts[2]), end: Number(parts[3]) } };
+    }
+    claimed = { id: job.id, stage, drama: job.getString("drama"), episode: episode ? episode.id : "", episode_number: episode ? episode.getInt("episode_number") : 0, video: episode ? episode.getString("video") : "", collection_id: episode ? episode.collection().id : "", lease_token: token, lease_until: job.getString("lease_until"), attempt: job.getInt("attempt"), analysis_version: "evidence-first-v1", parameters };
     if (stage === "detail") {
       claimed.coarse_results = tx.findRecordsByFilter("analysis_jobs", "drama = {:drama} && stage = 'coarse' && status = 'succeeded'", "created", 10000, 0, { drama: job.getString("drama") }).filter(Boolean).map((item) => item.get("result"));
     } else if (stage === "precision" && episode) {
@@ -104,7 +110,13 @@ routerAdd("PATCH", "/api/lumina/analysis/jobs/{id}", (e) => {
     job.set("progress", progress);
     job.set("error", nextStatus === "failed" ? String(body.error || "analysis failed").slice(0, 4000) : "");
     if (body.result != null) job.set("result", body.result);
-    if (body.logs != null) job.set("logs", body.logs);
+    if (body.logs != null) {
+      let existingLogs = {};
+      let incomingLogs = {};
+      try { existingLogs = JSON.parse(JSON.stringify(job.get("logs") || {})); } catch (_) {}
+      try { incomingLogs = JSON.parse(JSON.stringify(body.logs || {})); } catch (_) {}
+      job.set("logs", Object.assign(existingLogs, incomingLogs));
+    }
     if (nextStatus === "running") job.set("lease_until", new Date(Date.now() + Math.max(30, Math.min(1800, Number(body.lease_seconds || 300))) * 1000).toISOString());
     else { job.set("lease_until", ""); job.set("lease_token", ""); }
     tx.save(job);
@@ -153,6 +165,14 @@ routerAdd("POST", "/api/lumina/analysis/jobs/{id}/retry", (e) => {
   job.set("lease_until", "");
   job.set("error", "");
   job.set("result", null);
+  if (job.getString("stage") === "precision") {
+    let logs = {};
+    try { logs = JSON.parse(JSON.stringify(job.get("logs") || {})); } catch (_) {}
+    if (!logs.interval || logs.interval.start == null || logs.interval.end == null) {
+      const parts = job.getString("idempotency_key").split(":");
+      if (parts.length >= 5) job.set("logs", Object.assign(logs, { interval: { start: Number(parts[2]), end: Number(parts[3]) } }));
+    }
+  }
   // A manual retry starts a fresh attempt budget after an operator has fixed
   // the underlying failure (for example a local model/runtime mismatch).
   job.set("attempt", 0);
@@ -180,6 +200,14 @@ routerAdd("POST", "/api/lumina/analysis/jobs/{id}/reset", (e) => {
   job.set("lease_until", "");
   job.set("error", "");
   job.set("result", null);
+  if (job.getString("stage") === "precision") {
+    let logs = {};
+    try { logs = JSON.parse(JSON.stringify(job.get("logs") || {})); } catch (_) {}
+    if (!logs.interval || logs.interval.start == null || logs.interval.end == null) {
+      const parts = job.getString("idempotency_key").split(":");
+      if (parts.length >= 5) job.set("logs", Object.assign(logs, { interval: { start: Number(parts[2]), end: Number(parts[3]) } }));
+    }
+  }
   e.app.save(job);
   helpers.refreshStage(e.app, job.getString("drama"), job.getString("stage"));
   return e.json(200, { id: job.id, status: "queued", attempt: 0 });
@@ -230,4 +258,40 @@ routerAdd("POST", "/api/lumina/analysis/dramas/{id}/reanalyze", (e) => {
   drama.set("analysis", null);
   e.app.save(drama);
   return e.json(200, { drama: dramaId, status: "queued", reset, removed_precision: removedPrecision, output_language: "zh-CN" });
+});
+
+routerAdd("POST", "/api/lumina/analysis/dramas/{id}/retry-detail", (e) => {
+  const helpers = require(`${__hooks}/analysis_helpers.js`);
+  helpers.authorizeLocalUi(e);
+  const dramaId = e.request.pathValue("id");
+  const drama = e.app.findRecordById("dramas", dramaId);
+  const detailJobs = e.app.findRecordsByFilter("analysis_jobs", "drama = {:drama} && stage = 'detail'", "-id", 1, 0, { drama: dramaId }).filter(Boolean);
+  let job = detailJobs[0];
+  if (job && ["queued", "running"].includes(job.getString("status"))) {
+    return e.json(200, { id: job.id, drama: dramaId, status: job.getString("status") });
+  }
+  const precisionJobs = e.app.findRecordsByFilter("analysis_jobs", "drama = {:drama} && stage = 'precision'", "id", 10000, 0, { drama: dramaId }).filter(Boolean);
+  for (const precision of precisionJobs) e.app.delete(precision);
+  if (!job) {
+    job = helpers.ensureDramaStageJob(e.app, dramaId, "detail");
+  } else {
+    job.set("status", "queued");
+    job.set("progress", 0);
+    job.set("attempt", 0);
+    job.set("worker_id", "");
+    job.set("lease_token", "");
+    job.set("lease_until", "");
+    job.set("error", "");
+    job.set("result", null);
+    e.app.save(job);
+  }
+  drama.set("analysis", null);
+  drama.set("detail_status", "queued");
+  drama.set("detail_progress", 0);
+  drama.set("precision_status", "idle");
+  drama.set("precision_progress", 0);
+  drama.set("parse_state", "detail_queued");
+  drama.set("analysis_error", "");
+  e.app.save(drama);
+  return e.json(200, { id: job.id, drama: dramaId, status: "queued", removed_precision: precisionJobs.length, output_language: "zh-CN" });
 });

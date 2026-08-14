@@ -1,3 +1,4 @@
+import copy
 import json
 import tempfile
 import unittest
@@ -7,8 +8,15 @@ from pathlib import Path
 from processor.pack import group_phrases, pack_transcripts
 from processor.scribe import is_cache_valid, source_fingerprint
 from processor.batch_transcribe import select_free_episodes
-from processor.job_worker import ApiRequestError, envelope_from_dict, execute_semantic_job, process_one_endpoint
-from processor.semantic_analysis import AnalysisFailed, AnalysisEnvelope, Evidence, Timecode, _extract_chat_stream, _extract_provider_result, _openai_request_body, _precision_candidates, _semantic_request, _validate_semantic_claims, analyze_detail, failed_envelope
+from processor.job_worker import ApiRequestError, envelope_from_dict, execute_semantic_job, process_available, process_one_endpoint
+from processor.semantic_analysis import AnalysisFailed, AnalysisEnvelope, Evidence, Timecode, _extract_chat_stream, _extract_provider_result, _material_output_contract_valid, _material_semantic_analysis, _openai_request_body, _precision_candidates, _sanitize_material_provider_input, _semantic_request, _validate_semantic_claims, analyze_detail, analyze_material, failed_envelope
+
+MATERIAL_CONTRACT = {
+    "content": {"summary": {"value": "摘要", "confidence": 0.9, "evidence": []}, "tags": [], "characters": [], "relationships": [], "segments": [], "completeness": {"value": "完整", "confidence": 0.9, "evidence": []}},
+    "creative": {"format": {"value": "正片剧集拼接", "confidence": 0.9, "evidence": []}, "tier": {"value": "T1", "confidence": 0.9, "evidence": []}, "hooks": [], "timeline": [], "transitions": [], "packaging": {"visual": [], "subtitle": [], "audio": [], "rhythm": []}},
+    "value": {"scores": {}, "inspirations": [], "risks": [], "suitableGenres": [], "suitableAudiences": []},
+    "review": {"status": "needs_review", "reasons": []},
+}
 
 
 class ProcessorTests(unittest.TestCase):
@@ -103,7 +111,7 @@ class ProcessorTests(unittest.TestCase):
 
     def test_detail_prompt_requires_highlight_candidates_even_when_empty(self):
         body = _openai_request_body("openai-chat-completions", "model", "detail-drama-analysis", {"episodes": []})
-        prompt = body["messages"][0]["content"][0]["text"]
+        prompt = body["messages"][1]["content"][0]["text"]
         self.assertIn("highlightCandidates must be []", prompt)
         self.assertIn("requiredOutputContract", prompt)
 
@@ -115,6 +123,33 @@ class ProcessorTests(unittest.TestCase):
             b'data: [DONE]\n',
         ]
         self.assertEqual(_extract_chat_stream(stream), {"summary": {}})
+
+    def test_openai_chat_stream_accepts_fenced_json(self):
+        stream = [
+            b'data: {"choices":[{"delta":{"content":"```json\\n{\\"summary\\":{}}\\n```"},"finish_reason":"stop"}]}\n',
+            b'data: [DONE]\n',
+        ]
+        self.assertEqual(_extract_chat_stream(stream), {"summary": {}})
+
+    def test_material_prompt_requires_field_level_output_contract(self):
+        body = _openai_request_body("openai-chat-completions", "qwen-vl-max", "paid-ad-material-analysis-merge", {"segmentAnalyses": []})
+        prompt = body["messages"][1]["content"][0]["text"]
+        contract = json.loads(prompt)["requiredOutputContract"]
+        self.assertIn("content", contract)
+        self.assertIn("creative", contract)
+        self.assertIn("value", contract)
+        self.assertIn("review", contract)
+
+    def test_material_contract_rejects_single_summary_claim(self):
+        self.assertFalse(_material_output_contract_valid({"value": "summary", "confidence": 0.9, "evidence": []}))
+        self.assertTrue(_material_output_contract_valid(MATERIAL_CONTRACT))
+
+    def test_material_merge_redacts_explicit_text_but_keeps_timecode(self):
+        source = {"value": "explicit sexual scene", "sourceText": "verbatim", "evidence": [{"timecode": {"start": 1, "end": 2}}]}
+        cleaned = _sanitize_material_provider_input(source)
+        self.assertNotIn("sourceText", cleaned)
+        self.assertNotIn("sexual", cleaned["value"])
+        self.assertEqual(cleaned["evidence"][0]["timecode"], {"start": 1, "end": 2})
 
     @patch("processor.semantic_analysis.urllib.request.urlopen")
     def test_dashscope_api_key_is_accepted_for_qwen(self, urlopen_mock):
@@ -186,6 +221,67 @@ class ProcessorTests(unittest.TestCase):
         restored = envelope_from_dict(original.to_dict())
         self.assertEqual(restored.tier, "detail")
         self.assertEqual(restored.error["message"], "bad evidence")
+
+    @patch("processor.job_worker.process_one_endpoint")
+    def test_workers_can_be_pinned_to_independent_queues(self, process_mock):
+        process_mock.return_value = False
+        process_available("http://pb", "token", "drama-worker", "drama")
+        self.assertEqual(process_mock.call_args.args[3:5], ("/api/lumina/analysis", "drama"))
+        process_mock.reset_mock()
+        process_available("http://pb", "token", "material-worker", "material")
+        self.assertEqual(process_mock.call_args.args[3:5], ("/api/lumina/material-analysis", "material"))
+
+    @patch("processor.job_worker.process_one_endpoint")
+    def test_worker_can_claim_one_exact_material_job(self, process_mock):
+        process_mock.return_value = False
+        process_available("http://pb", "token", "material-worker", "material", "job-123")
+        self.assertEqual(process_mock.call_args.kwargs["job_id"], "job-123")
+
+    @patch.dict("os.environ", {"LUMINA_SEMANTIC_MODEL": "test-model", "LUMINA_WHISPER_MODEL": "test-whisper"})
+    @patch("processor.semantic_analysis._semantic_request", side_effect=lambda *_args, **_kwargs: copy.deepcopy(MATERIAL_CONTRACT))
+    @patch("processor.semantic_analysis.read_ocr")
+    @patch("processor.semantic_analysis.transcribe")
+    @patch("processor.semantic_analysis.extract_frames_at")
+    @patch("processor.semantic_analysis.detect_audio_events", return_value=[])
+    @patch("processor.semantic_analysis.detect_shots", return_value=[])
+    @patch("processor.semantic_analysis._duration", return_value=12.0)
+    def test_material_retry_reuses_asr_and_ocr_cache(self, _duration_mock, _shots_mock, _audio_mock, frames_mock, transcribe_mock, ocr_mock, _semantic_mock):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            frame = root / "frame.jpg"
+            frame.write_bytes(b"jpeg")
+            frames_mock.return_value = [{"path": str(frame), "timecode": {"start": 0.0, "end": 0.0}}]
+            transcribe_mock.return_value = ([{"text": "hello", "start": 0.0, "end": 1.0}], {"backend": "test", "model": "test"})
+            ocr_mock.return_value = ([{"text": "caption", "timecode": {"start": 0.0, "end": 0.0}}], {"backend": "test", "language": "en"})
+            source = root / "material.mp4"
+            source.write_bytes(b"video")
+            cache = root / "cache"
+            analyze_material(source, root / "first", cache_dir=cache)
+            analyze_material(source, root / "second", cache_dir=cache)
+        self.assertEqual(transcribe_mock.call_count, 1)
+        self.assertEqual(ocr_mock.call_count, 1)
+        self.assertEqual(frames_mock.call_count, 1)
+
+    @patch.dict("os.environ", {"LUMINA_QWEN_SEGMENT_SECONDS": "90", "LUMINA_QWEN_SEGMENT_MIN_DURATION": "120", "LUMINA_QWEN_SEGMENT_WORKERS": "3"})
+    @patch("processor.semantic_analysis._semantic_request", side_effect=lambda *_args, **_kwargs: copy.deepcopy(MATERIAL_CONTRACT))
+    def test_long_material_uses_parallel_segments_and_final_merge(self, semantic_mock):
+        stages = []
+        result = _material_semantic_analysis({"frames": [], "transcript": [], "ocr": [], "requirements": []}, 181.0, lambda progress, stage: stages.append((progress, stage)))
+        self.assertEqual(result["creative"]["format"]["value"], "正片剧集拼接")
+        self.assertEqual(semantic_mock.call_count, 5)
+        self.assertTrue(any("4/4" in stage for _, stage in stages))
+        self.assertEqual(semantic_mock.call_args.args[0], "paid-ad-material-analysis-merge")
+
+    @patch.dict("os.environ", {"LUMINA_QWEN_SEGMENT_SECONDS": "90", "LUMINA_QWEN_SEGMENT_MIN_DURATION": "120", "LUMINA_QWEN_SEGMENT_WORKERS": "3", "LUMINA_QWEN_RETRY_DELAY": "0"})
+    @patch("processor.semantic_analysis.time.sleep")
+    @patch("processor.semantic_analysis._semantic_request")
+    def test_parallel_qwen_failure_falls_back_to_serial_segments(self, semantic_mock, _sleep_mock):
+        semantic_mock.side_effect = [AnalysisFailed("concurrency limited")] * 4 + [copy.deepcopy(MATERIAL_CONTRACT) for _ in range(5)]
+        stages = []
+        result = _material_semantic_analysis({"frames": [], "transcript": [], "ocr": [], "requirements": []}, 181.0, lambda progress, stage: stages.append((progress, stage)))
+        self.assertEqual(result["creative"]["format"]["value"], "正片剧集拼接")
+        self.assertEqual(semantic_mock.call_count, 9)
+        self.assertTrue(any("串行重试" in stage for _, stage in stages))
 
     @patch("processor.job_worker.download")
     @patch("processor.job_worker.analyze_precision")
