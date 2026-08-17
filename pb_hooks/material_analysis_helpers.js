@@ -6,7 +6,7 @@ function authorize(e) {
 
 function authorizeLocalUi(e) {
   const origin = String(e.requestInfo().headers.origin || "");
-  if (!/^https?:\/\/(localhost|127\.0\.0\.1):3001$/i.test(origin)) {
+  if (!/^https?:\/\/(localhost|127\.0\.0\.1):(3000|3001)$/i.test(origin)) {
     throw new ForbiddenError("Material retry is only available to the local Lumina UI");
   }
 }

@@ -13,12 +13,14 @@ export type QualityStatus =
   | "货不对板，禁止批量生成";
 
 export type FactoryFlowStepId =
-  | "production-goal"
-  | "episode-entry"
+  | "episode-source"
+  | "hook-source"
   | "hook-match"
   | "transition"
-  | "combinations"
-  | "quality-gate";
+  | "timeline"
+  | "quality-gate"
+  | "preview-review"
+  | "save-export";
 
 export type FactoryStepState = "locked" | "ready" | "active" | "completed";
 export type IntegrationState = "not-connected" | "available" | "running" | "failed" | "completed";
@@ -141,6 +143,7 @@ export type Draft = {
   productionStatus?: "自动保存" | "编辑中" | "生成中" | "待质检" | "建议优化" | "通过" | "禁止批量生成" | "待审核" | "已导出";
   version?: number;
   sourceContext?: FactorySourceContext | null;
+  hookSourceContext?: FactorySourceContext | null;
   selectedEpisodes?: number[];
   /** Only set after a renderer returns a real playable file. */
   outputUrl?: string;
@@ -153,6 +156,7 @@ export type FactoryEpisodeMedia = {
   name: string;
   url?: string;
   duration?: number;
+  fps?: number;
   mimeType?: string;
   analysisStatus?: "idle" | "queued" | "running" | "processing" | "failed" | "completed";
   analysisProgress?: number;
@@ -173,12 +177,26 @@ export type FactorySourceContext = {
   freeEpisodes?: number;
   availableEpisodes?: number[];
   episodeMedia?: Record<number, FactoryEpisodeMedia>;
+  highlightCandidates?: Array<{
+    id: number | string;
+    episode: number;
+    start: number;
+    end: number;
+    title: string;
+    evidence?: string;
+    event?: string;
+    emotion?: string;
+  }>;
 };
 
 export type FactoryWorkspaceProps = {
   initialMode?: FactoryMode;
   editingDraft?: Draft | null;
   sourceContext?: FactorySourceContext | null;
+  dramaSourceContext?: FactorySourceContext | null;
+  hookSourceContext?: FactorySourceContext | null;
+  onChooseDrama?: () => void;
+  onChooseHook?: () => void;
   onDraftAutoSave?: (draft: Draft) => void;
   onOpenDrafts?: () => void;
   onNotify?: (message: string) => void;

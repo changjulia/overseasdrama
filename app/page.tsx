@@ -49,6 +49,8 @@ export default function Home() {
   const [factoryMode, setFactoryMode] = useState<FactoryMode>("episode-splice");
   const [editingDraft, setEditingDraft] = useState<Draft | null>(null);
   const [factorySource, setFactorySource] = useState<FactorySourceContext | null>(null);
+  const [factoryDramaSource, setFactoryDramaSource] = useState<FactorySourceContext | null>(null);
+  const [factoryHookSource, setFactoryHookSource] = useState<FactorySourceContext | null>(null);
   const [drafts, setDrafts] = usePersistentState<Draft[]>("lumina:drafts", initialDrafts);
   const [favorites, setFavorites] = usePersistentState<Favorite[]>("lumina:favorites", favoriteMocks);
   const [tasks, setTasks, tasksReady] = usePersistentState<PipelineTask[]>("lumina:tasks", initialTasks);
@@ -87,7 +89,21 @@ export default function Home() {
   const openFactory = (mode: FactoryMode, draft: Draft | null = null, source: FactorySourceContext | null = null) => {
     setFactoryMode(mode);
     setEditingDraft(draft);
-    setFactorySource(source);
+    if (draft) {
+      const draftDrama = draft.sourceContext?.kind === "library" ? draft.sourceContext : null;
+      const draftHook = draft.hookSourceContext ?? (draft.sourceContext && draft.sourceContext.kind !== "library" ? draft.sourceContext : null);
+      setFactoryDramaSource(draftDrama);
+      setFactoryHookSource(draftHook);
+      setFactorySource(draft.sourceContext ?? null);
+    } else if (source?.kind === "library") {
+      setFactoryDramaSource(source);
+      setFactorySource(source);
+    } else if (source) {
+      setFactoryHookSource(source);
+      if (mode !== "external-hook") setFactorySource(source);
+    } else if (mode !== "external-hook") {
+      setFactorySource(null);
+    }
     setWorkspace("factory");
   };
 
@@ -157,15 +173,19 @@ export default function Home() {
             onImportDrama={() => notify("已打开短剧导入任务")}
             onCreateParsingTask={createParsingTask}
             onOpenProductionRecord={(title) => { setWorkspace("creations"); notify(`已打开「${title}」对应的创作记录`); }}
-            onEnterFactory={({ dramaId, mode, sourceId, title, cn, genre, language, episodes, freeEpisodes, availableEpisodes, episodeMedia }) => openFactory(resolveFactoryMode(mode), null, { kind: "library", id: sourceId ? `${dramaId}-${sourceId}` : String(dramaId), title, dramaTitle: title, dramaCn: cn, genre, language, episodes, freeEpisodes, availableEpisodes, episodeMedia, description: sourceId ? `${cn} · ${genre} · 已带入可投放区间 ${sourceId}` : `${cn} · ${genre} · 共 ${episodes} 集 · 已连接 ${availableEpisodes.length} 集真实片源` })}
+            onEnterFactory={({ dramaId, mode, sourceId, title, cn, genre, language, episodes, freeEpisodes, availableEpisodes, episodeMedia, highlightCandidates }) => openFactory(resolveFactoryMode(mode), null, { kind: "library", id: sourceId ? `${dramaId}-${sourceId}` : String(dramaId), title, dramaTitle: title, dramaCn: cn, genre, language, episodes, freeEpisodes, availableEpisodes, episodeMedia, highlightCandidates, description: sourceId ? `${cn} · ${genre} · 已带入可投放区间 ${sourceId}` : `${cn} · ${genre} · 共 ${episodes} 集 · 已连接 ${availableEpisodes.length} 集真实片源` })}
           />
         </div>
         {workspace === "factory" && (
           <FactoryWorkspace
-            key={`${factoryMode}-${editingDraft?.id ?? "new"}-${factorySource?.id ?? "direct"}`}
+            key={`${factoryMode}-${editingDraft?.id ?? "new"}-${factoryDramaSource?.id ?? factorySource?.id ?? "direct"}-${factoryHookSource?.id ?? "no-hook"}`}
             initialMode={factoryMode}
             editingDraft={editingDraft}
             sourceContext={factorySource}
+            dramaSourceContext={factoryDramaSource}
+            hookSourceContext={factoryHookSource}
+            onChooseDrama={() => setWorkspace("library")}
+            onChooseHook={() => setWorkspace(favorites.length ? "creations" : "inspiration")}
             onDraftAutoSave={saveDraft}
             onOpenDrafts={() => setWorkspace("creations")}
             onNotify={notify}

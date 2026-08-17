@@ -27,17 +27,19 @@ export const factoryModes: FactoryModeDefinition[] = [
     name: "外搭钩子＋本剧正片",
     description: "匹配外搭钩子、自然过渡，并核验承诺兑现",
     icon: "↗",
-    steps: ["生产目标", "正片承接段", "钩子匹配", "过渡生成", "组合版本", "统一质检"],
+    steps: ["选择本剧正片", "选择匹配外搭钩子", "钩子与正片匹配分析", "设计钩子到正片的过渡", "编辑成片时间线", "钩子及货不对板质检", "生成预览与审核", "保存与导出"],
   },
 ];
 
 export const factoryFlowSteps: FactoryFlowStep[] = [
-  { id: "production-goal", order: 1, name: "生产目标", description: "确定平台、市场、目标与输出规格", state: "active" },
-  { id: "episode-entry", order: 2, name: "正片承接段", description: "选择真实片源及可理解的正片接入点", state: "locked", prerequisite: "production-goal" },
-  { id: "hook-match", order: 3, name: "钩子匹配", description: "从钩子库匹配或发起生成任务", state: "locked", prerequisite: "episode-entry" },
-  { id: "transition", order: 4, name: "过渡生成", description: "连接钩子末段与正片开场", state: "locked", prerequisite: "hook-match" },
-  { id: "combinations", order: 5, name: "组合版本", description: "组合已选资产并提交真实渲染", state: "locked", prerequisite: "transition" },
-  { id: "quality-gate", order: 6, name: "统一质检", description: "检查钩子质量、连通性与承诺兑现", state: "locked", prerequisite: "combinations" },
+  { id: "episode-source", order: 1, name: "选择本剧正片", description: "选择真实片源与免费剧集范围", state: "active" },
+  { id: "hook-source", order: 2, name: "选择匹配外搭钩子", description: "从收藏、灵感大屏或钩子库带入素材", state: "locked", prerequisite: "episode-source" },
+  { id: "hook-match", order: 3, name: "钩子与正片匹配分析", description: "对应高光、集数与精确承接帧", state: "locked", prerequisite: "hook-source" },
+  { id: "transition", order: 4, name: "设计钩子到正片的过渡", description: "连接钩子末帧与正片首个可理解事件", state: "locked", prerequisite: "hook-match" },
+  { id: "timeline", order: 5, name: "编辑成片时间线", description: "调整结构、入出点与片段时长", state: "locked", prerequisite: "transition" },
+  { id: "quality-gate", order: 6, name: "钩子及货不对板质检", description: "检查停滑力、承诺兑现、连续性与合规", state: "locked", prerequisite: "timeline" },
+  { id: "preview-review", order: 7, name: "生成预览与审核", description: "生成9:16预览并提交人工审核", state: "locked", prerequisite: "quality-gate" },
+  { id: "save-export", order: 8, name: "保存与导出", description: "保存版本并按审核结果导出", state: "locked", prerequisite: "preview-review" },
 ];
 
 export const defaultProductionGoal: ProductionGoal = {
@@ -52,7 +54,7 @@ export const defaultProductionGoal: ProductionGoal = {
 
 /** Empty by design: downstream assets appear only after a source/API returns real results. */
 export const createInitialFactoryWorkflow = (): FactoryWorkflow => ({
-  currentStep: "production-goal",
+  currentStep: "episode-source",
   steps: factoryFlowSteps.map((step) => ({ ...step })),
   goal: { ...defaultProductionGoal },
   entryPoints: [],

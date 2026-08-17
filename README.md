@@ -32,6 +32,18 @@ $env:POCKETBASE_EXE = "C:\path\to\pocketbase.exe"
 
 默认地址为 `http://127.0.0.1:8090`，数据写入忽略提交的 `pb_data/`。集合由 `pb_migrations/` 自动创建。如需使用其他地址，启动前设置 `NEXT_PUBLIC_POCKETBASE_URL` 并重新启动前端。
 
+macOS / Linux 可直接启动完整本地开发环境（首次运行会下载项目固定版本的 PocketBase，并从脱敏快照初始化数据库）：
+
+```bash
+npm run dev:full
+```
+
+也可以只启动数据服务：
+
+```bash
+npm run pocketbase:start
+```
+
 默认开发地址为终端输出的 Local URL。
 
 ## 真实三级分析 worker

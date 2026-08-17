@@ -1,6 +1,6 @@
 "use client";
 
-export type InspirationMaterialType = "正片剧集拼接" | "正片剧集解说" | "外搭钩子＋本剧正片";
+export type InspirationMaterialType = "待AI识别" | "正片剧集拼接" | "正片剧集解说" | "外搭钩子＋本剧正片";
 export type InspirationAnalysisStatus = "queued" | "running" | "succeeded" | "failed" | "idle";
 
 export type MaterialEvidence = {
@@ -108,6 +108,9 @@ export type InspirationMaterial = {
   highPerformanceRatio: number;
   media?: { name: string; type: string; size: number; duration: number; url?: string };
   createdAt?: string;
+  contentHash?: string;
+  sourceUrl?: string;
+  rightsStatus?: string;
 };
 
 type PBRecord = Record<string, unknown> & {
@@ -128,8 +131,9 @@ async function pbFetch(path: string, init?: RequestInit) {
     throw new Error(`无法连接 PocketBase（${PB_URL}），请先启动本项目的 PocketBase 服务`);
   }
   if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { message?: string } | null;
-    throw new Error(payload?.message || `PocketBase 请求失败（HTTP ${response.status}）`);
+    const payload = await response.json().catch(() => null) as { message?: string; data?:Record<string,{message?:string}> } | null;
+    const fieldMessage=payload?.data&&Object.values(payload.data).map(value=>value?.message).find(Boolean);
+    throw new Error(fieldMessage || payload?.message || `PocketBase 请求失败（HTTP ${response.status}）`);
   }
   return response;
 }
@@ -256,6 +260,9 @@ function fromRecord(record: PBRecord, job?: PBRecord): InspirationMaterial {
       url: fileUrl(record, video),
     } : undefined,
     createdAt,
+    contentHash: text(record.content_hash) || undefined,
+    sourceUrl: text(record.source_url) || undefined,
+    rightsStatus: text(record.rights_status, "仅限内部分析"),
   };
 }
 
@@ -295,9 +302,12 @@ export type InspirationMaterialInput = {
   exposure: number;
   days: number;
   duration: number;
+  contentHash: string;
+  sourceUrl?: string;
+  rightsStatus: string;
 };
 
-export async function saveInspirationMaterial(input: InspirationMaterialInput | InspirationMaterial, video: File): Promise<InspirationMaterial> {
+export async function saveInspirationMaterial(input: InspirationMaterialInput | InspirationMaterial, video: File, onProgress?: (percent:number)=>void): Promise<InspirationMaterial> {
   const form = new FormData();
   form.set("title", input.title);
   form.set("type", input.type);
@@ -312,16 +322,33 @@ export async function saveInspirationMaterial(input: InspirationMaterialInput | 
   form.set("mime_type", video.type || "application/octet-stream");
   form.set("byte_size", String(video.size));
   form.set("duration_seconds", String("duration" in input ? input.duration : input.media?.duration ?? 0));
+  form.set("content_hash", input.contentHash ?? "");
+  form.set("source_url", input.sourceUrl ?? "");
+  form.set("rights_status", input.rightsStatus ?? "仅限内部分析");
   form.set("analysis_status", "queued");
   form.set("analysis_progress", "0");
   form.set("review_status", "待复核");
   form.set("video", video, video.name);
-  const response = await pbFetch("/api/collections/ad_materials/records", { method: "POST", body: form });
-  const saved = fromRecord(await response.json() as PBRecord);
+  const savedRecord = await new Promise<PBRecord>((resolve,reject)=>{
+    const request=new XMLHttpRequest();request.open("POST",`${PB_URL}/api/collections/ad_materials/records`);
+    request.upload.onprogress=event=>{if(event.lengthComputable)onProgress?.(Math.max(1,Math.min(99,Math.round(event.loaded/event.total*100))))};
+    request.onerror=()=>reject(new Error(`上传连接中断（${PB_URL}）`));request.onabort=()=>reject(new DOMException("上传已取消","AbortError"));
+    request.onload=()=>{let payload:unknown;try{payload=JSON.parse(request.responseText)}catch{payload=null}if(request.status<200||request.status>=300){const body=object(payload);const data=object(body.data);const fieldMessage=Object.values(data).map(value=>text(object(value).message)).find(Boolean);reject(new Error(fieldMessage||text(body.message,`PocketBase 上传失败（HTTP ${request.status}）`)));return}onProgress?.(100);resolve(payload as PBRecord)};
+    request.send(form);
+  });
+  const saved = fromRecord(savedRecord);
   // The upload modal keeps the submitted object until this promise resolves.
   // Synchronise that reference so its immediate optimistic row uses the PB id/file URL.
   if ("id" in input) Object.assign(input, saved);
   return saved;
+}
+
+export async function findInspirationMaterialByHash(hash:string):Promise<InspirationMaterial|undefined>{
+  if(!hash)return undefined;const filter=encodeURIComponent(`content_hash="${hash.replace(/"/g,'\\"')}"`);const response=await pbFetch(`/api/collections/ad_materials/records?perPage=1&filter=${filter}`);const payload=await response.json() as {items?:PBRecord[]};return payload.items?.[0]?fromRecord(payload.items[0]):undefined;
+}
+
+export async function hashInspirationVideo(file:File):Promise<string>{
+  const buffer=await file.arrayBuffer();const digest=await crypto.subtle.digest("SHA-256",buffer);return Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,"0")).join("");
 }
 
 export function createInspirationMaterialVideoUrl(material: InspirationMaterial): string | null {

@@ -19,7 +19,11 @@ export type PocketBaseDramaInput = {
   parseConfig: unknown;
   posterDataUrl?: string;
   episodes: Array<{ episode: number; file: File }>;
+  onProgress?: (progress: { completed: number; total: number; episode?: number; loadedBytes?: number; totalBytes?: number; phase: "metadata" | "upload" | "complete" }) => void;
+  signal?: AbortSignal;
 };
+
+export type PocketBaseEpisodeUpload = { episode: number; file: File };
 
 export type PocketBaseDramaRecord = {
   recordId: string;
@@ -61,6 +65,19 @@ async function pbFetch(path: string, init?: RequestInit) {
   return response;
 }
 
+function pbUpload(path: string, method: "POST" | "PATCH", body: FormData, onProgress?: (loaded:number,total:number)=>void, signal?:AbortSignal) {
+  return new Promise<PocketBaseRecord>((resolve,reject)=>{
+    const request=new XMLHttpRequest();request.open(method,`${PB_URL}${path}`);
+    request.upload.onprogress=event=>onProgress?.(event.loaded,event.lengthComputable?event.total:0);
+    request.onerror=()=>reject(new Error(`上传连接中断（${PB_URL}）`));
+    request.onabort=()=>reject(new DOMException("上传已取消","AbortError"));
+    const abort=()=>request.abort();signal?.addEventListener("abort",abort,{once:true});
+    request.onload=()=>{signal?.removeEventListener("abort",abort);let payload:unknown;try{payload=JSON.parse(request.responseText)}catch{payload=null}if(request.status<200||request.status>=300){const message=payload&&typeof payload==="object"&&"message" in payload?String((payload as {message:unknown}).message):`PocketBase 上传失败（HTTP ${request.status}）`;reject(new Error(message));return}resolve(payload as PocketBaseRecord)};
+    if(signal?.aborted){reject(new DOMException("上传已取消","AbortError"));return}
+    request.send(body);
+  });
+}
+
 function fileUrl(record: PocketBaseRecord, filename: unknown, thumb?: string) {
   if (typeof filename !== "string" || !filename) return undefined;
   const query = thumb ? `?thumb=${encodeURIComponent(thumb)}` : "";
@@ -80,6 +97,10 @@ async function findDramaByExternalId(externalId: string) {
 }
 
 export async function saveDramaToPocketBase(input: PocketBaseDramaInput): Promise<PocketBaseDramaRecord> {
+  const episodeNumbers = input.episodes.map((item) => item.episode);
+  if (new Set(episodeNumbers).size !== episodeNumbers.length) throw new Error("上传列表中存在重复集数");
+  if (input.episodes.some((item) => !Number.isInteger(item.episode) || item.episode < 1 || item.file.size === 0)) throw new Error("存在无效集数或空视频文件");
+  input.onProgress?.({ completed: 0, total: input.episodes.length, phase: "metadata" });
   const dramaForm = new FormData();
   dramaForm.set("external_id", input.externalId);
   dramaForm.set("title", input.title);
@@ -101,7 +122,10 @@ export async function saveDramaToPocketBase(input: PocketBaseDramaInput): Promis
   const drama = await dramaResponse.json() as PocketBaseRecord;
 
   try {
-    for (const item of input.episodes) {
+    const totalBytes=input.episodes.reduce((sum,item)=>sum+item.file.size,0);let uploadedBytes=0;
+    for (let index = 0; index < input.episodes.length; index += 1) {
+      const item = input.episodes[index];
+      input.onProgress?.({ completed: index, total: input.episodes.length, episode: item.episode, loadedBytes:uploadedBytes, totalBytes, phase: "upload" });
       const episodeForm = new FormData();
       episodeForm.set("drama", drama.id);
       episodeForm.set("episode_number", String(item.episode));
@@ -110,13 +134,62 @@ export async function saveDramaToPocketBase(input: PocketBaseDramaInput): Promis
       episodeForm.set("byte_size", String(item.file.size));
       episodeForm.set("analysis_status", "queued");
       episodeForm.set("video", item.file, item.file.name);
-      await pbFetch("/api/collections/drama_episodes/records", { method: "POST", body: episodeForm });
+      await pbUpload("/api/collections/drama_episodes/records","POST",episodeForm,(loaded)=>input.onProgress?.({completed:index,total:input.episodes.length,episode:item.episode,loadedBytes:uploadedBytes+loaded,totalBytes,phase:"upload"}),input.signal);
+      uploadedBytes+=item.file.size;
+      input.onProgress?.({ completed: index + 1, total: input.episodes.length, episode: item.episode, loadedBytes:uploadedBytes, totalBytes, phase: "upload" });
     }
   } catch (error) {
     if (!existing) await pbFetch(`/api/collections/dramas/records/${drama.id}`, { method: "DELETE" }).catch(() => undefined);
     throw error;
   }
+  input.onProgress?.({ completed: input.episodes.length, total: input.episodes.length, loadedBytes:input.episodes.reduce((sum,item)=>sum+item.file.size,0), totalBytes:input.episodes.reduce((sum,item)=>sum+item.file.size,0), phase: "complete" });
   return getPocketBaseDrama(drama.id);
+}
+
+export async function upsertPocketBaseDramaEpisodes(
+  recordId: string,
+  episodes: PocketBaseEpisodeUpload[],
+  onProgress?: PocketBaseDramaInput["onProgress"],
+  signal?: AbortSignal,
+): Promise<PocketBaseDramaRecord> {
+  const numbers = episodes.map((item) => item.episode);
+  if (new Set(numbers).size !== numbers.length) throw new Error("上传列表中存在重复集数");
+  if (numbers.some((number) => !Number.isInteger(number) || number < 1)) throw new Error("集数必须是大于 0 的整数");
+  const filter = encodeURIComponent(`drama="${recordId}"`);
+  const existingResponse = await pbFetch(`/api/collections/drama_episodes/records?perPage=500&filter=${filter}`);
+  const existingPayload = await existingResponse.json() as { items: PocketBaseRecord[] };
+  const existingByEpisode = new Map(existingPayload.items.map((item) => [Number(item.episode_number), item]));
+  onProgress?.({ completed: 0, total: episodes.length, phase: "metadata" });
+  const totalBytes=episodes.reduce((sum,item)=>sum+item.file.size,0);let uploadedBytes=0;
+  for (let index = 0; index < episodes.length; index += 1) {
+    const item = episodes[index];
+    const existing = existingByEpisode.get(item.episode);
+    onProgress?.({ completed: index, total: episodes.length, episode: item.episode, loadedBytes:uploadedBytes, totalBytes, phase: "upload" });
+    if(existing&&String(existing.original_name)===item.file.name&&Number(existing.byte_size)===item.file.size){uploadedBytes+=item.file.size;onProgress?.({completed:index+1,total:episodes.length,episode:item.episode,loadedBytes:uploadedBytes,totalBytes,phase:"upload"});continue}
+    const form = new FormData();
+    form.set("drama", recordId);
+    form.set("episode_number", String(item.episode));
+    form.set("original_name", item.file.name);
+    form.set("mime_type", item.file.type || "application/octet-stream");
+    form.set("byte_size", String(item.file.size));
+    form.set("analysis_status", "queued");
+    form.set("analysis_progress", "0");
+    form.set("analysis_error", "");
+    form.set("video", item.file, item.file.name);
+    await pbUpload(existing ? `/api/collections/drama_episodes/records/${existing.id}` : "/api/collections/drama_episodes/records",existing ? "PATCH" : "POST",form,(loaded)=>onProgress?.({completed:index,total:episodes.length,episode:item.episode,loadedBytes:uploadedBytes+loaded,totalBytes,phase:"upload"}),signal);
+    uploadedBytes+=item.file.size;
+    onProgress?.({ completed: index + 1, total: episodes.length, episode: item.episode, loadedBytes:uploadedBytes, totalBytes, phase: "upload" });
+  }
+  const maxEpisode = Math.max(0, ...numbers);
+  const dramaResponse = await pbFetch(`/api/collections/dramas/records/${recordId}`);
+  const drama = await dramaResponse.json() as PocketBaseRecord;
+  if (maxEpisode > Number(drama.total_episodes || 0)) {
+    const form = new FormData();
+    form.set("total_episodes", String(maxEpisode));
+    await pbFetch(`/api/collections/dramas/records/${recordId}`, { method: "PATCH", body: form });
+  }
+  onProgress?.({ completed: episodes.length, total: episodes.length, loadedBytes:totalBytes, totalBytes, phase: "complete" });
+  return getPocketBaseDrama(recordId);
 }
 
 async function getPocketBaseDrama(recordId: string): Promise<PocketBaseDramaRecord> {

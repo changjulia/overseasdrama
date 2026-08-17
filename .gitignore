@@ -54,6 +54,7 @@ pb-hook-test.*.log
 /.analysis-worker-token
 /tools/ffmpeg/
 /tools/ffmpeg-release-essentials.zip
+/tools/pocketbase/
 /.pnpm-store/
 .codex-*.log
 /tmp_content_factory_sources.txt
