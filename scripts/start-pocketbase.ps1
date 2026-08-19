@@ -17,4 +17,11 @@ $pocketBaseArgs = @(
   "--migrationsDir=$migrationsDir",
   "--hooksDir=$hooksDir"
 )
+$workerLauncher = Join-Path $PSScriptRoot "start-analysis-workers.ps1"
+Start-Process -FilePath "powershell.exe" `
+  -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $workerLauncher `
+  -WorkingDirectory $workspace `
+  -WindowStyle Hidden `
+  -RedirectStandardOutput (Join-Path $workspace ".analysis-workers.stdout.log") `
+  -RedirectStandardError (Join-Path $workspace ".analysis-workers.stderr.log")
 & $executable @pocketBaseArgs

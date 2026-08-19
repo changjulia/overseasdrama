@@ -6,7 +6,7 @@ function authorize(e) {
 
 function authorizeLocalUi(e) {
   const origin = String(e.requestInfo().headers.origin || "");
-  if (!/^https?:\/\/(localhost|127\.0\.0\.1):3001$/i.test(origin)) {
+  if (!/^https?:\/\/(localhost|127\.0\.0\.1):300[01]$/i.test(origin)) {
     throw new ForbiddenError("Drama retry is only available to the local Lumina UI");
   }
 }
@@ -67,27 +67,36 @@ function ensureDramaStageJob(app, dramaId, stage) {
 }
 
 function ensurePrecisionJobs(app, dramaId, envelope) {
+  const drama = app.findRecordById("dramas", dramaId);
+  const freeEpisodes = Math.max(0, drama.getInt("free_episodes"));
   const payload = envelope && envelope.result ? envelope.result : {};
   const candidates = Array.isArray(payload.highlightCandidates) ? payload.highlightCandidates : Array.isArray(payload.highlights) ? payload.highlights : [];
   let created = 0;
   for (let index = 0; index < candidates.length; index++) {
     const item = candidates[index] || {};
+    // High confidence only means the model can identify the event. Precision
+    // work is reserved for candidates that also pass the V2 attraction and
+    // production-usability gate. Legacy candidates remain visible for review
+    // but no longer consume precision jobs automatically.
+    if (item.precisionEligible === false || item.precision_eligible === false) continue;
     const episodeNumber = Number(item.episode || item.episodeNumber);
     const range = item.timecode || item.interval || item;
     const start = Number(range.start);
     const end = Number(range.end);
-    if (!Number.isInteger(episodeNumber) || episodeNumber < 1 || !(start >= 0 && end > start)) continue;
+    if (!Number.isInteger(episodeNumber) || episodeNumber < 1 || episodeNumber > freeEpisodes || !(start >= 0 && end > start)) continue;
     let episode;
     try { episode = app.findFirstRecordByFilter("drama_episodes", "drama = {:drama} && episode_number = {:episode}", { drama: dramaId, episode: episodeNumber }); } catch (_) { continue; }
-    const key = `precision:${episode.id}:${start.toFixed(3)}:${end.toFixed(3)}:v1`;
+    // Version precision work independently from the interval.  A detail V2
+    // rerun must not be suppressed by a V1 job for the same time range.
+    const generation = String((envelope && (envelope.analysis_id || envelope.analysisId)) || `highlight-v3:${dramaId}`);
+    const key = `precision:${episode.id}:${start.toFixed(3)}:${end.toFixed(3)}:highlight-v3`;
     try { app.findFirstRecordByFilter("analysis_jobs", "idempotency_key = {:key}", { key }); continue; } catch (_) {}
     const job = new Record(app.findCollectionByNameOrId("analysis_jobs"));
     job.set("drama", dramaId); job.set("episode", episode.id); job.set("stage", "precision"); job.set("status", "queued");
     job.set("progress", 0); job.set("attempt", 0); job.set("max_attempts", 3); job.set("idempotency_key", key);
-    job.set("logs", { interval: { start, end }, candidate_index: index });
+    job.set("logs", { interval: { start, end }, candidate_index: index, generation });
     app.save(job); created++;
   }
-  const drama = app.findRecordById("dramas", dramaId);
   drama.set("precision_status", created ? "queued" : "succeeded");
   drama.set("precision_progress", created ? 0 : 100);
   drama.set("parse_state", created ? "precision_queued" : "succeeded");
@@ -108,4 +117,47 @@ function refreshStage(app, dramaId, stage) {
   app.save(drama);
 }
 
-module.exports = { authorize, authorizeLocalUi, createCoarseJob, refreshDrama, refreshStage, ensureDramaStageJob, ensurePrecisionJobs };
+function syncPrecisionHookAssets(app, job, envelope) {
+  const episodeId = job.getString("episode");
+  if (!episodeId) return [];
+  const episode = app.findRecordById("drama_episodes", episodeId);
+  const drama = app.findRecordById("dramas", job.getString("drama"));
+  const root = envelope && envelope.result ? envelope.result : (envelope || {});
+  const hooks = Array.isArray(root.hookCandidates) ? root.hookCandidates : Array.isArray(root.hooks) ? root.hooks : [];
+  const collection = app.findCollectionByNameOrId("hook_assets");
+  let logs = {};
+  try { logs = JSON.parse(job.getString("logs") || "{}"); } catch (_) {
+    try { logs = JSON.parse(JSON.stringify(job.get("logs") || {})); } catch (_) {}
+  }
+  const generation = String((envelope && envelope.asset_generation) || (root && root.asset_generation) || logs.generation || `highlight-v3:${job.getString("drama")}`);
+  // Precision output is a generated projection, not an append-only asset feed.
+  // Replace older generations for this episode so stale V1/V2 hooks cannot be
+  // mixed with the current analysis in the inspiration screen.
+  app.findRecordsByFilter(collection, "episode = {:episode} && source_class = 'episode_highlight'", "id", 500, 0, { episode: episodeId }).filter(Boolean).forEach((record) => {
+    if (record.getString("analysis_version") !== generation) app.delete(record);
+  });
+  const created = [];
+  hooks.slice(0, 8).forEach((item, index) => {
+    if (!item || typeof item !== "object") return;
+    const range = item.timecode || item.interval || item;
+    const start = Number(range.start), end = Number(range.end);
+    if (!(start >= 0 && end > start && end - start >= 10 && end - start <= 60)) return;
+    const safeStart = item.safeStart || item.safe_start || {}, safeEnd = item.safeEnd || item.safe_end || {};
+    const verified = safeStart.status === "verified" && safeEnd.status === "verified" && safeStart.actionStatus === "complete" && safeEnd.actionStatus === "complete";
+    const record = new Record(collection);
+    record.set("source_class", "episode_highlight"); record.set("drama", drama.id); record.set("episode", episode.id);
+    record.set("title", `剧集高光 - ${drama.getString("title")} - 第${episode.getInt("episode_number")}集 - 钩子${String(index + 1).padStart(2, "0")}`);
+    record.set("start_seconds", start); record.set("end_seconds", end); record.set("boundary_status", verified ? "verified" : "unverified");
+    record.set("safe_start", safeStart); record.set("safe_end", safeEnd); record.set("hook_type", String(item.hookType || item.hook_type || item.type || "剧情高光"));
+    record.set("themes", Array.isArray(item.themes) ? item.themes : []); record.set("content_tags", Array.isArray(item.contentTags) ? item.contentTags : []);
+    record.set("character_roles", Array.isArray(item.characterRoles) ? item.characterRoles : []); record.set("relationships", Array.isArray(item.relationships) ? item.relationships : []);
+    record.set("conflict", String(item.conflict || "")); record.set("emotion", String(item.emotion || "")); record.set("narrative_promise", String(item.narrativePromise || ""));
+    record.set("information_gap", String(item.informationGap || "")); record.set("spoken_summary", String(item.spokenSummary || "")); record.set("visual_summary", String(item.visualSummary || ""));
+    record.set("quality_scores", item.qualityScores || {}); record.set("evidence", item.evidence || []); record.set("analysis", item);
+    record.set("rights_status", drama.getString("copyright_status")); record.set("review_status", verified ? "pending" : "needs_review"); record.set("analysis_version", generation);
+    app.save(record); created.push(record.id);
+  });
+  return created;
+}
+
+module.exports = { authorize, authorizeLocalUi, createCoarseJob, refreshDrama, refreshStage, ensureDramaStageJob, ensurePrecisionJobs, syncPrecisionHookAssets };

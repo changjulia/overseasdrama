@@ -330,6 +330,18 @@
 .previewPlaying > button {
   box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.15);
 }
+.preview > video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #172236;
+}
+.preview > span {
+  z-index: 2;
+  pointer-events: none;
+}
 .favoriteMenu {
   position: absolute;
   z-index: 8;
@@ -419,7 +431,7 @@
 .filters button,
 .filters select { height: 36px; }
 .tableHead { min-height: 42px; }
-.draftTable article { min-height: 88px; }
+.draftTable article { min-height: 96px; }
 .rowActions > button:not(.menuButton),
 .menuButton { height: 34px; }
 .menuButton { width: 34px !important; min-width: 34px; flex-basis: 34px; }
@@ -430,12 +442,18 @@
 .draftThumb {
   overflow: hidden;
   background: #263142;
+  width: 45px;
+  height: auto;
+  aspect-ratio: 9 / 16;
+  flex: 0 0 45px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14);
 }
 .draftThumb video {
   width: 100%;
   height: 100%;
   display: block;
   object-fit: cover;
+  cursor: pointer;
 }
 .draftThumb > span {
   position: relative;

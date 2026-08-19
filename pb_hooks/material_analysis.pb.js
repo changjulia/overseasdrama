@@ -118,13 +118,19 @@ routerAdd("PATCH", "/api/lumina/material-analysis/jobs/{id}", (e) => {
       material.set("hook_count", projection.hookCount);
       material.set("creative_tier", projection.tier);
       material.set("material_format", projection.format);
+      material.set("type", projection.format);
       material.set("review_flags", projection.reviewFlags);
       material.set("prototype_inputs", projection.prototypeInputs);
       material.set("source_attribution", projection.sourceAttribution);
+      material.set("ontology_tags", projection.ontologyTags);
+      const detectedLanguage = String(helpers.resultValue(materialResult, ["detectedLanguage", "language"], helpers.resultValue(materialFields, ["detectedLanguage", "language"], "")) || "");
+      if (detectedLanguage) material.set("language", detectedLanguage.slice(0, 80));
+      material.set("production_gate", projection.productionGate);
       material.set("prototype", String(body.prototype || helpers.resultValue(materialFields, ["prototype", "hookPrototype", "hook_prototype"], material.getString("prototype")) || ""));
       material.set("review_status", String(body.review_status || projection.reviewStatus || helpers.resultValue(materialFields, ["reviewStatus", "review_status"], "pending")));
       const duration = Number(helpers.resultValue(materialResult, ["durationSeconds", "duration_seconds"], 0));
       if (duration > 0) material.set("duration_seconds", duration);
+      helpers.syncMaterialHookAssets(tx, material, materialResult, projection);
     } else if (body.prototype != null) {
       material.set("prototype", String(body.prototype));
     }
@@ -156,6 +162,60 @@ routerAdd("POST", "/api/lumina/material-analysis/jobs/{id}/retry", (e) => {
   material.set("analysis_stage", "queued");
   e.app.save(material);
   return e.json(200, { id: job.id, status: "queued", attempt: 0 });
+});
+
+routerAdd("POST", "/api/lumina/material-analysis/materials/{id}/reproject", (e) => {
+  const helpers = require(`${__hooks}/material_analysis_helpers.js`);
+  helpers.authorizeLocalUi(e);
+  const material = e.app.findRecordById("ad_materials", e.request.pathValue("id"));
+  const decodeJson = (value) => {
+    let decodedValue = value;
+    for (let index = 0; index < 3 && typeof decodedValue === "string"; index++) decodedValue = JSON.parse(decodedValue || "{}");
+    return typeof decodedValue === "object" && decodedValue ? JSON.parse(JSON.stringify(decodedValue)) : {};
+  };
+  const requestBody = e.requestInfo().body || {};
+  let storedResult = requestBody.analysis_result || material.getString("analysis_result");
+  let decoded = decodeJson(storedResult);
+  if (!decoded || !decoded.creative) {
+    const job = e.app.findFirstRecordByFilter("material_analysis_jobs", "material = {:material}", { material: material.id });
+    storedResult = job.getString("result");
+    const envelope = decodeJson(storedResult);
+    decoded = decodeJson(envelope && envelope.result ? envelope.result : envelope);
+  }
+  const result = decoded;
+  if (!result || typeof result !== "object") throw new BadRequestError("material has no analysis result");
+  const creative = result.creative && typeof result.creative === "object" ? result.creative : {};
+  const bodyFormat = helpers.resultValue({ result: creative.bodyFormat || {} }, ["value", "label", "code"], "");
+  const narrationCoverage = Number(helpers.resultValue({ result: creative.narrationCoverage || {} }, ["value"], NaN));
+  const hookSourceStatus = helpers.resultValue({ result: creative.hookSourceStatus || {} }, ["value", "label", "code"], "");
+  let format = "未确定";
+  if (["疑似外搭", "已确认外搭"].includes(String(hookSourceStatus))) format = "外搭钩子＋本剧正片";
+  else if (String(bodyFormat) === "解说主导") format = "正片剧集解说";
+  else if (String(bodyFormat) === "正片主导") format = "正片剧集拼接";
+  else if (String(bodyFormat) === "混合" && Number.isFinite(narrationCoverage)) format = narrationCoverage >= .5 ? "正片剧集解说" : "正片剧集拼接";
+  const basis = ["疑似外搭", "已确认外搭"].includes(String(hookSourceStatus)) ? creative.hookSourceStatus : creative.bodyFormat;
+  creative.format = {
+    code: { "正片剧集拼接": "EPISODE_SPLICE", "正片剧集解说": "EPISODE_NARRATION", "外搭钩子＋本剧正片": "EXTERNAL_HOOK_BODY", "未确定": "UNDETERMINED" }[format],
+    label: format,
+    value: format,
+    confidence: basis && typeof basis.confidence === "number" ? basis.confidence : 0,
+    evidence: basis && Array.isArray(basis.evidence) ? basis.evidence : [],
+    verification: basis && basis.verification ? basis.verification : "unverified"
+  };
+  result.creative = creative;
+  material.set("analysis_result", result);
+  const projection = helpers.projectMaterialResult(result, material.getString("review_status"));
+  material.set("material_format", projection.format);
+  material.set("type", projection.format);
+  material.set("creative_tier", ["T0", "T1", "T2", "T3", "TX"].includes(projection.tier) ? projection.tier : "TX");
+  material.set("segment_count", projection.segmentCount);
+  material.set("hook_count", projection.hookCount);
+  material.set("review_flags", projection.reviewFlags);
+  material.set("ontology_tags", projection.ontologyTags);
+  material.set("production_gate", projection.productionGate);
+  const hookAssetIds = helpers.syncMaterialHookAssets(e.app, material, result, projection);
+  e.app.save(material);
+  return e.json(200, { id: material.id, material_format: projection.format, creative_tier: material.getString("creative_tier"), hook_asset_ids: hookAssetIds });
 });
 
 routerAdd("POST", "/api/lumina/material-analysis/jobs/{id}/reset", (e) => {

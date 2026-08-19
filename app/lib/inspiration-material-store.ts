@@ -1,6 +1,8 @@
 "use client";
 
-export type InspirationMaterialType = "待AI识别" | "正片剧集拼接" | "正片剧集解说" | "外搭钩子＋本剧正片";
+import { normalizeTag, type OntologyDimension } from "./ontology/normalization";
+
+export type InspirationMaterialType = "未确定" | "正片剧集拼接" | "正片剧集解说" | "外搭钩子＋本剧正片";
 export type InspirationAnalysisStatus = "queued" | "running" | "succeeded" | "failed" | "idle";
 
 export type MaterialEvidence = {
@@ -50,6 +52,9 @@ export type MaterialAnalysisV2 = {
   creative: {
     materialType?: MaterialTag;
     tLevel?: MaterialTag;
+    bodyFormat?: MaterialTag;
+    hookSourceStatus?: MaterialTag;
+    narrationCoverage?: number;
     hook?: { start?: number; end?: number; source?: string; mechanisms: MaterialTag[]; sensoryChannels: MaterialTag[] };
     timeline: MaterialSegment[];
     packaging: MaterialTag[];
@@ -64,6 +69,7 @@ export type MaterialAnalysisV2 = {
   };
   review: {
     status?: string;
+    reviewRequired?: boolean;
     items: Array<{ id: string; field: string; label: string; reason?: string; proposedValue?: string; confidence?: number }>;
     note?: string;
   };
@@ -159,34 +165,86 @@ function first(result: Record<string, unknown>, names: string[], fallback: unkno
 }
 
 function list(value: unknown): unknown[] { return Array.isArray(value) ? value : []; }
-function tags(value: unknown): MaterialTag[] {
+const languageNames:Record<string,string>={zh:"中文",en:"英语",ja:"日语",jp:"日语",ko:"韩语",es:"西班牙语",pt:"葡萄牙语",fr:"法语",de:"德语",it:"意大利语",ru:"俄语",ar:"阿拉伯语",hi:"印地语",tr:"土耳其语",vi:"越南语",th:"泰语",id:"印度尼西亚语"};
+function normalizedLanguage(value:unknown){const raw=text(value).trim(),code=raw.toLowerCase().split(/[-_]/)[0];return languageNames[code]||raw}
+function detectEvidenceLanguage(value:unknown){
+  const root=object(value),evidence=object(root.evidence),sample=list(evidence.transcript).concat(list(evidence.ocr)).map(item=>text(object(item).text)).join(" ");
+  if(/[\u3040-\u30ff]/u.test(sample))return"日语";
+  if(/[\uac00-\ud7af]/u.test(sample))return"韩语";
+  if(/[\u0400-\u04ff]/u.test(sample))return"俄语";
+  if(/[\u0600-\u06ff]/u.test(sample))return"阿拉伯语";
+  if(/[\u0e00-\u0e7f]/u.test(sample))return"泰语";
+  if(/[\u4e00-\u9fff]/u.test(sample))return"中文";
+  return"";
+}
+function tags(value: unknown, dimension: OntologyDimension = "theme"): MaterialTag[] {
   return list(value).map((raw, index) => {
+    if (typeof raw === "string") return { code: `TAG_${index + 1}`, label: raw, confidence: Number.NaN };
     const item = object(raw);
+    const relationLabel = text(item.from) && text(item.to) ? `${text(item.from)} · ${text(item.type, "关系")} · ${text(item.to)}` : "";
+    const legacy = text(item.label, text(item.name, relationLabel || text(item.type, "未命名标签")));
+    const canonical = normalizeTag({ ...item, label: legacy }, dimension);
     return {
-      code: text(item.code, `TAG_${index + 1}`), label: text(item.label, text(item.name, "未命名标签")),
-      confidence: number(item.confidence), evidence: list(item.evidence).filter((v): v is string => typeof v === "string"),
+      code: byLegacyCode(item.code, canonical.code, index), label: canonical.label,
+      confidence: item.confidence === undefined || item.confidence === null ? Number.NaN : number(item.confidence), evidence: list(item.evidence).filter((v): v is string => typeof v === "string"),
       verification: text(item.verification) || undefined,
     };
   });
 }
 
+function byLegacyCode(raw: unknown, canonical: string, index: number) {
+  const legacy = text(raw);
+  return legacy && /^TAG_|^[A-Z0-9_-]+$/.test(legacy) ? legacy : canonical || `TAG_${index + 1}`;
+}
+
+const evidenceGroupForStore = (kind: string) => /ocr|subtitle/i.test(kind) ? "ocr" : /asr|transcript/i.test(kind) ? "asr" : "other";
+
 function parseV2(value: unknown): MaterialAnalysisV2 | undefined {
   const root = object(value);
   const candidate = text(root.schemaVersion) === "material-v2" ? root : object(root.materialV2);
   if (text(candidate.schemaVersion) !== "material-v2") return undefined;
-  const evidence = list(candidate.evidence).map((raw, index) => { const item = object(raw); return {
-    id: text(item.id, `evidence-${index + 1}`), kind: text(item.kind, text(item.source, "frame")), start: number(item.start), end: number(item.end),
-    text: text(item.text) || undefined, translation: text(item.translation) || undefined, confidence: number(item.confidence), verification: text(item.verification) || undefined,
-  }; });
+  const evidenceGroup = object(candidate.evidence);
+  const translatedEvidence:Array<{source:string;start:number;end:number;text:string}>=[];
+  const collectTranslations=(value:unknown,insideRawEvidence=false)=>{
+    if(Array.isArray(value)){for(const item of value)collectTranslations(item,insideRawEvidence);return}
+    const item=object(value);if(!Object.keys(item).length)return;
+    const source=text(item.source),timecode=object(item.timecode),translated=text(item.translation,text(item.text));
+    if(!insideRawEvidence&&source&&translated&&/[\u4e00-\u9fff]/u.test(translated)&&(item.timecode||item.start!==undefined))translatedEvidence.push({source:evidenceGroupForStore(source),start:number(item.start,number(timecode.start)),end:number(item.end,number(timecode.end,number(item.start,number(timecode.start)))),text:translated});
+    for(const [key,child] of Object.entries(item))collectTranslations(child,insideRawEvidence||key==="evidence"&&item===candidate);
+  };
+  collectTranslations(candidate);
+  const groupedEvidence = [
+    ["transcript", "asr"], ["asr", "asr"], ["ocr", "ocr"], ["keyframes", "frame"], ["shots", "shot"], ["audioEvents", "audio"],
+  ] as const;
+  const rawEvidence = Array.isArray(candidate.evidence)
+    ? list(candidate.evidence).map(raw => ({ raw, kind: "frame" }))
+    : groupedEvidence.flatMap(([field, kind]) => list(evidenceGroup[field]).map(raw => ({ raw, kind })));
+  const allEvidence = rawEvidence.map(({ raw, kind }, index) => { const item = object(raw), timecode = object(item.timecode), shot = number(item.shot, -1), evidenceText=text(item.text, shot >= 0 ? `镜头 ${shot}` : text(item.type)),start=number(item.start,number(timecode.start)),end=number(item.end,number(timecode.end,start)),matched=translatedEvidence.find(candidate=>candidate.source===evidenceGroupForStore(kind)&&Math.abs(candidate.start-start)<.25&&Math.abs(candidate.end-end)<.5); return {
+    id: text(item.id, `evidence-${kind}-${index + 1}`), kind: text(item.kind, text(item.source, kind)),
+    start, end,
+    text: evidenceText || undefined, translation: text(item.translation,matched?.text) || undefined,
+    confidence: number(item.confidence), verification: kind === "ocr" ? "observed" : text(item.verification) || undefined,
+  }; }).filter(item=>{
+    if(evidenceGroupForStore(item.kind)!=="ocr")return true;
+    const value=(item.translation||item.text||"").replace(/\s+/g," ").trim(),compact=value.replace(/[^\p{L}\p{N}]/gu,"");
+    return compact.length>=2&&!/(?:,|;|:|\b(?:and|or|but|with|to|of|a|an|the))$/i.test(value);
+  }).filter((item,index,array)=>array.findIndex(other=>other.kind===item.kind&&Math.abs(other.start-item.start)<.05&&(other.translation||other.text)===(item.translation||item.text))===index).sort((left, right) => left.start - right.start || left.end - right.end);
+  const evidenceLimit = 48;
+  const evidence = allEvidence.length <= evidenceLimit ? allEvidence : Array.from({ length: evidenceLimit }, (_, index) => allEvidence[Math.round(index * (allEvidence.length - 1) / (evidenceLimit - 1))]);
   const content = object(candidate.content), creative = object(candidate.creative), hook = object(creative.hook), valuePart = object(candidate.value), review = object(candidate.review);
   const timeline = list(creative.timeline).map((raw, index) => { const item = object(raw); return { code: text(item.code, `SEGMENT_${index + 1}`), label: text(item.label, "未命名段落"), start: number(item.start), end: number(item.end), description: text(item.description) || undefined, confidence: number(item.confidence), evidence: list(item.evidence).filter((v): v is string => typeof v === "string") }; });
   const tag = (raw: unknown): MaterialTag | undefined => tags(raw ? [raw] : [])[0];
+  const reviewReasonItem = (reason: string, index: number) => {
+    const sourceIssue = /外搭|外部钩子|来源差异|剪辑来源/.test(reason), speechIssue = /语音|听写|ASR|转录/.test(reason), contextIssue = /上下文|叙事链|完整叙事|背景/.test(reason);
+    return { id: `review-reason-${index + 1}`, field: sourceIssue ? "creative.hookSourceStatus" : speechIssue ? "evidence.asr" : contextIssue ? "content.completeness" : "analysis", label: sourceIssue ? "素材来源待复核" : speechIssue ? "语音证据待复核" : contextIssue ? "叙事上下文待复核" : "分析结论待复核", reason };
+  };
+  const claimTextValue=(value:unknown)=>{const item=object(value);return text(item.value,text(item.label,text(item.code,text(value))))};
   return {
     schemaVersion: "material-v2", evidence,
-    content: { summary: text(content.summary) || undefined, completeness: text(content.completeness) || undefined, genres: tags(content.genres), themes: tags(content.themes), characters: tags(content.characters), relations: tags(content.relations), emotions: tags(content.emotions), conflicts: tags(content.conflicts), storyBeats: tags(content.storyBeats), scenes: tags(content.scenes) },
-    creative: { materialType: tag(creative.materialType), tLevel: tag(creative.tLevel), hook: Object.keys(hook).length ? { start: number(hook.start), end: number(hook.end), source: text(hook.source) || undefined, mechanisms: tags(hook.mechanisms), sensoryChannels: tags(hook.sensoryChannels) } : undefined, timeline, packaging: tags(creative.packaging), transitions: tags(creative.transitions) },
+    content: { summary: claimTextValue(content.summary) || undefined, completeness: claimTextValue(content.completeness) || undefined, genres: tags(content.genres, "genre"), themes: tags(content.themes??content.tags, "theme"), characters: tags(content.characters, "role"), relations: tags(content.relations??content.relationships, "relation"), emotions: tags(content.emotions, "emotion"), conflicts: tags(content.conflicts, "conflict"), storyBeats: tags(content.storyBeats??content.segments, "storyBeat"), scenes: tags(content.scenes, "scene") },
+    creative: { materialType: tag(creative.materialType??creative.format), tLevel: tag(creative.tLevel??creative.tier), bodyFormat: tag(creative.bodyFormat), hookSourceStatus: tag(creative.hookSourceStatus), narrationCoverage: number(object(creative.narrationCoverage).value, number(creative.narrationCoverage)), hook: Object.keys(hook).length ? { start: number(hook.start), end: number(hook.end), source: text(hook.source) || undefined, mechanisms: tags(hook.mechanisms), sensoryChannels: tags(hook.sensoryChannels) } : undefined, timeline, packaging: tags(creative.packaging), transitions: tags(creative.transitions) },
     value: { scores: list(valuePart.scores).map(raw => { const item = object(raw); return { code: text(item.code), label: text(item.label), score: number(item.score), reason: text(item.reason) || undefined, evidence: list(item.evidence).filter((v): v is string => typeof v === "string") }; }), inspirations: list(valuePart.inspirations).filter((v): v is string => typeof v === "string"), avoid: list(valuePart.avoid).filter((v): v is string => typeof v === "string"), suitableGenres: list(valuePart.suitableGenres).filter((v): v is string => typeof v === "string"), suitableAudiences: list(valuePart.suitableAudiences).filter((v): v is string => typeof v === "string") },
-    review: { status: text(review.status) || undefined, items: list(review.items).map((raw, index) => { const item = object(raw); return { id: text(item.id, `review-${index + 1}`), field: text(item.field), label: text(item.label, "待复核项"), reason: text(item.reason) || undefined, proposedValue: text(item.proposedValue) || undefined, confidence: number(item.confidence) }; }), note: text(review.note) || undefined },
+    review: { status: text(review.status) || undefined, reviewRequired: Boolean(review.reviewRequired), items: [...list(review.items).map((raw, index) => { const item = object(raw); return { id: text(item.id, `review-${index + 1}`), field: text(item.field), label: text(item.label, "待复核项"), reason: text(item.reason) || undefined, proposedValue: text(item.proposedValue) || undefined, confidence: item.confidence === undefined || item.confidence === null ? undefined : number(item.confidence) }; }), ...list(review.reasons).filter((v):v is string=>typeof v==="string").map(reviewReasonItem)], note: text(review.note) || undefined },
     sourceAttribution: candidate.sourceAttribution,
   };
 }
@@ -216,14 +274,16 @@ function fromRecord(record: PBRecord, job?: PBRecord): InspirationMaterial {
   const video = text(record.video);
   const duration = number(record.duration_seconds);
   const analysisV2 = parseV2(record.analysis_result);
+  const analyzedType=text(record.material_format,analysisV2?.creative.materialType?.label||"");
+  const effectiveType=(["正片剧集拼接","正片剧集解说","外搭钩子＋本剧正片"].includes(analyzedType)?analyzedType:"未确定") as InspirationMaterialType;
   return {
     id: record.id,
     title: text(record.title, text(record.original_name, "未命名素材")),
-    type: text(record.type, "外搭钩子＋本剧正片") as InspirationMaterialType,
+    type: status==="succeeded"?effectiveType:(text(record.type)==="待AI识别"?"未确定":text(record.type,"未确定")) as InspirationMaterialType,
     source: text(record.source, "外部") === "内部" ? "内部" : "外部",
     platform: text(record.platform, "手动上传"),
     market: text(record.market, "未知市场"),
-    language: text(record.language, "未知语种"),
+    language: normalizedLanguage(first(result,["detectedLanguage","language"],detectEvidenceLanguage(record.analysis_result)))||normalizedLanguage(record.language)||"未知语种",
     theme: text(record.theme, text(first(result, ["theme", "genre"]), "待分析")),
     emotion: text(first(result, ["emotion", "dominantEmotion"]), "待分析"),
     hookType: text(first(hook, ["type", "hookType"], first(result, ["hookType", "hook_type"], "待分析"))),

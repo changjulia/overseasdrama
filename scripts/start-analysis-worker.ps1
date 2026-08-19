@@ -1,11 +1,26 @@
 param(
   [ValidateSet("drama", "material", "both")]
   [string]$Queue = $(if ($env:LUMINA_WORKER_QUEUE) { $env:LUMINA_WORKER_QUEUE } else { "both" }),
+  [ValidatePattern("^[A-Za-z0-9_-]*$")]
+  [string]$Instance = "",
   [string]$JobId,
   [switch]$Once
 )
 $ErrorActionPreference = "Stop"
 $workspace = Split-Path -Parent $PSScriptRoot
+$instanceSuffix = if ($Instance) { "-" + $Instance } else { "" }
+$pidFile = Join-Path $workspace (".analysis-worker-" + $Queue + $instanceSuffix + ".pid")
+if (Test-Path -LiteralPath $pidFile) {
+  $existingPid = 0
+  if ([int]::TryParse((Get-Content -LiteralPath $pidFile -Raw).Trim(), [ref]$existingPid)) {
+    if (Get-Process -Id $existingPid -ErrorAction SilentlyContinue) {
+      Write-Output "$Queue$instanceSuffix analysis worker is already running (PID $existingPid)."
+      exit 0
+    }
+  }
+  Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+}
+[System.IO.File]::WriteAllText($pidFile, [string]$PID)
 $analysisEnvFile = Join-Path $workspace ".env.analysis.local"
 if (Test-Path -LiteralPath $analysisEnvFile) {
   foreach ($line in Get-Content -LiteralPath $analysisEnvFile) {
@@ -18,6 +33,12 @@ if (Test-Path -LiteralPath $analysisEnvFile) {
       Set-Item -Path ("Env:" + $name) -Value $value
     }
   }
+}
+if ($env:LUMINA_TEMP_DIR) {
+  $workerTemp = [System.IO.Path]::GetFullPath($env:LUMINA_TEMP_DIR)
+  [System.IO.Directory]::CreateDirectory($workerTemp) | Out-Null
+  $env:TEMP = $workerTemp
+  $env:TMP = $workerTemp
 }
 $tokenFile = Join-Path $workspace ".analysis-worker-token"
 if (-not $env:LUMINA_WORKER_TOKEN -and (Test-Path -LiteralPath $tokenFile)) { $env:LUMINA_WORKER_TOKEN = (Get-Content -LiteralPath $tokenFile -Raw).Trim() }
@@ -48,10 +69,13 @@ $ffmpeg = Get-ChildItem -Path (Join-Path $workspace "tools\ffmpeg") -Recurse -Fi
 if ($ffmpeg) { $env:PATH = "$($ffmpeg.DirectoryName);$env:PATH" }
 Push-Location $workspace
 try {
-  $workerArgs = @("-m", "processor.job_worker", "--base-url", $baseUrl, "--queue", $Queue, "--worker-id", ("$Queue-worker-" + $PID))
+  $workerArgs = @("-m", "processor.job_worker", "--base-url", $baseUrl, "--queue", $Queue, "--worker-id", ("$Queue-worker" + $instanceSuffix + "-" + $PID))
   if ($Once) { $workerArgs += "--once" }
   if ($JobId) { $workerArgs += @("--job-id", $JobId) }
   & $python @workerArgs
 } finally {
   Pop-Location
+  if ((Test-Path -LiteralPath $pidFile) -and ((Get-Content -LiteralPath $pidFile -Raw).Trim() -eq [string]$PID)) {
+    Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue
+  }
 }

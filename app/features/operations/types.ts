@@ -15,14 +15,14 @@ export type SourceRecord = {
 export type PipelineTask = {
   id: string;
   title: string;
-  category: "素材抓取" | "基础分析" | "深度分析" | "剧集解析" | "视频生成";
-  status: "处理中" | "排队中" | "已完成" | "需处理" | "失败";
+  category: "素材抓取" | "基础分析" | "深度分析" | "剧集解析" | "故事线匹配" | "补充高光" | "接点精分析" | "视频生成";
+  status: "处理中" | "排队中" | "已暂停" | "已完成" | "需处理" | "失败";
   progress: number;
   owner: string;
   createdAt: string;
   cost: string;
   backendId?: string;
-  stage?: "coarse" | "detail" | "precision";
+  stage?: "coarse" | "detail" | "precision" | "hook_match" | "supplemental_highlight" | "entry_precision";
   episodeNumber?: number;
   error?: string;
   logs?: unknown;

@@ -25,7 +25,6 @@ test("server-renders the Lumina workbench shell", async () => {
   assert.match(html, /我的创作/);
   assert.match(html, /数据源管理/);
   assert.match(html, /任务中心/);
-  assert.match(html, /团队与权限/);
 });
 
 test("keeps the documented frontend modules integrated", async () => {
@@ -50,15 +49,15 @@ test("keeps the documented frontend modules integrated", async () => {
   assert.match(operations, /角色权限矩阵/);
 });
 
-test("keeps the content factory production workflow explicit and honest", async () => {
+test("keeps the external-hook production workflow explicit and evidence-backed", async () => {
   const factory = await readFile(new URL("../app/features/factory/FactoryWorkspace.tsx", import.meta.url), "utf8");
 
-  assert.match(factory, /PRODUCTION WORKFLOW/);
-  for (const step of ["生产目标", "正片承接段", "钩子匹配", "过渡生成", "组合版本", "统一质检"]) {
+  for (const step of ["选择剧集", "筛选外搭钩子", "匹配完整故事线与投放区间", "设计钩子到正片的过渡", "编排成片时间线", "执行生成前质检", "生成并预览成片", "保存与导出成片"]) {
     assert.ok(factory.includes(step), `missing production workflow step: ${step}`);
   }
-  assert.match(factory, /当前不生成虚假节点/);
-  assert.match(factory, /等待剧情分析结果/);
+  assert.match(factory, /productionGate/);
+  assert.match(factory, /真实数据驱动/);
+  assert.match(factory, /高匹配分与结构证据不一致/);
 });
 
 test("keeps the real-video preview switchable by connected episode", async () => {

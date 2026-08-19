@@ -5,8 +5,8 @@
   --line: #e1e7ef;
   color: var(--ink);
   background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 16px;
+  border: 0;
+  border-radius: 0;
   overflow: hidden;
 }
 
@@ -70,13 +70,15 @@
 .recommendationCopy b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .recommendationCopy small { color: #576679; font-size: 9px; }
 .recommendationCopy em { color: #8b96a5; font-size: 8px; font-style: normal; }
-.recommendation > strong { color: var(--blue); font-size: 17px; }
+.recommendation > strong { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; color: var(--blue); font-size: 17px; }
+.recommendation > strong small { color: #6f7f93; font-size: 8px; font-weight: 700; white-space: nowrap; }
 
 .matchDetail { min-width: 0; padding: 20px 22px; }
 .matchHero { display: grid; grid-template-columns: 190px 1fr; gap: 18px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
 .frameImage,
-.framePlaceholder { width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; object-fit: cover; background: linear-gradient(135deg, #172a46, #2e5c91); color: #fff; }
+.framePlaceholder { width: 100%; aspect-ratio: 9 / 16; border-radius: 10px; object-fit: cover; background: linear-gradient(135deg, #172a46, #2e5c91); color: #fff; }
 .frameImage { background-position: center; background-size: cover; }
+.previewCaption{display:block;margin-top:7px;color:#66758a;font-size:9px;line-height:1.45;text-align:center}
 .framePlaceholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; }
 .framePlaceholder span { font-size: 9px; opacity: .72; }
 .framePlaceholder b { font-size: 20px; }
@@ -225,3 +227,4 @@
   .qualitySummary { grid-template-columns: 1fr; }
   .qualityFooter { align-items: stretch; flex-direction: column; gap: 10px; }
 }
+.storyArc{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.storyArc article{padding:11px;border-radius:10px;background:#f5f8fc}.storyArc small{color:#1769e0;font-weight:700}.storyArc p{margin:5px 0 0;font-size:12px;line-height:1.5;color:#4d5d72}@media(max-width:850px){.storyArc{grid-template-columns:repeat(2,minmax(0,1fr))}}

@@ -1,6 +1,7 @@
 "use client";
 
 import type { FactoryEpisodeMedia } from "../features/factory/types";
+import { normalizeAnalysisPayload } from "./ontology/normalization";
 
 const configuredUrl = typeof process !== "undefined" ? process.env.NEXT_PUBLIC_POCKETBASE_URL : undefined;
 const PB_URL = (configuredUrl || "http://127.0.0.1:8090").replace(/\/$/, "");
@@ -255,7 +256,7 @@ async function getPocketBaseDrama(recordId: string): Promise<PocketBaseDramaReco
     copyrightStatus: String(drama.copyright_status || ""),
     parseState: String(drama.parse_state || "queued"),
     parseConfig: drama.parse_config,
-    analysis: drama.analysis,
+    analysis: normalizeAnalysisPayload(drama.analysis),
     coarseStatus: coarse.status,
     coarseProgress: coarse.progress,
     detailStatus: detail.status,
@@ -263,7 +264,7 @@ async function getPocketBaseDrama(recordId: string): Promise<PocketBaseDramaReco
     precisionStatus: precision.status,
     precisionProgress: precision.progress,
     analysisError: [coarse.status, detail.status, precision.status].includes("failed") ? String(drama.analysis_error || "") || undefined : undefined,
-    detailResult: latestDetail?.result ?? drama.analysis,
+    detailResult: normalizeAnalysisPayload(latestDetail?.result ?? drama.analysis),
     precisionResults,
     posterUrl: fileUrl(drama, drama.poster, "300x400"),
     episodeMedia,
@@ -285,8 +286,17 @@ export async function updatePocketBaseDramaPoster(recordId: string, posterDataUr
 
 export async function updatePocketBaseDramaAnalysis(recordId: string, analysis: unknown) {
   const form = new FormData();
-  form.set("analysis", JSON.stringify(analysis));
+  form.set("analysis", JSON.stringify(normalizeAnalysisPayload(analysis)));
   await pbFetch(`/api/collections/dramas/records/${recordId}`, { method: "PATCH", body: form });
+  return getPocketBaseDrama(recordId);
+}
+
+export async function updatePocketBaseDramaParseConfig(recordId: string, parseConfig: { coarse: string; detail: string; precision: string }) {
+  await pbFetch(`/api/collections/dramas/records/${recordId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ parse_config: parseConfig }),
+  });
   return getPocketBaseDrama(recordId);
 }
 

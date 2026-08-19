@@ -24,13 +24,28 @@ export type HighlightRecommendation = {
   startFrame?: number;
   fps?: number;
   score?: number;
+  storyScore?: number;
+  promiseFulfillmentScore?: number;
   rationale: string;
   relationship: string;
   conflict: string;
   emotion: string;
   thumbnailUrl?: string;
+  videoUrl?: string;
+  startSeconds?: number;
+  endSeconds?: number;
   evidence: MatchEvidence[];
   risks: string[];
+  storyArc?: { setup?: string; escalation?: string; payoff?: string; ending?: string };
+  segments?: Array<{ episode:number;start:number;end:number;purpose?:string;safeStart?:{status?:string};safeEnd?:{status?:string} }>;
+  entryPoints?: Array<{id?:string;episode?:number;start?:number;frame?:number;recommended?:boolean;safeBoundary?:{status?:string}}>;
+  completeness?: {status?:string;confidence?:number;causalCoverage?:number;missingPhases?:string[]};
+  calibration?: {modelConfidence?:number;evidenceCoverage?:number;boundaryReliability?:number;humanVerification?:string;calibratedProbability?:number;method?:string};
+  productionGate?: {passed?:boolean;reasons?:string[];advisories?:string[];checks?:Record<string,boolean>};
+  matchStatus?: string;
+  productionReady?: boolean;
+  editableBackup?: boolean;
+  overrideApplied?: boolean;
 };
 
 export type HookEpisodeMatch = {
@@ -40,6 +55,13 @@ export type HookEpisodeMatch = {
   summary?: string;
   recommendations: HighlightRecommendation[];
   selectedRecommendationId?: string;
+  resultState?: "idle" | "running" | "waiting_supplemental" | "no_production_candidates" | "failed" | "completed";
+  progress?: number;
+  stage?: string;
+  scope?: { episodes: number[]; scopeLabel: string; targetDurationLabel: string };
+  funnel?: { analyzedEpisodes: number; rawCandidates: number; editableCandidates: number; productionCandidates: number };
+  rejectionReasons?: Array<{ label: string; count: number }>;
+  editableCandidates?: HighlightRecommendation[];
 };
 
 export type HookTransitionOption = {
@@ -64,6 +86,8 @@ export type ExternalHookTimelineClip = {
   episode?: number;
   startTimecode?: string;
   endTimecode?: string;
+  startSeconds?: number;
+  endSeconds?: number;
   subtitle?: string;
   locked?: boolean;
 };
@@ -97,6 +121,12 @@ export type ExternalHookAnalysisProps = {
   disabled?: boolean;
   onTabChange?: (tab: ExternalHookAnalysisTab) => void;
   onSelectRecommendation?: (recommendation: HighlightRecommendation) => void;
+  onOverrideRecommendation?: (recommendation: HighlightRecommendation) => void;
+  onSelectEntryPoint?: (recommendation: HighlightRecommendation, entryPointIndex: number) => void;
+  onRequestMoreEntryPoints?: (recommendation: HighlightRecommendation) => void;
+  onRetryMatch?: () => void;
+  onChangeEpisodeScope?: () => void;
+  onChangeHook?: () => void;
   onSelectTransition?: (transition: HookTransitionOption) => void;
   onPreviewTransition?: (transition: HookTransitionOption) => void;
   onRegenerateTransitions?: () => void;
@@ -132,6 +162,25 @@ function EmptyState({ title, detail }: { title: string; detail: string }) {
   return <div className={styles.emptyState}><i aria-hidden="true">◇</i><b>{title}</b><p>{detail}</p></div>;
 }
 
+function NoProductionResult({ match, onRetry, onChangeScope, onChangeHook }: { match: HookEpisodeMatch; onRetry?: () => void; onChangeScope?: () => void; onChangeHook?: () => void }) {
+  const funnel = match.funnel ?? { analyzedEpisodes: match.scope?.episodes.length ?? 0, rawCandidates: 0, editableCandidates: match.editableCandidates?.length ?? 0, productionCandidates: 0 };
+  return <div className={styles.noResultWorkbench}>
+    <div className={styles.noResultHeadline}><i>!</i><div><b>本轮没有可直接生产的故事线</b><p>{match.summary || "分析已经完成；候选仍可查看和调整，但在通过硬门前不能进入生产。"}</p></div></div>
+    {match.scope && <div className={styles.scopeSummary}><small>本轮分析范围</small><b>{match.scope.scopeLabel} · {match.scope.targetDurationLabel}</b><span>{match.scope.episodes.map(episodeLabel).join("、")}</span></div>}
+    <div className={styles.funnelGrid}>
+      <div><small>已分析剧集</small><b>{funnel.analyzedEpisodes}</b></div><div><small>原始候选</small><b>{funnel.rawCandidates}</b></div><div><small>待处理候选</small><b>{funnel.editableCandidates}</b></div><div><small>可直接生产</small><b>{funnel.productionCandidates}</b></div>
+    </div>
+    <div className={styles.rejectionList}><b>主要未通过原因</b>{match.rejectionReasons?.length ? match.rejectionReasons.map(item=><div key={item.label}><span>{item.label}</span><em>{item.count}</em></div>) : <p>当前服务没有返回候选级淘汰明细。本次“0 候选”暂时不能作为降低评分标准的依据。</p>}</div>
+    <div className={styles.stateActions}><button type="button" onClick={onRetry}>补充高光分析</button><button type="button" onClick={onChangeScope}>调整剧集范围</button><button type="button" onClick={onChangeHook}>更换钩子</button></div>
+  </div>;
+}
+
+function EditableCandidatePanel({ candidates, onSelect, onRetry }: { candidates: HighlightRecommendation[]; onSelect: (item: HighlightRecommendation) => void; onRetry?: () => void }) {
+  return <div className={styles.editablePanel}><header><span>分析诊断</span><h3>{candidates.length ? `发现 ${candidates.length} 条待处理候选` : "没有返回可诊断候选"}</h3><p>{candidates.length ? "候选已经返回；可查看分数、故事证据和生产阻断项。只有标记为可编辑备选的项目才能审核覆盖。" : "系统需要保存原始候选、边界状态与淘汰原因，才能继续补充分析。"}</p></header>
+    {candidates.length ? <div className={styles.editableCards}>{candidates.map(item=><article key={item.id}><div><b>{item.title}</b><small>{episodeLabel(item.episode)} · {item.startTimecode}{item.endTimecode ? `–${item.endTimecode}` : ""}</small></div><dl><div><dt>故事分</dt><dd>{clampScore(item.storyScore ?? item.score)}</dd></div><div><dt>承诺兑现</dt><dd>{clampScore(item.promiseFulfillmentScore)}</dd></div></dl><p>{item.productionGate?.reasons?.[0] || item.risks[0] || "需要进一步验证生产边界"}</p><button type="button" onClick={()=>onSelect(item)}>查看候选证据</button></article>)}</div> : <div className={styles.candidateContract}><b>建议服务端补回</b><span>原始分数 · 边界状态 · 淘汰原因 · 可修复建议</span><button type="button" onClick={onRetry}>补充分析并刷新</button></div>}
+  </div>;
+}
+
 export function ExternalHookAnalysis({
   match,
   transitions = [],
@@ -143,6 +192,12 @@ export function ExternalHookAnalysis({
   disabled = false,
   onTabChange,
   onSelectRecommendation,
+  onOverrideRecommendation,
+  onSelectEntryPoint,
+  onRequestMoreEntryPoints,
+  onRetryMatch,
+  onChangeEpisodeScope,
+  onChangeHook,
   onSelectTransition,
   onPreviewTransition,
   onRegenerateTransitions,
@@ -162,7 +217,9 @@ export function ExternalHookAnalysis({
   const currentRecommendationId = match?.selectedRecommendationId ?? internalRecommendationId;
   const currentTransitionId = selectedTransitionId ?? internalTransitionId;
   const currentClipId = selectedClipId ?? internalClipId;
-  const selectedRecommendation = match?.recommendations.find((item) => item.id === currentRecommendationId) ?? match?.recommendations[0];
+  const resultState = match?.resultState ?? (match?.status === "running" ? "running" : match?.status === "failed" ? "failed" : match?.status === "completed" && !match.recommendations.length ? "no_production_candidates" : match?.status === "completed" ? "completed" : "idle");
+  const recommendationPool = [...(match?.recommendations ?? []), ...(match?.editableCandidates ?? [])];
+  const selectedRecommendation = recommendationPool.find((item) => item.id === currentRecommendationId) ?? (resultState === "completed" ? match?.recommendations[0] : undefined);
   const selectedTransition = transitions.find((item) => item.id === currentTransitionId) ?? transitions[0];
   const totalDuration = useMemo(() => timeline.reduce((sum, clip) => sum + clip.durationSeconds, 0), [timeline]);
 
@@ -187,35 +244,32 @@ export function ExternalHookAnalysis({
   };
 
   return <section className={styles.analysis} aria-label="外搭钩子与本剧正片分析">
-    <header className={styles.heading}>
-      <div><span>EXTERNAL HOOK WORKBENCH</span><h2>钩子与正片组合工作台</h2><p>用可追溯证据确认承接点，再完成过渡、时间线和货不对板质检。</p></div>
-      <div className={styles.headingStatus}><small>当前质检结论</small><strong data-verdict={quality?.verdict ?? "未质检"}>{quality?.verdict ?? "等待质检"}</strong></div>
-    </header>
-
-    <nav className={styles.tabs} aria-label="分析步骤">
-      {tabs.map((tab) => <button type="button" key={tab.id} className={currentTab === tab.id ? styles.tabActive : ""} onClick={() => changeTab(tab.id)}><i>{tab.step}</i><span><b>{tab.label}</b><small>{tab.description}</small></span></button>)}
-    </nav>
 
     {currentTab === "match" && <div className={styles.matchLayout}>
       <aside className={styles.recommendationList}>
-        <div className={styles.sectionTitle}><div><span>高光推荐</span><h3>对应到正片的精确承接点</h3></div><em>{match?.recommendations.length ?? 0} 个候选</em></div>
-        {match?.status === "running" ? <EmptyState title="正在分析匹配关系" detail="正在比对人物、矛盾、情绪与承诺兑现，请稍候。" /> : match?.recommendations.length ? match.recommendations.map((recommendation, index) => <button type="button" key={recommendation.id} className={`${styles.recommendation} ${selectedRecommendation?.id === recommendation.id ? styles.selected : ""}`} onClick={() => selectRecommendation(recommendation)}>
+        <div className={styles.sectionTitle}><div><span>推荐候选</span><h3>对应到正片的精确承接点</h3></div><em>{recommendationPool.length} 个候选</em></div>
+        {resultState === "running" ? <div className={styles.resultState}><EmptyState title="正在分析完整故事线" detail={`${match?.stage || "正在比对主题、人物关系、核心矛盾、情绪与钩子承诺"}${match?.progress != null ? ` · ${Math.round(match.progress)}%` : ""}`} /></div> : resultState === "waiting_supplemental" ? <div className={styles.resultState}><EmptyState title="正在补充高光资产" detail="当前范围缺少足够的已验证高光。补充分析完成后会自动继续故事匹配。"/><div className={styles.stateActions}><button type="button" onClick={onRetryMatch}>刷新分析状态</button><button type="button" onClick={onChangeEpisodeScope}>调整剧集范围</button></div></div> : resultState === "failed"?<div className={styles.resultState}><EmptyState title="本轮分析未完整执行" detail={match?.summary||"部分分析任务失败，当前结果不能用于判断素材质量。"}/><div className={styles.stateActions}><button type="button" onClick={onRetryMatch}>重试失败任务</button><button type="button" onClick={onChangeEpisodeScope}>调整剧集范围</button><button type="button" onClick={onChangeHook}>更换钩子</button></div></div>:recommendationPool.length ? recommendationPool.map((recommendation, index) => <button type="button" key={recommendation.id} className={`${styles.recommendation} ${selectedRecommendation?.id === recommendation.id ? styles.selected : ""}`} onClick={() => selectRecommendation(recommendation)}>
           <span className={styles.rank}>#{index + 1}</span>
           <span className={styles.recommendationCopy}><b>{recommendation.title}</b><small>{episodeLabel(recommendation.episode)} · {recommendation.startTimecode}{recommendation.endTimecode ? `–${recommendation.endTimecode}` : ""}</small><em>{recommendation.startFrame == null ? "帧号待探测" : `第 ${recommendation.startFrame.toLocaleString()} 帧`}{recommendation.fps ? ` · ${recommendation.fps}fps` : ""}</em></span>
-          {recommendation.score != null && <strong>{clampScore(recommendation.score)}</strong>}
-        </button>) : <EmptyState title="等待真实匹配结果" detail="选择本剧正片与外搭钩子后，分析服务会在这里返回高光及逐帧承接点。" />}
+          <strong>{clampScore(recommendation.storyScore ?? recommendation.score)}<small>{recommendation.productionReady?"可生产":recommendation.editableBackup?"可审核":"待补证"}</small></strong>
+        </button>) : resultState === "no_production_candidates" ? <NoProductionResult match={match} onRetry={onRetryMatch} onChangeScope={onChangeEpisodeScope} onChangeHook={onChangeHook}/> : <EmptyState title="尚未开始故事匹配" detail="确认剧集范围与外搭钩子后，点击“开始匹配”创建分析任务。" />}
       </aside>
 
       <main className={styles.matchDetail}>
         {selectedRecommendation ? <>
           <div className={styles.matchHero}>
-            {selectedRecommendation.thumbnailUrl ? <div className={styles.frameImage} role="img" aria-label={`${selectedRecommendation.title} 承接帧`} style={{ backgroundImage: `url(${selectedRecommendation.thumbnailUrl})` }} /> : <div className={styles.framePlaceholder}><span>{episodeLabel(selectedRecommendation.episode)}</span><b>{selectedRecommendation.startTimecode}</b><small>{selectedRecommendation.startFrame == null ? "帧号待媒体探测" : `第 ${selectedRecommendation.startFrame.toLocaleString()} 帧`}</small></div>}
+            {selectedRecommendation.videoUrl ? <div><video className={styles.frameImage} src={`${selectedRecommendation.videoUrl}#t=${selectedRecommendation.startSeconds ?? 0}`} muted playsInline preload="metadata" aria-label={`${selectedRecommendation.title} 正片承接片段`} onMouseEnter={event=>{const video=event.currentTarget;video.dataset.hovering="true";video.currentTime=selectedRecommendation.startSeconds??0;void video.play().catch(()=>undefined)}} onTimeUpdate={event=>{if(selectedRecommendation.endSeconds!=null&&event.currentTarget.currentTime>=selectedRecommendation.endSeconds)event.currentTarget.pause()}} onMouseLeave={event=>{const video=event.currentTarget;video.dataset.hovering="false";video.pause();video.currentTime=selectedRecommendation.startSeconds??0}} onCanPlay={event=>{const video=event.currentTarget;if(video.dataset.hovering==="true")void video.play().catch(()=>undefined)}} /><small className={styles.previewCaption}>{episodeLabel(selectedRecommendation.episode)} · {selectedRecommendation.startTimecode}–{selectedRecommendation.endTimecode} · 悬停播放正片</small></div> : selectedRecommendation.thumbnailUrl ? <div className={styles.frameImage} role="img" aria-label={`${selectedRecommendation.title} 承接帧`} style={{ backgroundImage: `url(${selectedRecommendation.thumbnailUrl})` }} /> : <div className={styles.framePlaceholder}><span>{episodeLabel(selectedRecommendation.episode)}</span><b>{selectedRecommendation.startTimecode}</b><small>{selectedRecommendation.startFrame == null ? "帧号待媒体探测" : `第 ${selectedRecommendation.startFrame.toLocaleString()} 帧`}</small></div>}
             <div><span>推荐承接高光</span><h3>{selectedRecommendation.title}</h3><p>{selectedRecommendation.rationale}</p><dl><div><dt>人物关系</dt><dd>{selectedRecommendation.relationship}</dd></div><div><dt>核心矛盾</dt><dd>{selectedRecommendation.conflict}</dd></div><div><dt>共同情绪</dt><dd>{selectedRecommendation.emotion}</dd></div></dl></div>
           </div>
           <div className={styles.evidenceHeading}><h4>匹配证据</h4><small>钩子证据 ↔ 正片证据</small></div>
+          {selectedRecommendation.storyArc && <div className={styles.storyArc}><article><small>起因</small><p>{selectedRecommendation.storyArc.setup||"待补充"}</p></article><article><small>发展</small><p>{selectedRecommendation.storyArc.escalation||"待补充"}</p></article><article><small>兑现</small><p>{selectedRecommendation.storyArc.payoff||"待补充"}</p></article><article><small>落点</small><p>{selectedRecommendation.storyArc.ending||"待补充"}</p></article></div>}
+          <div className={styles.riskBox}><h4>业务分与生产门</h4><p>故事线 {clampScore(selectedRecommendation.storyScore ?? selectedRecommendation.score)} 分 · 承诺兑现 {clampScore(selectedRecommendation.promiseFulfillmentScore)} 分</p><p>{selectedRecommendation.productionReady?"已通过生产门，可进入过渡与成片编排":selectedRecommendation.videoUrl?"模型建议暂缓；当前候选有真实视频，可由人工确认进入生产":"当前候选没有可播放视频，不能进入生产"}</p>{selectedRecommendation.productionGate?.reasons?.length ? <ul>{selectedRecommendation.productionGate.reasons.map(reason=><li key={reason}>{reason}</li>)}</ul>:null}</div>
+          {selectedRecommendation.videoUrl && !selectedRecommendation.productionReady && <div className={styles.riskBox}><h4>人工生产决策</h4><p>人工判断为第一优先级。确认后允许进入下一步，模型评分和风险项继续保留供后续预览、质检参考。</p><button type="button" onClick={()=>onOverrideRecommendation?.(selectedRecommendation)}>人工确认进入生产</button></div>}
+          <div className={styles.riskBox}><h4>精确接点（最多 3 个）</h4>{selectedRecommendation.entryPoints?.slice(0,3).length?<ul>{selectedRecommendation.entryPoints.slice(0,3).map((point,index)=><li key={point.id??index}><button type="button" onClick={()=>onSelectEntryPoint?.(selectedRecommendation,index)}>EP {point.episode??selectedRecommendation.episode} · {point.start?.toFixed(2)??"待定"}s {point.recommended?"· 推荐":""}</button></li>)}</ul>:<p>尚无精确接点。</p>}<button type="button" onClick={()=>onRequestMoreEntryPoints?.(selectedRecommendation)}>追加接点分析</button></div>
+          {selectedRecommendation.calibration && <div className={styles.riskBox}><h4>生产可信度校准</h4><p>校准概率 {Math.round((selectedRecommendation.calibration.calibratedProbability??0)*100)}% · 证据覆盖 {Math.round((selectedRecommendation.calibration.evidenceCoverage??0)*100)}% · 边界可靠度 {Math.round((selectedRecommendation.calibration.boundaryReliability??0)*100)}% · 故事完整度 {Math.round((selectedRecommendation.completeness?.confidence??0)*100)}%</p></div>}
           <div className={styles.evidenceList}>{selectedRecommendation.evidence.map((evidence) => <article key={evidence.id}><header><b>{evidence.dimension}</b>{evidence.confidence != null && <span>{clampScore(evidence.confidence)}% 可信</span>}</header><div><p><small>钩子</small>{evidence.hookEvidence}</p><i aria-hidden="true">↔</i><p><small>正片</small>{evidence.episodeEvidence}</p></div></article>)}</div>
           <div className={styles.riskBox}><h4>风险提示</h4>{selectedRecommendation.risks.length ? <ul>{selectedRecommendation.risks.map((risk) => <li key={risk}>{risk}</li>)}</ul> : <p>当前没有发现需要提示的匹配风险。</p>}</div>
-        </> : <EmptyState title="请选择一个推荐高光" detail="选中后可查看集数、精确帧、共同人物关系与逐项证据。" />}
+        </> : resultState === "no_production_candidates" ? <EditableCandidatePanel candidates={match?.editableCandidates ?? []} onSelect={selectRecommendation} onRetry={onRetryMatch}/> : <EmptyState title={resultState === "running" || resultState === "waiting_supplemental" ? "分析完成后将在这里展示证据" : "请选择一个推荐高光"} detail={resultState === "running" || resultState === "waiting_supplemental" ? "候选不会在缺少真实证据时提前进入生产。" : "选中后可查看集数、精确帧、共同人物关系与逐项证据。"} />}
       </main>
     </div>}
 

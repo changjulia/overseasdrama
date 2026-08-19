@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import type { OperationsSection, PipelineTask, SourceRecord } from "./types";
+import { deletePocketBaseAnalysisTask, pausePocketBaseAnalysisTask, resumePocketBaseAnalysisTask } from "../../lib/pocketbase-analysis-store";
 import styles from "./operations.module.css";
 
 const initialSources: SourceRecord[] = [
@@ -118,6 +119,7 @@ export function OperationsWorkspace({
   const [taskFilter, setTaskFilter] = useState("全部任务");
   const [query, setQuery] = useState("");
   const [detail, setDetail] = useState<OperationDetail | null>(null);
+  const [taskActionPending,setTaskActionPending]=useState(false);
   const notify = (message: string) => onNotify?.(message);
   useEffect(() => {
     if (!tasks.length) { setSelectedTask(undefined); return; }
@@ -413,7 +415,7 @@ export function OperationsWorkspace({
               placeholder="搜索任务 ID 或名称"
             />
           </label>
-          {["全部任务", "处理中", "排队中", "需处理", "失败", "已完成"].map(
+          {["全部任务", "处理中", "排队中", "已暂停", "需处理", "失败", "已完成"].map(
             (x) => (
               <button
                 className={taskFilter === x ? styles.selected : ""}
@@ -459,6 +461,11 @@ export function OperationsWorkspace({
             <small>{selectedTask.id} · EXECUTION TRACE</small>
             <h2>{selectedTask.title}</h2>
             <p>任务状态、处理证据和异常均会保留；失败节点可从当前阶段重试。</p>
+            <div className={styles.detailProgress} role="progressbar" aria-label={`${selectedTask.title} 分析进度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0,Math.min(100,selectedTask.progress))} data-status={selectedTask.status}>
+              <div><span>分析进度</span><b>{Math.max(0,Math.min(100,selectedTask.progress))}%</b></div>
+              <i><em style={{width:`${Math.max(0,Math.min(100,selectedTask.progress))}%`}}/></i>
+              <small>{selectedTask.status}</small>
+            </div>
             <div className={styles.pipeline}>
               {[
                 "已抓取",
@@ -540,20 +547,11 @@ export function OperationsWorkspace({
               >
                 从失败点重试
               </button>
-              <button
-                className={styles.danger}
-                disabled={Boolean(selectedTask.backendId)}
-                title={selectedTask.backendId ? "当前服务端未开放暂停接口" : undefined}
-                onClick={() => {
-                  setTasks((current) =>
-                    current.map((t) =>
-                      t.id === selectedTask.id ? { ...t, status: "需处理" } : t,
-                    ),
-                  );
-                  notify("任务已暂停");
-                }}
-              >
-                暂停任务
+              <button disabled={taskActionPending||selectedTask.status==="已完成"} onClick={()=>{void (async()=>{setTaskActionPending(true);try{const paused=selectedTask.status==="已暂停";if(selectedTask.backendId){if(paused)await resumePocketBaseAnalysisTask(selectedTask.backendId);else await pausePocketBaseAnalysisTask(selectedTask.backendId)}setTasks(current=>current.map(task=>task.id===selectedTask.id?{...task,status:paused?"排队中":"已暂停"}:task));notify(paused?"任务已继续并重新进入队列":"任务已暂停")}catch(error){notify(error instanceof Error?error.message:"任务操作失败")}finally{setTaskActionPending(false)}})()}}>
+                {selectedTask.status==="已暂停"?"继续任务":"暂停任务"}
+              </button>
+              <button className={styles.danger} disabled={taskActionPending} onClick={()=>{if(!window.confirm(`确定删除任务“${selectedTask.title}”吗？此操作不可撤销。`))return;void (async()=>{setTaskActionPending(true);try{if(selectedTask.backendId)await deletePocketBaseAnalysisTask(selectedTask.backendId);setTasks(current=>current.filter(task=>task.id!==selectedTask.id));notify("任务已删除")}catch(error){notify(error instanceof Error?error.message:"任务删除失败")}finally{setTaskActionPending(false)}})()}}>
+                删除任务
               </button>
             </footer>
           </aside> : <aside className={styles.taskDetail}><h2>暂无真实任务</h2><p>上传片源并创建解析任务后，这里会显示 PocketBase 队列的实时状态。</p></aside>}

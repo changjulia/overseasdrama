@@ -1,0 +1,6 @@
+[
+  {"id":"correct-verified","prediction":1,"label":1,"modelConfidence":0.92,"evidenceCoverage":1.0,"boundaryReliability":0.95,"humanVerification":"verified","predictedBoundary":[1,10],"goldBoundary":[1,10],"storyCompleteness":1.0,"contradiction":false},
+  {"id":"correct-unverified","prediction":0,"label":0,"modelConfidence":0.73,"evidenceCoverage":0.7,"boundaryReliability":0.8,"humanVerification":"unverified","predictedBoundary":[2,9],"goldBoundary":[2,10],"storyCompleteness":0.8,"contradiction":false},
+  {"id":"wrong","prediction":1,"label":0,"modelConfidence":0.88,"evidenceCoverage":0.3,"boundaryReliability":0.4,"humanVerification":"unverified","predictedBoundary":[0,8],"goldBoundary":[1,10],"storyCompleteness":0.5,"contradiction":true},
+  {"id":"missed","prediction":0,"label":1,"modelConfidence":0.41,"evidenceCoverage":0.5,"boundaryReliability":0.6,"humanVerification":"verified","predictedBoundary":[3,11],"goldBoundary":[3,10],"storyCompleteness":0.75,"contradiction":false}
+]

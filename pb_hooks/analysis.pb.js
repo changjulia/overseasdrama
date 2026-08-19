@@ -71,9 +71,15 @@ routerAdd("POST", "/api/lumina/analysis/claim", (e) => {
       const parts = job.getString("idempotency_key").split(":");
       if (parts.length >= 5) parameters = { ...parameters, interval: { start: Number(parts[2]), end: Number(parts[3]) } };
     }
-    claimed = { id: job.id, stage, drama: job.getString("drama"), episode: episode ? episode.id : "", episode_number: episode ? episode.getInt("episode_number") : 0, video: episode ? episode.getString("video") : "", collection_id: episode ? episode.collection().id : "", lease_token: token, lease_until: job.getString("lease_until"), attempt: job.getInt("attempt"), analysis_version: "evidence-first-v1", parameters };
+    claimed = { id: job.id, stage, drama: job.getString("drama"), episode: episode ? episode.id : "", episode_number: episode ? episode.getInt("episode_number") : 0, video: episode ? episode.getString("video") : "", collection_id: episode ? episode.collection().id : "", lease_token: token, lease_until: job.getString("lease_until"), attempt: job.getInt("attempt"), analysis_version: "highlight-attraction-v3", parameters };
     if (stage === "detail") {
-      claimed.coarse_results = tx.findRecordsByFilter("analysis_jobs", "drama = {:drama} && stage = 'coarse' && status = 'succeeded'", "created", 10000, 0, { drama: job.getString("drama") }).filter(Boolean).map((item) => item.get("result"));
+      const freeEpisodes = Math.max(0, drama.getInt("free_episodes"));
+      claimed.episode_assets = tx.findRecordsByFilter("drama_episodes", "drama = {:drama} && episode_number <= {:free} && video != ''", "episode_number", 10000, 0, { drama: job.getString("drama"), free: freeEpisodes }).filter(Boolean).map((item) => ({ id: item.id, episode_number: item.getInt("episode_number"), video: item.getString("video"), collection_id: item.collection().id }));
+      claimed.coarse_results = tx.findRecordsByFilter("analysis_jobs", "drama = {:drama} && stage = 'coarse' && status = 'succeeded'", "created", 10000, 0, { drama: job.getString("drama") }).filter(Boolean).filter((item) => {
+        const episodeId = item.getString("episode");
+        if (!episodeId) return false;
+        try { return tx.findRecordById("drama_episodes", episodeId).getInt("episode_number") <= freeEpisodes; } catch (_) { return false; }
+      }).map((item) => item.get("result"));
     } else if (stage === "precision" && episode) {
       try { claimed.coarse_result = tx.findFirstRecordByFilter("analysis_jobs", "episode = {:episode} && stage = 'coarse' && status = 'succeeded'", { episode: episode.id }).get("result"); } catch (_) {}
     }
@@ -103,8 +109,9 @@ routerAdd("PATCH", "/api/lumina/analysis/jobs/{id}", (e) => {
     if (job.getString("status") !== "running") {
       throw new BadRequestError("job is not running");
     }
-    const leaseUntil = Date.parse(job.getString("lease_until"));
-    if (!leaseUntil || leaseUntil <= Date.now()) throw new ForbiddenError("lease expired");
+    // Ownership is defined by the rotating lease token. A long local ASR/OCR
+    // call may miss a heartbeat; allow the same token to renew until another
+    // worker actually reclaims the job and rotates that token.
     const progress = nextStatus === "succeeded" ? 100 : Math.max(1, Math.min(99, Number(body.progress || job.getInt("progress"))));
     job.set("status", nextStatus);
     job.set("progress", progress);
@@ -115,6 +122,8 @@ routerAdd("PATCH", "/api/lumina/analysis/jobs/{id}", (e) => {
       let incomingLogs = {};
       try { existingLogs = JSON.parse(JSON.stringify(job.get("logs") || {})); } catch (_) {}
       try { incomingLogs = JSON.parse(JSON.stringify(body.logs || {})); } catch (_) {}
+      if (!existingLogs || typeof existingLogs !== "object" || Array.isArray(existingLogs)) existingLogs = {};
+      if (!incomingLogs || typeof incomingLogs !== "object" || Array.isArray(incomingLogs)) incomingLogs = {};
       job.set("logs", Object.assign(existingLogs, incomingLogs));
     }
     if (nextStatus === "running") job.set("lease_until", new Date(Date.now() + Math.max(30, Math.min(1800, Number(body.lease_seconds || 300))) * 1000).toISOString());
@@ -150,6 +159,10 @@ routerAdd("PATCH", "/api/lumina/analysis/jobs/{id}", (e) => {
   });
   if (dramaId) helpers.refreshStage(e.app, dramaId, currentStage);
   if (completedStage === "detail") helpers.ensurePrecisionJobs(e.app, dramaId, completedResult);
+  if (completedStage === "precision") {
+    const completedJob = e.app.findRecordById("analysis_jobs", jobId);
+    helpers.syncPrecisionHookAssets(e.app, completedJob, completedResult);
+  }
   return e.json(200, { id: jobId, status: nextStatus });
 });
 
@@ -185,6 +198,49 @@ routerAdd("POST", "/api/lumina/analysis/jobs/{id}/retry", (e) => {
   }
   helpers.refreshStage(e.app, job.getString("drama"), job.getString("stage"));
   return e.json(200, { id: job.id, status: "queued", attempt: job.getInt("attempt") });
+});
+
+routerAdd("POST", "/api/lumina/analysis/jobs/{id}/pause", (e) => {
+  const helpers = require(`${__hooks}/analysis_helpers.js`);
+  helpers.authorizeLocalUi(e);
+  const job = e.app.findRecordById("analysis_jobs", e.request.pathValue("id"));
+  if (job.getString("status") === "succeeded") throw new BadRequestError("completed jobs cannot be paused");
+  job.set("status", "paused");
+  job.set("worker_id", "");
+  job.set("lease_token", "");
+  job.set("lease_until", "");
+  e.app.save(job);
+  helpers.refreshStage(e.app, job.getString("drama"), job.getString("stage"));
+  return e.json(200, { id: job.id, status: "paused" });
+});
+
+routerAdd("POST", "/api/lumina/analysis/jobs/{id}/resume", (e) => {
+  const helpers = require(`${__hooks}/analysis_helpers.js`);
+  helpers.authorizeLocalUi(e);
+  const job = e.app.findRecordById("analysis_jobs", e.request.pathValue("id"));
+  if (job.getString("status") !== "paused") throw new BadRequestError("only paused jobs can be resumed");
+  job.set("status", "queued");
+  job.set("error", "");
+  e.app.save(job);
+  helpers.refreshStage(e.app, job.getString("drama"), job.getString("stage"));
+  return e.json(200, { id: job.id, status: "queued" });
+});
+
+routerAdd("DELETE", "/api/lumina/analysis/jobs/{id}", (e) => {
+  const helpers = require(`${__hooks}/analysis_helpers.js`);
+  helpers.authorizeLocalUi(e);
+  const job = e.app.findRecordById("analysis_jobs", e.request.pathValue("id"));
+  const dramaId = job.getString("drama");
+  const stage = job.getString("stage");
+  const episodeId = job.getString("episode");
+  e.app.delete(job);
+  if (episodeId && stage === "coarse") {
+    const episode = e.app.findRecordById("drama_episodes", episodeId);
+    episode.set("analysis_status", "idle"); episode.set("analysis_progress", 0); episode.set("analysis_worker", ""); episode.set("analysis_error", "");
+    e.app.save(episode);
+  }
+  helpers.refreshStage(e.app, dramaId, stage);
+  return e.noContent(204);
 });
 
 routerAdd("POST", "/api/lumina/analysis/jobs/{id}/reset", (e) => {
@@ -235,6 +291,7 @@ routerAdd("POST", "/api/lumina/analysis/dramas/{id}/reanalyze", (e) => {
     job.set("lease_until", "");
     job.set("error", "");
     job.set("result", null);
+    job.set("logs", {});
     e.app.save(job);
     reset++;
   }
@@ -283,6 +340,7 @@ routerAdd("POST", "/api/lumina/analysis/dramas/{id}/retry-detail", (e) => {
     job.set("lease_until", "");
     job.set("error", "");
     job.set("result", null);
+    job.set("logs", {});
     e.app.save(job);
   }
   drama.set("analysis", null);
@@ -294,4 +352,48 @@ routerAdd("POST", "/api/lumina/analysis/dramas/{id}/retry-detail", (e) => {
   drama.set("analysis_error", "");
   e.app.save(drama);
   return e.json(200, { id: job.id, drama: dramaId, status: "queued", removed_precision: precisionJobs.length, output_language: "zh-CN" });
+});
+
+routerAdd("POST", "/api/lumina/analysis/dramas/{id}/retry-precision", (e) => {
+  const helpers = require(`${__hooks}/analysis_helpers.js`);
+  helpers.authorizeLocalUi(e);
+  const dramaId = e.request.pathValue("id");
+  const drama = e.app.findRecordById("dramas", dramaId);
+  const jobs = e.app.findRecordsByFilter("analysis_jobs", "drama = {:drama} && stage = 'precision'", "created", 10000, 0, { drama: dramaId }).filter(Boolean);
+  const generation = `highlight-v3:${dramaId}:${new Date().getTime()}`;
+  for (const job of jobs) {
+    let logs = {};
+    try { logs = JSON.parse(JSON.stringify(job.get("logs") || {})); } catch (_) {}
+    logs.generation = generation;
+    job.set("logs", logs); job.set("status", "queued"); job.set("progress", 0); job.set("attempt", 0);
+    job.set("worker_id", ""); job.set("lease_token", ""); job.set("lease_until", ""); job.set("error", ""); job.set("result", null);
+    e.app.save(job);
+  }
+  drama.set("precision_status", jobs.length ? "queued" : "succeeded");
+  drama.set("precision_progress", jobs.length ? 0 : 100); drama.set("parse_state", jobs.length ? "precision_queued" : "succeeded");
+  e.app.save(drama);
+  return e.json(200, { drama: dramaId, status: jobs.length ? "queued" : "succeeded", jobs: jobs.length, generation });
+});
+
+routerAdd("POST", "/api/lumina/analysis/dramas/{id}/reproject-precision-assets", (e) => {
+  const helpers = require(`${__hooks}/analysis_helpers.js`);
+  helpers.authorizeLocalUi(e);
+  const dramaId = e.request.pathValue("id");
+  const jobs = e.app.findRecordsByFilter("analysis_jobs", "drama = {:drama} && stage = 'precision' && status = 'succeeded'", "created", 10000, 0, { drama: dramaId }).filter(Boolean);
+  const generation = `highlight-v3:${dramaId}:${new Date().getTime()}`;
+  let assets = 0;
+  const staleAssets = e.app.findRecordsByFilter("hook_assets", "drama = {:drama} && source_class = 'episode_highlight'", "id", 10000, 0, { drama: dramaId }).filter(Boolean);
+  for (const asset of staleAssets) e.app.delete(asset);
+  for (const job of jobs) {
+    let logs = {};
+    try { logs = JSON.parse(JSON.stringify(job.get("logs") || {})); } catch (_) {}
+    logs.generation = generation; job.set("logs", logs); e.app.save(job);
+    let result = {};
+    try { result = JSON.parse(job.getString("result") || "{}"); } catch (_) {
+      try { result = JSON.parse(JSON.stringify(job.get("result") || {})); } catch (_) {}
+    }
+    result.asset_generation = generation;
+    assets += helpers.syncPrecisionHookAssets(e.app, job, result).length;
+  }
+  return e.json(200, { drama: dramaId, jobs: jobs.length, assets, retired: staleAssets.length, generation });
 });

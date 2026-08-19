@@ -144,11 +144,32 @@ export type Draft = {
   version?: number;
   sourceContext?: FactorySourceContext | null;
   hookSourceContext?: FactorySourceContext | null;
+  onModeChange?: (mode: FactoryMode) => void;
   selectedEpisodes?: number[];
   /** Only set after a renderer returns a real playable file. */
   outputUrl?: string;
   outputName?: string;
   workflow?: FactoryWorkflow;
+  factoryProjectId?: string;
+  parentFactoryProjectId?: string;
+  factoryRenderId?: string;
+  renderVersions?: Array<{
+    id: string;
+    version: number;
+    status: string;
+    previewUrl?: string;
+    outputUrl?: string;
+    created?: string;
+  }>;
+  storyMatchId?: string;
+  isHistorySnapshot?: boolean;
+  factorySnapshot?: {
+    timeline: unknown[];
+    transition: Record<string, unknown>;
+    qualityReport: Record<string, unknown>;
+    review: Record<string, unknown>;
+    projectStatus: string;
+  };
 };
 
 export type FactoryEpisodeMedia = {
@@ -176,6 +197,28 @@ export type FactorySourceContext = {
   episodes?: number;
   freeEpisodes?: number;
   availableEpisodes?: number[];
+  hookAssetId?: string;
+  hookSourceClass?: "episode_highlight" | "narration_opening" | "external_material";
+  hookMaterialId?: string;
+  hookMediaUrl?: string;
+  hookStart?: number;
+  hookEnd?: number;
+  hookStartFrame?: number;
+  hookEndFrame?: number;
+  hookBoundaryStatus?: "unverified" | "verified" | "rejected";
+  hookType?: string;
+  themes?: string[];
+  contentTags?: string[];
+  ontologyTags?: Array<{ code:string;label:string;dimension:string;original?:string;confidence?:number }>;
+  hookMatchScore?: number;
+  hookMatchRelation?: "exact"|"compatible"|"bridgeable"|"contradictory"|"unknown";
+  hookMatchReasons?: string[];
+  relationships?: string[];
+  conflict?: string;
+  emotion?: string;
+  narrativePromise?: string;
+  informationGap?: string;
+  rightsStatus?: string;
   episodeMedia?: Record<number, FactoryEpisodeMedia>;
   highlightCandidates?: Array<{
     id: number | string;
@@ -195,8 +238,9 @@ export type FactoryWorkspaceProps = {
   sourceContext?: FactorySourceContext | null;
   dramaSourceContext?: FactorySourceContext | null;
   hookSourceContext?: FactorySourceContext | null;
-  onChooseDrama?: () => void;
-  onChooseHook?: () => void;
+  onModeChange?: (mode: FactoryMode) => void;
+  onChooseDrama?: (source: FactorySourceContext) => void;
+  onChooseHook?: (source: FactorySourceContext) => void;
   onDraftAutoSave?: (draft: Draft) => void;
   onOpenDrafts?: () => void;
   onNotify?: (message: string) => void;

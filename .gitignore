@@ -49,6 +49,8 @@ next-env.d.ts
 /pb_data/types.d.ts
 .pocketbase.*.log
 .analysis-worker*.log
+.analysis-worker*.pid
+.local-preview.*.log
 .codex-preview.*.log
 pb-hook-test.*.log
 /.analysis-worker-token
@@ -63,6 +65,10 @@ pb-hook-test.*.log
 # local video fixtures and processor outputs
 /test-fixtures/
 /analysis_cache/
+/.qa/
+/public/renders/
+/activityradar/
+/lingshu_AI-0816/
 **/edit/
 
 # Python caches

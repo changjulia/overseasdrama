@@ -284,7 +284,7 @@
 .bottomGrid {
   display: grid;
   gap: 14px;
-  grid-template-columns: .82fr 1.18fr;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .versionList { display: grid; gap: 7px; margin-top: 13px; max-height: 188px; overflow: auto; }

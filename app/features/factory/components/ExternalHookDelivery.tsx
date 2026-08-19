@@ -23,6 +23,7 @@ export type DeliveryExportConfig = {
 };
 
 export type ExternalHookDeliveryProps = {
+  view?: "preview" | "export";
   projectName: string;
   hookName?: string;
   episodeReference?: string;
@@ -37,9 +38,9 @@ export type ExternalHookDeliveryProps = {
   versions?: DeliveryVersion[];
   disabled?: boolean;
   onRequestRender?: () => void | Promise<void>;
-  onReview?: (decision: Exclude<DeliveryReviewStatus, "pending">, comment: string) => void;
+  onReview?: (decision: Exclude<DeliveryReviewStatus, "pending">, comment: string) => void | Promise<void>;
   onSaveDraft?: () => void;
-  onExport?: (config: DeliveryExportConfig) => void;
+  onExport?: (config: DeliveryExportConfig) => void | Promise<void>;
   onSelectVersion?: (version: DeliveryVersion) => void;
   onNotify?: (message: string) => void;
 };
@@ -65,6 +66,7 @@ const versionStatusLabels: Record<DeliveryVersion["status"], string> = {
 };
 
 export function ExternalHookDelivery({
+  view = "preview",
   projectName,
   hookName = "尚未命名钩子",
   episodeReference = "尚未选择正片承接帧",
@@ -98,7 +100,12 @@ export function ExternalHookDelivery({
   const hasPlayablePreview = Boolean(previewUrl);
   const visibleRenderStatus: DeliveryRenderStatus = hasPlayablePreview ? "ready" : renderStatus;
   const visibleProgress = hasPlayablePreview ? 100 : progress;
-  const canExport = hasPlayablePreview && reviewStatus === "approved" && !disabled;
+  const canExport = hasPlayablePreview && !disabled;
+
+  useEffect(() => {
+    setReviewStatus(initialReviewStatus);
+    setComment(initialReviewComment);
+  }, [initialReviewComment, initialReviewStatus]);
 
   useEffect(() => {
     if (!isDemoRun || renderStatus !== "rendering") return;
@@ -135,10 +142,13 @@ export function ExternalHookDelivery({
     }
   };
 
-  const submitReview = (decision: Exclude<DeliveryReviewStatus, "pending">) => {
-    setReviewStatus(decision);
-    onReview?.(decision, comment.trim());
-    onNotify?.(decision === "approved" ? "审核已通过，可以进入导出" : "已驳回并记录修改意见");
+  const submitReview = async (decision: Exclude<DeliveryReviewStatus, "pending">) => {
+    if (!comment.trim()) { onNotify?.("请填写审核意见后再提交"); return; }
+    try {
+      await onReview?.(decision, comment.trim());
+      setReviewStatus(decision);
+      onNotify?.(decision === "approved" ? "审核已通过，可以进入导出" : "已驳回并记录修改意见");
+    } catch (error) { onNotify?.(error instanceof Error ? error.message : "审核提交失败"); }
   };
 
   const exportConfig: DeliveryExportConfig = {
@@ -149,27 +159,15 @@ export function ExternalHookDelivery({
   };
 
   return (
-    <section className={styles.delivery} aria-label="生成预览、审核与导出">
-      <header className={styles.header}>
-        <div>
-          <span>07–08 · DELIVERY</span>
-          <h2>生成预览、审核与交付</h2>
-          <p>确认 9:16 成片，完成审核后保存并导出交付文件。</p>
-        </div>
-        <div className={`${styles.connectionBadge} ${renderConnected ? styles.connected : ""}`}>
-          <i aria-hidden="true" />
-          {renderConnected ? "渲染服务已连接" : "演示模式 · 渲染服务未接入"}
-        </div>
-      </header>
-
-      {!renderConnected && (
+    <section className={styles.delivery} aria-label="生成预览与导出">
+      {view === "preview" && !renderConnected && (
         <div className={styles.boundaryNotice} role="status">
           <strong>当前仅演示交付流程</strong>
           <span>任务进度、审核与导出配置可以操作；系统不会生成、播放或导出虚构成片。</span>
         </div>
       )}
 
-      <div className={styles.deliveryGrid}>
+      {view === "preview" && <div className={styles.deliveryGrid}>
         <div className={styles.previewColumn}>
           <div className={styles.previewHeading}>
             <div><span>9:16 PREVIEW</span><h3>{projectName || "未命名项目"}</h3></div>
@@ -207,34 +205,11 @@ export function ExternalHookDelivery({
             </button>
           </section>
 
-          <section className={styles.card}>
-            <div className={styles.cardTitle}><div><span>人工审核</span><h3>审核意见与结论</h3></div><em className={styles[reviewStatus]}>{reviewStatus === "approved" ? "已通过" : reviewStatus === "rejected" ? "已驳回" : "待审核"}</em></div>
-            <label className={styles.commentField}>
-              <span>审核意见</span>
-              <textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="例如：钩子与 EP08 00:42 的承接自然；建议字幕上移避开平台按钮。" />
-            </label>
-            <div className={styles.reviewActions}>
-              <button type="button" onClick={() => submitReview("rejected")} disabled={disabled}>驳回修改</button>
-              <button type="button" onClick={() => submitReview("approved")} disabled={disabled || !hasPlayablePreview} title={!hasPlayablePreview ? "真实预览文件生成后才能通过审核" : undefined}>审核通过</button>
-            </div>
-            {!hasPlayablePreview && <small className={styles.inlineHint}>没有真实预览文件，当前可演示驳回与意见记录，但不能审核通过。</small>}
-          </section>
+          <section className={styles.card}><div className={styles.cardTitle}><div><span>输出状态</span><h3>{hasPlayablePreview ? "成片可播放" : "等待生成真实成片"}</h3></div></div><p className={styles.inlineHint}>{hasPlayablePreview ? "请在左侧播放检查首帧、转场、字幕与结尾，确认后可直接导出。" : "生成任务完成后，真实视频会自动出现在左侧预览框。"}</p></section>
         </div>
-      </div>
+      </div>}
 
-      <div className={styles.bottomGrid}>
-        <section className={styles.card}>
-          <div className={styles.cardTitle}><div><span>版本记录</span><h3>保留每次生成与审核结果</h3></div><b>{versions.length} 个版本</b></div>
-          <div className={styles.versionList}>
-            {versions.map((version) => (
-              <button type="button" key={version.id} onClick={() => onSelectVersion?.(version)}>
-                <span><b>{version.label}</b><small>{version.createdAt}{version.note ? ` · ${version.note}` : ""}</small></span>
-                <em className={styles[`version_${version.status}`]}>{versionStatusLabels[version.status]}</em>
-              </button>
-            ))}
-          </div>
-        </section>
-
+      {view === "export" && <div className={styles.bottomGrid}>
         <section className={styles.card}>
           <div className={styles.cardTitle}><div><span>导出规格</span><h3>命名与交付设置</h3></div><b>9:16</b></div>
           <div className={styles.exportFields}>
@@ -245,11 +220,11 @@ export function ExternalHookDelivery({
           </div>
           <div className={styles.exportActions}>
             <button type="button" onClick={() => { onSaveDraft?.(); onNotify?.("草稿与交付配置已保存"); }} disabled={disabled}>保存草稿</button>
-            <button className={styles.exportButton} type="button" onClick={() => onExport?.(exportConfig)} disabled={!canExport} title={!hasPlayablePreview ? "渲染服务尚未返回真实文件" : reviewStatus !== "approved" ? "审核通过后才能导出" : undefined}>导出成片</button>
+            <button className={styles.exportButton} type="button" onClick={() => void onExport?.(exportConfig)} disabled={!canExport} title={!hasPlayablePreview ? "渲染服务尚未返回真实文件" : undefined}>导出成片</button>
           </div>
-          {!canExport && <small className={styles.exportHint}>{!hasPlayablePreview ? "等待真实预览文件后开放导出" : "审核通过后开放导出"}</small>}
+          {!canExport && <small className={styles.exportHint}>等待真实预览文件后开放导出</small>}
         </section>
-      </div>
+      </div>}
     </section>
   );
 }
