@@ -238,6 +238,18 @@
 .taskStages .stageDone { color: #28795e; }
 .taskStages .stageDone i { background: #dcf3e9; }
 
+.taskFeedback,
+.taskError {
+  border-radius: 7px;
+  font-size: 10px;
+  line-height: 1.55;
+  margin: 10px 0;
+  padding: 8px 10px;
+}
+
+.taskFeedback { background: #edf5ff; color: #245fba; }
+.taskError { background: #fff0ef; color: #b83a34; }
+
 .primaryButton,
 .reviewActions button,
 .exportActions button {

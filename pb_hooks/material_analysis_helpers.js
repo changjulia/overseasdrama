@@ -6,7 +6,10 @@ function authorize(e) {
 
 function authorizeLocalUi(e) {
   const origin = String(e.requestInfo().headers.origin || "");
-  if (!/^https?:\/\/(localhost|127\.0\.0\.1):(3000|3001)$/i.test(origin)) {
+  const headers = e.requestInfo().headers;
+  const localUiHeader = String(headers["x-lumina-ui"] || headers["X-Lumina-Ui"] || "");
+  const browserOriginAllowed = /^https?:\/\/(localhost|127\.0\.0\.1):(3000|3001|8090)$/i.test(origin);
+  if (!browserOriginAllowed && origin && localUiHeader !== "local") {
     throw new ForbiddenError("Material retry is only available to the local Lumina UI");
   }
 }
@@ -71,12 +74,14 @@ function projectMaterialResult(result, fallbackReviewStatus) {
   const value = objectValue(root.value);
   const hooks = arrayValue(creative.hooks);
   const segments = arrayValue(content.segments).length ? arrayValue(content.segments) : arrayValue(creative.timeline);
-  const tier = claimText(creative.tier || root.tier);
+  const rawTier = claimText(creative.tier || root.tier);
+  const tier = ["T0", "T1", "T2", "T3", "TX"].includes(rawTier) ? rawTier : "TX";
   const bodyFormat = claimText(creative.bodyFormat);
   const narrationCoverage = Number(objectValue(creative.narrationCoverage).value);
   const hookSourceStatus = claimText(creative.hookSourceStatus);
+  const hookAssemblyType = claimText(creative.hookAssemblyType);
   let format = claimText(creative.format || root.material_format || root.materialFormat);
-  if (["疑似外搭", "已确认外搭"].includes(hookSourceStatus)) format = "外搭钩子＋本剧正片";
+  if (["同剧外搭", "跨剧外搭", "外搭来源待确认"].includes(hookAssemblyType) || ["疑似外搭", "已确认外搭"].includes(hookSourceStatus)) format = "外搭钩子＋本剧正片";
   else if (bodyFormat === "解说主导") format = "正片剧集解说";
   else if (bodyFormat === "正片主导") format = "正片剧集拼接";
   else if (bodyFormat === "混合" && Number.isFinite(narrationCoverage)) format = narrationCoverage >= .5 ? "正片剧集解说" : "正片剧集拼接";
@@ -121,6 +126,15 @@ function resultValue(result, names, fallback) {
   return fallback;
 }
 
+function selectClaimValue(claim, aliases, fallback) {
+  const row = objectValue(claim);
+  const candidates = [row.code, row.value, row.label, claim].map((value) => String(value || "").trim()).filter(Boolean);
+  for (const candidate of candidates) {
+    if (Object.prototype.hasOwnProperty.call(aliases, candidate)) return aliases[candidate];
+  }
+  return fallback;
+}
+
 function numberValue(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : (fallback || 0);
@@ -129,10 +143,17 @@ function numberValue(value, fallback) {
 function syncMaterialHookAssets(app, material, result, projection) {
   const collection = app.findCollectionByNameOrId("hook_assets");
   const existing = app.findRecordsByFilter(collection, "material = {:material}", "id", 500, 0, { material: material.id }).filter(Boolean);
-  existing.forEach((record) => app.delete(record));
-
   const root = objectValue(result && result.result ? result.result : result);
   const creative = objectValue(root.creative);
+  const hookSourceStatus = selectClaimValue(creative.hookSourceStatus, {
+    NO_INDEPENDENT_HOOK: "无独立钩子", SAME_DRAMA: "已确认同剧", SUSPECTED_EXTERNAL: "疑似外搭", CONFIRMED_EXTERNAL: "已确认外搭", UNKNOWN: "来源未知",
+    "无独立钩子": "无独立钩子", "已确认同剧": "已确认同剧", "疑似外搭": "疑似外搭", "已确认外搭": "已确认外搭", "来源未知": "来源未知"
+  }, "来源未知");
+  const hookAssemblyType = selectClaimValue(creative.hookAssemblyType, {
+    NONE: "无前置钩子", SAME_DRAMA_PREFACE: "同剧外搭", CROSS_DRAMA_PREFACE: "跨剧外搭", UNKNOWN_PREFACE: "外搭来源待确认",
+    "无前置钩子": "无前置钩子", "同剧外搭": "同剧外搭", "跨剧外搭": "跨剧外搭", "外搭来源待确认": "外搭来源待确认"
+  }, "无前置钩子");
+  const content = objectValue(root.content);
   const evidenceRoot = objectValue(root.evidence);
   const hooks = arrayValue(creative.hooks);
   const sourceDuration = Math.max(0, numberValue(root.durationSeconds || objectValue(result).durationSeconds, 0));
@@ -142,7 +163,16 @@ function syncMaterialHookAssets(app, material, result, projection) {
   const sourceClass = projection.format === "正片剧集解说" ? "narration_opening" : "external_material";
   if (!sourceClass) return [];
 
-  const created = [];
+  const created = [], reusedIds = [];
+  const labels = (value) => arrayValue(value).map((item) => {
+    const row = objectValue(item);
+    return claimText(row.label || row.value || row.name || item);
+  }).filter(Boolean);
+  const fallbackThemes = [...labels(content.themes), ...labels(content.genres)].slice(0, 8);
+  const fallbackConflicts = labels(content.conflicts);
+  const fallbackEmotions = labels(content.emotions);
+  const fallbackRelationships = labels(content.relationships);
+  const fallbackCharacters = arrayValue(content.characters).map((item) => claimText(objectValue(item).role || objectValue(item).label || objectValue(item).name)).filter(Boolean);
   hooks.forEach((rawHook) => {
     if (created.length >= 5) return;
     const hook = objectValue(rawHook);
@@ -160,8 +190,15 @@ function syncMaterialHookAssets(app, material, result, projection) {
     const verified = claimText(startBoundary.status || startBoundary.verification) === "verified"
       && claimText(endBoundary.status || endBoundary.verification) === "verified";
     const scores = objectValue(hook.qualityScores || hook.quality_scores || hook.scores);
-    const record = new Record(collection);
+    const record = existing.find((candidate) => !reusedIds.includes(candidate.id)
+      && candidate.getString("source_class") === sourceClass
+      && Math.abs(candidate.getFloat("start_seconds") - start) <= .25
+      && Math.abs(candidate.getFloat("end_seconds") - end) <= .25) || new Record(collection);
+    reusedIds.push(record.id);
+    const wasHumanApproved = record.getString("review_status") === "approved" && record.getString("boundary_status") === "verified";
     record.set("source_class", sourceClass);
+    record.set("hook_source_status", hookSourceStatus);
+    record.set("hook_assembly_type", hookAssemblyType);
     record.set("material", material.id);
     record.set("title", `${sourceClass === "narration_opening" ? "解说开场" : projection.format === "外搭钩子＋本剧正片" ? "外搭钩子" : "素材开场钩子"} - ${material.getString("title")} - 钩子${String(created.length + 1).padStart(2, "0")}`);
     record.set("start_seconds", start);
@@ -169,18 +206,25 @@ function syncMaterialHookAssets(app, material, result, projection) {
     record.set("start_frame", Math.max(0, Math.round(numberValue(hook.startFrame || hook.start_frame, 0))));
     record.set("end_frame", Math.max(0, Math.round(numberValue(hook.endFrame || hook.end_frame, 0))));
     record.set("fps", Math.max(0, numberValue(hook.fps, 0)));
-    record.set("boundary_status", verified ? "verified" : "unverified");
-    record.set("safe_start", startBoundary);
-    record.set("safe_end", endBoundary);
-    record.set("hook_type", claimText(hook.type || hook.mechanism || hook.code || hook.label));
-    record.set("themes", arrayValue(hook.themes));
-    record.set("content_tags", arrayValue(hook.contentTags || hook.content_tags || hook.tags));
-    record.set("character_roles", arrayValue(hook.characterRoles || hook.character_roles));
-    record.set("relationships", arrayValue(hook.relationships));
-    record.set("conflict", claimText(hook.conflict));
-    record.set("emotion", claimText(hook.emotion));
-    record.set("narrative_promise", claimText(hook.narrativePromise || hook.narrative_promise || hook.promise));
-    record.set("information_gap", claimText(hook.informationGap || hook.information_gap));
+    if (!wasHumanApproved) {
+      record.set("boundary_status", verified ? "verified" : "unverified");
+      record.set("safe_start", startBoundary);
+      record.set("safe_end", endBoundary);
+    }
+    record.set("hook_type", claimText(hook.type || hook.mechanism || hook.hookType || hook.code || hook.label));
+    const themes = arrayValue(hook.themes).length ? arrayValue(hook.themes) : fallbackThemes;
+    const contentTags = arrayValue(hook.contentTags || hook.content_tags || hook.tags).length ? arrayValue(hook.contentTags || hook.content_tags || hook.tags) : [...fallbackConflicts, ...fallbackEmotions].slice(0, 8);
+    const characterRoles = arrayValue(hook.characterRoles || hook.character_roles).length ? arrayValue(hook.characterRoles || hook.character_roles) : fallbackCharacters;
+    const relationships = arrayValue(hook.relationships).length ? arrayValue(hook.relationships) : fallbackRelationships;
+    const plotSummary = claimText(hook.plotSummary || hook.plot_summary || creative.externalHookSummary || objectValue(creative.openingAnalysis).plotSummary);
+    record.set("themes", themes);
+    record.set("content_tags", contentTags);
+    record.set("character_roles", characterRoles);
+    record.set("relationships", relationships);
+    record.set("conflict", claimText(hook.conflict || fallbackConflicts[0] || plotSummary));
+    record.set("emotion", claimText(hook.emotion || fallbackEmotions[0]));
+    record.set("narrative_promise", claimText(hook.narrativePromise || hook.narrative_promise || hook.promise || plotSummary));
+    record.set("information_gap", claimText(hook.informationGap || hook.information_gap || (plotSummary ? `这段关系冲突将如何发展：${plotSummary}` : "")));
     record.set("spoken_summary", claimText(hook.spokenSummary || hook.spoken_summary || hook.voiceover));
     record.set("visual_summary", claimText(hook.visualSummary || hook.visual_summary));
     record.set("quality_scores", scores);
@@ -193,14 +237,15 @@ function syncMaterialHookAssets(app, material, result, projection) {
       })
     });
     record.set("analysis", hook);
-    record.set("ontology_tags", arrayValue(hook.contentTags || hook.content_tags || hook.tags));
+    record.set("ontology_tags", [...themes, ...contentTags, ...relationships]);
     record.set("production_gate", objectValue(hook.productionGate || hook.production_gate));
     record.set("rights_status", material.getString("rights_status"));
-    record.set("review_status", verified ? "pending" : "needs_review");
+    if (!wasHumanApproved) record.set("review_status", verified ? "pending" : "needs_review");
     record.set("analysis_version", projection.schemaVersion || "material-v2");
     app.save(record);
     created.push({ id: record.id, start, end });
   });
+  existing.filter((record) => !reusedIds.includes(record.id) && record.getString("review_status") !== "approved").forEach((record) => app.delete(record));
   return created.map((item) => item.id);
 }
 

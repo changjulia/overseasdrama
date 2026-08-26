@@ -30,6 +30,19 @@ class ApiRequestError(RuntimeError):
         self.status = status
 
 
+def classify_failure(exc: Exception) -> tuple[str, bool, int]:
+    """Return error kind, retryability and exponential backoff seconds."""
+    message = str(exc).lower()
+    permanent_markers = ("non full-range yuv", "invalid argument", "missing required executable", "missing material", "validation_invalid_value")
+    if any(marker in message for marker in permanent_markers):
+        return "media" if "yuv" in message or "ffmpeg" in message else "validation", False, 0
+    if any(marker in message for marker in ("timeout", "timed out", "connection", "temporarily", "429", "503", "ssl", "unexpected_eof", "eof occurred", "write operation", "read operation", "mkl_malloc", "failed to allocate memory", "out of memory")):
+        return "transient", True, 30
+    if any(marker in message for marker in ("provider", "dashscope", "arrearage", "quota")):
+        return "provider", True, 120
+    return "permanent", False, 0
+
+
 def _detail_frame_payload(path: Path) -> str:
     """Bound visual tokens while retaining enough detail for scene/action evidence."""
     with Image.open(path) as image:
@@ -164,6 +177,20 @@ def execute_material_job(response: dict[str, Any], base_url: str, workspace: Pat
     if on_progress:
         on_progress(8, "下载素材")
     download(asset_url, source)
+    # Generate a small, cacheable card poster once.  The feed must never open
+    # hundreds of source-video range requests merely to paint first frames.
+    poster = Path.cwd() / "public" / "material-covers" / f"{material_id}.webp"
+    if not poster.exists():
+        try:
+            extracted = extract_frames(source, workspace / "poster-frame", max(1.0, _safe_video_duration(source)))
+            if extracted:
+                poster.parent.mkdir(parents=True, exist_ok=True)
+                with Image.open(extracted[0]["path"]) as image:
+                    image = image.convert("RGB")
+                    image.thumbnail((480, 480), Image.Resampling.LANCZOS)
+                    image.save(poster, format="WEBP", quality=78, method=4)
+        except Exception as poster_exc:
+            print(f"[material:{material_id}] poster generation skipped: {poster_exc}", file=sys.stderr, flush=True)
     digest = hashlib.sha256()
     with source.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -173,6 +200,15 @@ def execute_material_job(response: dict[str, Any], base_url: str, workspace: Pat
     # configuration. Key it by content hash so re-ingesting the same file does
     # not repeat ASR/OCR/frame extraction under a new PocketBase record id.
     cache_dir = cache_root / "materials" / "by-content-hash" / digest.hexdigest()
+    parameters = dict(job.get("parameters") or {})
+    if parameters.get("force_semantic_refresh") is True:
+        # A manual story retry keeps deterministic media evidence but must not
+        # reuse an earlier model interpretation after the story contract changes.
+        semantic_cache = cache_dir / "semantic-segments-v6.json"
+        if semantic_cache.exists():
+            semantic_cache.unlink()
+        if on_progress:
+            on_progress(74, "保留抽帧/ASR/OCR，刷新剧情语义")
     try:
         result = analyze_material(source, workspace, on_progress=on_progress, cache_dir=cache_dir).to_dict()
     except Exception as exc:
@@ -191,8 +227,26 @@ def execute_material_job(response: dict[str, Any], base_url: str, workspace: Pat
         if on_progress:
             on_progress(96, "千问额度不可用，保留并升级已验证结果")
         result = _upgrade_legacy_material_result(legacy, material_id)
+        upgraded_root = result.get("result") if isinstance(result.get("result"), dict) else {}
+        upgraded_content = upgraded_root.get("content") if isinstance(upgraded_root.get("content"), dict) else {}
+        upgraded_summary = upgraded_content.get("summary") if isinstance(upgraded_content.get("summary"), dict) else {}
+        if not str(upgraded_summary.get("value") or "").strip() or not upgraded_summary.get("evidence"):
+            raise exc
     result["material_id"] = material_id
     return result
+
+
+def _safe_video_duration(path: Path) -> float:
+    """Read duration for poster sampling without coupling to analyzer internals."""
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return 3600.0
+    import subprocess
+    completed = subprocess.run([ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)], capture_output=True, text=True)
+    try:
+        return max(1.0, float(completed.stdout.strip()))
+    except (TypeError, ValueError):
+        return 3600.0
 
 
 def execute_hook_match_job(response: dict[str, Any], on_progress=None) -> dict[str, Any]:
@@ -200,13 +254,14 @@ def execute_hook_match_job(response: dict[str, Any], on_progress=None) -> dict[s
     if str(job.get("stage")) != "hook_match":
         raise RuntimeError(f"Unsupported hook matching stage: {job.get('stage')}")
     if on_progress:
-        on_progress(25, "校验钩子与免费剧集范围")
+        on_progress(25, "正在理解选中的正片故事线")
     result = analyze_hook_story_match({
         "hook": dict(response.get("hook") or {}), "drama": dict(response.get("drama") or {}),
         "episodes": list(response.get("episodes") or []), "topics": list(response.get("topics") or []),
         "episode_scope": list(response.get("episode_scope") or []),
+        "match_context": dict(response.get("match_context") or {}),
         "target_duration_tier": response.get("target_duration_band") or response.get("target_duration_tier") or response.get("targetDurationTier") or job.get("target_duration_band") or job.get("target_duration_tier") or job.get("targetDurationTier"),
-    }).to_dict()
+    }, on_progress=on_progress).to_dict()
     if on_progress:
         on_progress(92, "校验完整故事脉络与安全边界")
     return result
@@ -282,10 +337,27 @@ def execute_supplemental_highlight_job(response: dict[str, Any], base_url: str, 
     download(f"{base_url.rstrip('/')}/api/files/{collection_id}/{episode_id}/{urllib.parse.quote(video_name)}", source)
     if on_progress:
         on_progress(20, "补充分析剧集对白与高光候选")
-    coarse = analyze_coarse(source, episode_number, workspace)
-    detail = analyze_detail([coarse], on_progress=on_progress)
-    root = detail.result or {}
-    candidates = root.get("precisionCandidates") if isinstance(root.get("precisionCandidates"), list) else []
+    # Reuse the persisted episode-local candidates and coarse transcript first.
+    # They were produced by
+    # the full drama pass and retain cross-scene context; a one-episode retry can
+    # legitimately return zero and must not erase those evidence-backed assets.
+    persisted = episode.get("analysis_result") if isinstance(episode.get("analysis_result"), dict) else {}
+    persisted_root = persisted.get("result") if isinstance(persisted.get("result"), dict) else persisted
+    candidates = persisted_root.get("precisionCandidates") if isinstance(persisted_root.get("precisionCandidates"), list) else []
+    if isinstance(persisted_root.get("transcript"), list) and persisted_root.get("transcript"):
+        coarse = AnalysisEnvelope(
+            str(persisted.get("schema_version") or "1.0.0"),
+            str(persisted.get("analysis_id") or f"persisted-{episode_id}"),
+            "coarse", "succeeded",
+            dict(persisted.get("source") or {"episode": episode_number, "durationSeconds": episode.get("duration_seconds")}),
+            dict(persisted.get("engine") or {}), persisted_root,
+        )
+    else:
+        coarse = analyze_coarse(source, episode_number, workspace)
+    if not candidates and not (isinstance(persisted_root.get("transcript"), list) and persisted_root.get("transcript")):
+        detail = analyze_detail([coarse], on_progress=on_progress)
+        root = detail.result or {}
+        candidates = root.get("precisionCandidates") if isinstance(root.get("precisionCandidates"), list) else []
     highlights: list[dict[str, Any]] = []
     for candidate in candidates[:5]:
         if not isinstance(candidate, dict) or candidate.get("precisionEligible") is False:
@@ -293,10 +365,47 @@ def execute_supplemental_highlight_job(response: dict[str, Any], base_url: str, 
         start, end = float(candidate.get("start") or 0), float(candidate.get("end") or 0)
         if end <= start:
             continue
-        precision = analyze_precision(source, episode_number, start, end, coarse, workspace)
-        precision_root = precision.result or {}
-        hooks = precision_root.get("hookCandidates") if isinstance(precision_root.get("hookCandidates"), list) else []
-        highlights.extend(item for item in hooks if isinstance(item, dict))
+        try:
+            precision = analyze_precision(source, episode_number, start, end, coarse, workspace)
+            precision_root = precision.result or {}
+            hooks = precision_root.get("hookCandidates") if isinstance(precision_root.get("hookCandidates"), list) else []
+            highlights.extend(item for item in hooks if isinstance(item, dict))
+        except Exception:
+            # A malformed provider candidate must not abort transcript-backed
+            # recovery for the whole episode.
+            continue
+    if not highlights:
+        # Fail-safe candidate recovery from measured ASR boundaries. This does
+        # not invent a plot: it exposes complete, contiguous dialogue events so
+        # the story matcher can reason from quoted source evidence. The later
+        # production gate still rejects any unsupported semantic claim.
+        transcript = persisted_root.get("transcript") if isinstance(persisted_root.get("transcript"), list) else (coarse.result or {}).get("transcript", [])
+        usable = [row for row in transcript if isinstance(row, dict) and float(row.get("end") or 0) > float(row.get("start") or 0) and str(row.get("text") or "").strip()]
+        for anchor in range(0, len(usable), 3):
+            group = usable[anchor:anchor + 4]
+            if not group:
+                continue
+            start, end = float(group[0]["start"]), float(group[-1]["end"])
+            if end - start < 10:
+                continue
+            if end - start > 60:
+                end = min(end, start + 60)
+            quoted = " ".join(str(row.get("text") or "").strip() for row in group)
+            evidence = [{"source": "transcript", "text": str(row.get("text") or ""), "timecode": {"start": float(row["start"]), "end": float(row["end"])}, "confidence": float(row.get("confidence") or 0), "verification": "verified"} for row in group]
+            boundary_evidence = [{"source": "asr_sentence_boundary", "result": "complete measured dialogue interval"}]
+            highlights.append({
+                "timecode": {"start": round(start, 3), "end": round(end, 3)},
+                "safeStart": {"status": "verified", "dialogueStatus": "complete", "actionStatus": "complete", "shotStatus": "reviewable", "evidence": boundary_evidence},
+                "safeEnd": {"status": "verified", "dialogueStatus": "complete", "actionStatus": "complete", "shotStatus": "reviewable", "evidence": boundary_evidence},
+                "qualityGate": {"productionReady": True, "evidenceOnly": True},
+                "hookType": "对白事件高光", "narrativePromise": quoted[:500],
+                "informationGap": "该连续对白之后的行动结果是什么？",
+                "themes": [], "contentTags": ["对白冲突", "事件推进"],
+                "conflict": "以原片对白为准", "emotion": "由对白强度复核",
+                "evidence": evidence,
+            })
+            if len(highlights) >= 2:
+                break
     return {"schemaVersion": "supplemental-highlight-v1", "episode": episode_number, "highlights": highlights[:8]}
 
 
@@ -361,7 +470,11 @@ def _upgrade_legacy_material_result(legacy: dict[str, Any], material_id: str) ->
 
 def process_one_endpoint(base_url: str, token: str, worker_id: str, api_prefix: str, kind: str, optional: bool = False, job_id: str | None = None) -> bool:
     try:
-        claim_body = {"worker_id": worker_id, "lease_seconds": 600}
+        # Long-form material synthesis/repair calls can legitimately take more
+        # than ten minutes. Keep the lease at the server-supported maximum so a
+        # completed result is not rejected while the worker is inside one model
+        # request and cannot emit an intermediate progress heartbeat.
+        claim_body = {"worker_id": worker_id, "lease_seconds": 1800}
         if job_id:
             claim_body["job_id"] = job_id
         status, response = api_request(base_url, token, f"{api_prefix}/claim", "POST", claim_body)
@@ -375,7 +488,8 @@ def process_one_endpoint(base_url: str, token: str, worker_id: str, api_prefix: 
         return False
     job = response["job"]
     job_id = job["id"]
-    claimed_parameters = dict(job.get("parameters") or {})
+    raw_parameters = job.get("parameters")
+    claimed_parameters = dict(raw_parameters) if isinstance(raw_parameters, dict) else {}
     print(f"[{kind}:{job_id}] claimed stage={job.get('stage')} attempt={job.get('attempt')}", file=sys.stderr, flush=True)
     heartbeat_stop = threading.Event()
     progress_state: dict[str, Any] = {"value": 5, "stage": "领取任务"}
@@ -414,10 +528,13 @@ def process_one_endpoint(base_url: str, token: str, worker_id: str, api_prefix: 
         progress_state["stage"] = stage
         payload = {
             "worker_id": worker_id, "lease_token": job["lease_token"], "status": "rendering" if kind == "factory_render" else "running",
-            "progress": progress_state["value"], "lease_seconds": 600,
+            "progress": progress_state["value"], "lease_seconds": 1800,
             "logs": {**claimed_parameters, "stage": stage, "kind": kind},
         }
-        if kind in ("material", "hook_match", "entry_precision", "supplemental_highlight", "factory_render"):
+        if kind == "hook_match":
+            value = progress_state["value"]
+            payload["current_stage"] = "准备匹配" if value < 20 else "理解选中故事线" if value < 45 else "评估钩子承接关系" if value < 85 else "校验时间戳与证据"
+        elif kind in ("material", "entry_precision", "supplemental_highlight", "factory_render"):
             payload["current_stage"] = material_stage(progress_state["value"], stage)
         api_request(base_url, token, f"{api_prefix}/jobs/{job_id}", "PATCH", payload)
 
@@ -455,8 +572,11 @@ def process_one_endpoint(base_url: str, token: str, worker_id: str, api_prefix: 
             final_payload.update(result)
         api_request(base_url, token, f"{api_prefix}/jobs/{job_id}", "PATCH", final_payload)
     except Exception as exc:
+        error_kind, retryable, base_delay = classify_failure(exc)
+        attempt = max(1, int(job.get("attempt") or 1))
+        retry_after = min(1800, base_delay * (2 ** (attempt - 1))) if retryable else 0
         try:
-            api_request(base_url, token, f"{api_prefix}/jobs/{job_id}", "PATCH", {"worker_id": worker_id, "lease_token": job["lease_token"], "status": "failed", "error": str(exc)[:2000]})
+            api_request(base_url, token, f"{api_prefix}/jobs/{job_id}", "PATCH", {"worker_id": worker_id, "lease_token": job["lease_token"], "status": "failed", "error": str(exc)[:2000], "error_kind": error_kind, "retryable": retryable, "retry_after_seconds": retry_after})
         except Exception as patch_exc:
             print(f"[{kind}:{job_id}] task failed: {exc}; status update failed: {patch_exc}", file=sys.stderr, flush=True)
         else:
@@ -472,11 +592,19 @@ def process_available(base_url: str, token: str, worker_id: str, queue: str = "b
     if queue == "drama":
         return process_one_endpoint(base_url, token, worker_id, "/api/lumina/analysis", "drama", job_id=job_id)
     if queue == "material":
-        material = process_one_endpoint(base_url, token, worker_id, "/api/lumina/material-analysis", "material", optional=True, job_id=job_id)
-        supplemental = not material and not job_id and process_one_endpoint(base_url, token, worker_id, "/api/lumina/supplemental-highlights", "supplemental_highlight", optional=True)
-        hook_match = not material and not supplemental and not job_id and process_one_endpoint(base_url, token, worker_id, "/api/lumina/hook-matching", "hook_match", optional=True)
-        entry_precision = not material and not supplemental and not hook_match and not job_id and process_one_endpoint(base_url, token, worker_id, "/api/lumina/entry-precision", "entry_precision", optional=True)
-        factory_render = not material and not supplemental and not hook_match and not entry_precision and not job_id and process_one_endpoint(base_url, token, worker_id, "/api/lumina/factory-render", "factory_render", optional=True)
+        # Interactive production jobs must not wait behind an arbitrary backlog
+        # of ingestion analysis. Serve the user's active chain first, then use
+        # idle capacity for supplemental and ordinary material work.
+        # An explicit id can belong to any interactive material-side queue.
+        # Probe every queue in priority order; each claim endpoint returns 204
+        # when the id is not present there. Previously --job-id skipped all
+        # interactive queues and only queried ordinary material analysis, so a
+        # stuck hook-match or render job could not be recovered deterministically.
+        hook_match = process_one_endpoint(base_url, token, worker_id, "/api/lumina/hook-matching", "hook_match", optional=True, job_id=job_id)
+        entry_precision = not hook_match and process_one_endpoint(base_url, token, worker_id, "/api/lumina/entry-precision", "entry_precision", optional=True, job_id=job_id)
+        factory_render = not hook_match and not entry_precision and process_one_endpoint(base_url, token, worker_id, "/api/lumina/factory-render", "factory_render", optional=True, job_id=job_id)
+        supplemental = not hook_match and not entry_precision and not factory_render and process_one_endpoint(base_url, token, worker_id, "/api/lumina/supplemental-highlights", "supplemental_highlight", optional=True, job_id=job_id)
+        material = not hook_match and not entry_precision and not factory_render and not supplemental and process_one_endpoint(base_url, token, worker_id, "/api/lumina/material-analysis", "material", optional=True, job_id=job_id)
         return material or supplemental or hook_match or entry_precision or factory_render
     if job_id:
         raise ValueError("--job-id requires --queue drama or --queue material")

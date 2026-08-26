@@ -169,6 +169,9 @@ export type Draft = {
     qualityReport: Record<string, unknown>;
     review: Record<string, unknown>;
     projectStatus: string;
+    activeStorylineId?: string;
+    storylineHookPairs?: Record<string, FactorySourceContext>;
+    storylineMatchCache?: Record<string, unknown>;
   };
 };
 
@@ -200,6 +203,9 @@ export type FactorySourceContext = {
   hookAssetId?: string;
   hookSourceClass?: "episode_highlight" | "narration_opening" | "external_material";
   hookMaterialId?: string;
+  hookMaterialPlatform?: string;
+  hookMaterialExposure?: number;
+  hookMaterialRunDays?: number;
   hookMediaUrl?: string;
   hookStart?: number;
   hookEnd?: number;
@@ -209,10 +215,18 @@ export type FactorySourceContext = {
   hookType?: string;
   themes?: string[];
   contentTags?: string[];
-  ontologyTags?: Array<{ code:string;label:string;dimension:string;original?:string;confidence?:number }>;
+  ontologyTags?: Array<{ code:string;label:string;dimension:string;original?:string;confidence?:number;evidence?:string[];episodes?:number[];prominence?:"primary"|"secondary" }>;
   hookMatchScore?: number;
   hookMatchRelation?: "exact"|"compatible"|"bridgeable"|"contradictory"|"unknown";
   hookMatchReasons?: string[];
+  hookRetrievalDirection?: string;
+  hookStoryNeedCoverage?: number;
+  hookTruthSafety?: number;
+  hookBridgeCost?: number;
+  hookSpoilerRisk?: number;
+  historicalTemplate?: Record<string,unknown>;
+  templateEvidenceLevel?: "weak"|"medium"|"strong";
+  templateProductionEligible?: boolean;
   relationships?: string[];
   conflict?: string;
   emotion?: string;

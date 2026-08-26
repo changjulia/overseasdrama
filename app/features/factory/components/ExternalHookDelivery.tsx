@@ -26,6 +26,8 @@ export type ExternalHookDeliveryProps = {
   view?: "preview" | "export";
   projectName: string;
   hookName?: string;
+  hookLabel?: string;
+  bodyLabel?: string;
   episodeReference?: string;
   duration?: string;
   previewUrl?: string;
@@ -33,9 +35,12 @@ export type ExternalHookDeliveryProps = {
   renderConnected?: boolean;
   initialRenderStatus?: DeliveryRenderStatus;
   initialProgress?: number;
+  initialRenderError?: string;
   initialReviewStatus?: DeliveryReviewStatus;
   initialReviewComment?: string;
   versions?: DeliveryVersion[];
+  renderCount?: number;
+  exportableVersionCount?: number;
   disabled?: boolean;
   onRequestRender?: () => void | Promise<void>;
   onReview?: (decision: Exclude<DeliveryReviewStatus, "pending">, comment: string) => void | Promise<void>;
@@ -69,6 +74,8 @@ export function ExternalHookDelivery({
   view = "preview",
   projectName,
   hookName = "尚未命名钩子",
+  hookLabel = "外搭钩子",
+  bodyLabel = "正片承接",
   episodeReference = "尚未选择正片承接帧",
   duration = "--:--",
   previewUrl,
@@ -76,9 +83,12 @@ export function ExternalHookDelivery({
   renderConnected = false,
   initialRenderStatus = "idle",
   initialProgress = 0,
+  initialRenderError = "",
   initialReviewStatus = "pending",
   initialReviewComment = "",
   versions = DEFAULT_VERSIONS,
+  renderCount = 1,
+  exportableVersionCount = 0,
   disabled = false,
   onRequestRender,
   onReview,
@@ -89,6 +99,8 @@ export function ExternalHookDelivery({
 }: ExternalHookDeliveryProps) {
   const [renderStatus, setRenderStatus] = useState<DeliveryRenderStatus>(previewUrl ? "ready" : initialRenderStatus);
   const [progress, setProgress] = useState(Math.min(100, Math.max(0, initialProgress)));
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [renderError, setRenderError] = useState(initialRenderError);
   const [isDemoRun, setIsDemoRun] = useState(false);
   const [reviewStatus, setReviewStatus] = useState<DeliveryReviewStatus>(initialReviewStatus);
   const [comment, setComment] = useState(initialReviewComment);
@@ -100,12 +112,19 @@ export function ExternalHookDelivery({
   const hasPlayablePreview = Boolean(previewUrl);
   const visibleRenderStatus: DeliveryRenderStatus = hasPlayablePreview ? "ready" : renderStatus;
   const visibleProgress = hasPlayablePreview ? 100 : progress;
-  const canExport = hasPlayablePreview && !disabled;
+  const canExport = (exportableVersionCount > 0 || hasPlayablePreview) && !disabled;
 
   useEffect(() => {
     setReviewStatus(initialReviewStatus);
     setComment(initialReviewComment);
   }, [initialReviewComment, initialReviewStatus]);
+
+  useEffect(() => {
+    setRenderStatus(previewUrl ? "ready" : initialRenderStatus);
+    setProgress(previewUrl ? 100 : Math.min(100, Math.max(0, initialProgress)));
+    setRenderError(initialRenderError);
+    if (initialRenderStatus !== "idle") setIsSubmitting(false);
+  }, [initialProgress, initialRenderError, initialRenderStatus, previewUrl]);
 
   useEffect(() => {
     if (!isDemoRun || renderStatus !== "rendering") return;
@@ -125,20 +144,27 @@ export function ExternalHookDelivery({
   }, [isDemoRun, onNotify, renderStatus]);
 
   const startRender = async () => {
-    if (disabled || renderStatus === "rendering") return;
+    if (disabled || isSubmitting || renderStatus === "rendering" || renderStatus === "queued") return;
+    setIsSubmitting(true);
+    setRenderError("");
     setProgress(4);
     setRenderStatus(renderConnected ? "queued" : "rendering");
     if (!renderConnected) {
       setIsDemoRun(true);
+      setIsSubmitting(false);
       onNotify?.("正在演示生成任务流程；不会产生真实视频文件");
       return;
     }
     try {
       await onRequestRender?.();
-      onNotify?.("生成任务已提交，请通过外部任务状态更新组件数据");
-    } catch {
+      setIsSubmitting(false);
+      onNotify?.("预览任务已创建，正在等待渲染服务处理");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "生成任务提交失败，请稍后重试";
+      setIsSubmitting(false);
       setRenderStatus("failed");
-      onNotify?.("生成任务提交失败，请稍后重试");
+      setRenderError(message);
+      onNotify?.(message);
     }
   };
 
@@ -156,6 +182,13 @@ export function ExternalHookDelivery({
     resolution,
     quality,
     fileName: `${fileName.trim() || safeProjectName}.${format.toLowerCase()}`,
+  };
+  const submitExport = async () => {
+    try {
+      await onExport?.(exportConfig);
+    } catch (error) {
+      onNotify?.(error instanceof Error ? error.message : "成片导出失败");
+    }
   };
 
   return (
@@ -186,8 +219,8 @@ export function ExternalHookDelivery({
             <div className={styles.safeArea} aria-hidden="true"><span>字幕安全区</span></div>
           </div>
           <dl className={styles.sourceSummary}>
-            <div><dt>外搭钩子</dt><dd>{hookName}</dd></div>
-            <div><dt>正片承接</dt><dd>{episodeReference}</dd></div>
+            <div><dt>{hookLabel}</dt><dd>{hookName}</dd></div>
+            <div><dt>{bodyLabel}</dt><dd>{episodeReference}</dd></div>
           </dl>
         </div>
 
@@ -200,12 +233,18 @@ export function ExternalHookDelivery({
                 <span key={stage} className={visibleProgress >= (index + 1) * 25 ? styles.stageDone : ""}><i>{visibleProgress >= (index + 1) * 25 ? "✓" : index + 1}</i>{stage}</span>
               ))}
             </div>
-            <button className={styles.primaryButton} type="button" onClick={startRender} disabled={disabled || renderStatus === "rendering"}>
-              {renderStatus === "rendering" ? "生成流程进行中…" : renderConnected ? "生成预览" : "演示生成流程"}
+            {(isSubmitting || visibleRenderStatus === "queued" || visibleRenderStatus === "rendering" || renderError) && (
+              <p className={renderError ? styles.taskError : styles.taskFeedback} role={renderError ? "alert" : "status"}>
+                {renderError || (isSubmitting ? "正在保存项目并创建预览任务，请稍候…" : visibleRenderStatus === "queued" ? "任务已进入队列，正在等待渲染服务领取。" : "渲染服务正在合成视频，进度会自动更新。")}
+              </p>
+            )}
+            <button className={styles.primaryButton} type="button" onClick={startRender} disabled={disabled || isSubmitting || renderStatus === "rendering" || renderStatus === "queued"}>
+              {isSubmitting ? "正在创建任务…" : renderStatus === "rendering" || renderStatus === "queued" ? "生成流程进行中…" : renderStatus === "failed" ? "重新生成预览" : renderConnected ? `批量生成 ${renderCount} 个预览` : "演示生成流程"}
             </button>
           </section>
 
-          <section className={styles.card}><div className={styles.cardTitle}><div><span>输出状态</span><h3>{hasPlayablePreview ? "成片可播放" : "等待生成真实成片"}</h3></div></div><p className={styles.inlineHint}>{hasPlayablePreview ? "请在左侧播放检查首帧、转场、字幕与结尾，确认后可直接导出。" : "生成任务完成后，真实视频会自动出现在左侧预览框。"}</p></section>
+          <section className={styles.card}><div className={styles.cardTitle}><div><span>输出状态</span><h3>{hasPlayablePreview ? "成片可播放" : "等待生成真实成片"}</h3></div></div><p className={styles.inlineHint}>{hasPlayablePreview ? "请在左侧播放检查首帧、转场、字幕与结尾，审核通过后开放导出。" : "生成任务完成后，真实视频会自动出现在左侧预览框。"}</p></section>
+          <section className={styles.card}><div className={styles.cardTitle}><div><span>成片版本</span><h3>{versions.length} 个版本</h3></div></div><div className={styles.versionList}>{versions.map(version=><button type="button" key={version.id} onClick={()=>onSelectVersion?.(version)}><b>{version.label}</b><span>{version.createdAt} · {versionStatusLabels[version.status]}</span></button>)}</div></section>
         </div>
       </div>}
 
@@ -220,9 +259,9 @@ export function ExternalHookDelivery({
           </div>
           <div className={styles.exportActions}>
             <button type="button" onClick={() => { onSaveDraft?.(); onNotify?.("草稿与交付配置已保存"); }} disabled={disabled}>保存草稿</button>
-            <button className={styles.exportButton} type="button" onClick={() => void onExport?.(exportConfig)} disabled={!canExport} title={!hasPlayablePreview ? "渲染服务尚未返回真实文件" : undefined}>导出成片</button>
+            <button className={styles.exportButton} type="button" onClick={() => void submitExport()} disabled={!canExport} title={!canExport ? "渲染服务尚未返回真实文件" : undefined}>批量导出 {Math.max(exportableVersionCount, hasPlayablePreview ? 1 : 0)} 个版本</button>
           </div>
-          {!canExport && <small className={styles.exportHint}>等待真实预览文件后开放导出</small>}
+          {!canExport && <small className={styles.exportHint}>等待至少一个真实预览文件后开放批量导出</small>}
         </section>
       </div>}
     </section>

@@ -3,7 +3,7 @@
 import type { PipelineTask } from "../features/operations/types";
 
 const configuredUrl = typeof process !== "undefined" ? process.env.NEXT_PUBLIC_POCKETBASE_URL : undefined;
-const PB_URL = (configuredUrl || "http://127.0.0.1:8090").replace(/\/$/, "");
+const PB_URL = (configuredUrl || (typeof window !== "undefined" ? "/pb" : "http://127.0.0.1:8090")).replace(/\/$/, "");
 
 type PBJob = {
   id:string; stage?:"coarse"|"detail"|"precision"; current_stage?:string; status:"queued"|"running"|"paused"|"succeeded"|"failed";

@@ -1,6 +1,22 @@
 /** Shared, deliberately small vocabulary for labels exchanged by the stores. */
 export const DIMENSIONS = ["genre", "theme", "role", "relation", "conflict", "emotion", "storyBeat", "scene", "audience", "acquisition"] as const;
 export type OntologyDimension = typeof DIMENSIONS[number];
+export const LEGACY_DIMENSION_ALIASES: Record<string, OntologyDimension> = {
+  genre:"genre", genres:"genre", 题材:"genre",
+  theme:"theme", themes:"theme", 主题:"theme",
+  role:"role", roles:"role", character:"role", characters:"role", 人物:"role", 角色:"role",
+  relation:"relation", relations:"relation", relationship:"relation", relationships:"relation", 关系:"relation", 人物关系:"relation",
+  conflict:"conflict", conflicts:"conflict", 冲突:"conflict",
+  emotion:"emotion", emotions:"emotion", 情绪:"emotion",
+  storybeat:"storyBeat", storybeats:"storyBeat", plot:"storyBeat", plots:"storyBeat", 情节点:"storyBeat", 剧情节点:"storyBeat",
+  scene:"scene", scenes:"scene", 场景:"scene",
+  audience:"audience", audiences:"audience", 受众:"audience",
+  acquisition:"acquisition", acquisitions:"acquisition", aduse:"acquisition", contenttag:"acquisition", contenttags:"acquisition", 买量用途:"acquisition",
+};
+export function normalizeDimension(input: unknown, fallback: OntologyDimension = "theme"): OntologyDimension {
+  const value=String(input??"").normalize("NFKC").trim();
+  return LEGACY_DIMENSION_ALIASES[value]??LEGACY_DIMENSION_ALIASES[value.toLocaleLowerCase()]??fallback;
+}
 export type TagRelation = "exact" | "compatible" | "bridgeable" | "contradictory" | "unknown";
 export type TagSetComparison = {
   relation: TagRelation;
@@ -17,22 +33,27 @@ export type OntologyTag = {
   parent?: string; related: string[]; contradicts: string[];
   original: string; evidence: string[]; confidence?: number;
 };
+export type RankedOntologyTag = OntologyTag & {
+  episodes?: number[]; start?: number; end?: number; prominence: "primary" | "secondary";
+  primaryScore: number; manualStatus?: "confirmed" | "rejected"; locked?: boolean;
+};
 type Definition = Omit<OntologyTag, "original" | "evidence" | "confidence" | "aliases"> & { aliases: string[] };
 
 const definitions: Definition[] = [
   ["genre","都市",["都市剧","现代","urban","urban drama"]], ["genre","古装",["古装剧","历史剧","period","historical"]], ["genre","悬疑",["悬疑剧","推理","mystery","thriller"]], ["genre","甜宠",["甜宠剧","言情","romance","sweet romance"]], ["genre","豪门",["豪门剧","霸总","billionaire romance"]], ["genre","年代",["年代剧","年下","republican era"]], ["genre","仙侠",["仙侠剧","xianxia","fantasy"]], ["genre","现实",["现实题材","realistic"]],
-  ["theme","复仇",["revenge"]], ["theme","重生",["重生逆袭","rebirth","second chance"]], ["theme","成长",["成长线","growth"]], ["theme","救赎",["redemption"]], ["theme","家族",["家族线","family","family saga"]], ["theme","女性独立",["女性成长","女强","female empowerment"]], ["theme","阶层逆袭",["逆袭","social mobility"]], ["theme","真相",["寻找真相","truth"]], ["theme","契约婚姻",["契约","contract marriage"]],
+  ["theme","复仇",["revenge"]], ["theme","重生",["重生逆袭","rebirth","second chance"]], ["theme","成长",["成长线","growth"]], ["theme","救赎",["redemption"]], ["theme","家族",["家族线","family","family saga"]], ["theme","女性独立",["女性成长","女强","female empowerment"]], ["theme","阶层逆袭",["逆袭","social mobility"]], ["theme","真相",["寻找真相","truth"]], ["theme","契约婚姻",["契约","contract marriage"]], ["theme","身份反转",["身份逆转","identity reversal"]], ["theme","背叛",["betrayal theme"]], ["theme","亲情",["family love","kinship"]],
   ["role","主角",["主人公","男女主","protagonist","lead"]], ["role","男主",["male lead","hero"]], ["role","女主",["female lead","heroine"]], ["role","反派",["villain","antagonist"]], ["role","配角",["supporting character"]], ["role","受害者",["victim"]], ["role","权威者",["家长","boss","authority"]],
   ["relation","恋人",["情侣","lovers","romantic partners"]], ["relation","夫妻",["夫妻关系","spouses","married"]], ["relation","亲子",["父子","母子","parent-child"]], ["relation","敌对",["对手","敌人","rivals","enemies"]], ["relation","盟友",["同盟","allies"]], ["relation","上下级",["雇佣关系","上下属","subordinate"]], ["relation","师徒",["师生","师徒关系","mentor"]], ["relation","背叛",["betrayal"]],
   ["conflict","身份误会",["身份错认","identity misunderstanding","mistaken identity"]], ["conflict","复仇对抗",["revenge conflict"]], ["conflict","权力争夺",["权力斗争","power struggle"]], ["conflict","生存危机",["survival crisis"]], ["conflict","情感选择",["love choice","emotional dilemma"]], ["conflict","家族反目",["家庭矛盾","family feud"]], ["conflict","阶层压迫",["阶级冲突","class oppression"]], ["conflict","法律困境",["法律冲突","legal dilemma"]],
   ["emotion","愤怒",["anger","angry"]], ["emotion","悲伤",["sadness","sad"]], ["emotion","甜蜜",["甜","sweet"]], ["emotion","紧张",["tension","tense"]], ["emotion","爽感",["爽","catharsis","爽点"]], ["emotion","虐",["虐心","heartbreak"]], ["emotion","震惊",["惊讶","shock"]], ["emotion","期待",["anticipation"]], ["emotion","恐惧",["害怕","fear"]],
-  ["storyBeat","开场钩子",["开场","opening hook","hook"]], ["storyBeat","反转",["twist","reversal"]], ["storyBeat","打脸",["爽点打脸","comeuppance"]], ["storyBeat","告白",["confession"]], ["storyBeat","揭密",["揭示秘密","revelation"]], ["storyBeat","危机",["危机升级","crisis"]], ["storyBeat","误会",["misunderstanding"]], ["storyBeat","团圆",["reunion"]], ["storyBeat","离别",["separation"]], ["storyBeat","复合",["reconciliation"]],
+  ["storyBeat","开场钩子",["开场","opening hook","hook"]], ["storyBeat","反转",["twist","reversal"]], ["storyBeat","打脸",["爽点打脸","comeuppance"]], ["storyBeat","告白",["confession"]], ["storyBeat","揭密",["揭示秘密","身份揭示","revelation"]], ["storyBeat","危机",["危机升级","crisis"]], ["storyBeat","误会",["misunderstanding"]], ["storyBeat","团圆",["reunion"]], ["storyBeat","离别",["separation"]], ["storyBeat","复合",["reconciliation"]], ["storyBeat","羞辱",["humiliation"]], ["storyBeat","反击",["counterattack","fight back"]], ["storyBeat","兑现",["payoff","resolution"]],
   ["scene","办公室",["office"]], ["scene","医院",["hospital"]], ["scene","家中",["家庭","home"]], ["scene","法庭",["courtroom","court"]], ["scene","校园",["school","campus"]], ["scene","宴会",["party","banquet"]], ["scene","警局",["派出所","police station"]], ["scene","街道",["street"]], ["scene","酒店",["hotel"]], ["scene","监狱",["prison"]],
   ["audience","女性向",["女频","female audience","women"]], ["audience","男性向",["男频","male audience","men"]], ["audience","年轻人群",["年轻用户","youth","young adults"]], ["audience","家庭人群",["家庭用户","family audience"]], ["audience","下沉人群",["下沉市场","mass market"]], ["audience","高消费人群",["高净值","premium audience"]],
   ["acquisition","信息差",["information gap"]], ["acquisition","情绪拉升",["情绪钩子","emotional lift"]], ["acquisition","强冲突",["冲突钩子","strong conflict"]], ["acquisition","悬念预告",["悬念","cliffhanger","suspense"]], ["acquisition","身份揭示",["身份钩子","identity reveal"]], ["acquisition","反差",["反差钩子","contrast"]], ["acquisition","爽点兑现",["爽感兑现","payoff"]], ["acquisition","虐点共情",["共情","empathy"]],
 ].map(([dimension, label, aliases]) => ({ code: `${dimension}.${String(label).replace(/[^\w\u4e00-\u9fff]+/g, "-")}`, label: String(label), dimension: dimension as OntologyDimension, aliases: [String(label), ...(aliases as string[])], related: [], contradicts: [] }));
 
 const byCode = new Map(definitions.map((d) => [d.code, d]));
+export function isKnownOntologyTag(tag: Pick<OntologyTag, "code">): boolean { return byCode.has(tag.code); }
 // Explicit oppositions are kept in the ontology rather than inferred from labels.
 const oppositionPairs: Array<[string, string]> = [["audience.女性向", "audience.男性向"], ["emotion.甜蜜", "emotion.虐"], ["relation.盟友", "relation.敌对"]];
 for (const [left, right] of oppositionPairs) {
@@ -59,6 +80,21 @@ export function normalizeTag(input: unknown, dimension: OntologyDimension = "the
 
 export function normalizeTags(input: unknown, dimension: OntologyDimension, options?: { evidence?: string[] }): OntologyTag[] {
   return (Array.isArray(input) ? input : input == null ? [] : [input]).map((item) => normalizeTag(item, dimension, options));
+}
+
+/** Product ranking for display/retrieval. It never fabricates a primary when evidence is weak. */
+export function rankOntologyTags(tags: Array<OntologyTag & { episodes?:number[];start?:number;end?:number;prominence?:"primary"|"secondary";manualStatus?:"confirmed"|"rejected";locked?:boolean }>, totalEpisodes = 0): RankedOntologyTag[] {
+  const eligible=tags.filter(tag=>tag.manualStatus!=="rejected");
+  const grouped=new Map<OntologyDimension,typeof eligible>();
+  for(const tag of eligible)grouped.set(tag.dimension,[...(grouped.get(tag.dimension)??[]),tag]);
+  return [...grouped.values()].flatMap(group=>group.map(tag=>{
+    const confidence=Math.max(0,Math.min(1,tag.confidence??0));
+    const coverage=totalEpisodes>0?Math.min(1,(tag.episodes?.length??0)/totalEpisodes):0;
+    const evidence=Math.min(1,tag.evidence.length/3);
+    const manual=tag.manualStatus==="confirmed"||tag.locked?1:0;
+    const score=Math.round((confidence*.4+coverage*.25+evidence*.2+manual*.15)*100);
+    return {...tag,primaryScore:score,prominence:"secondary" as const};
+  }).sort((a,b)=>(b.locked?1:0)-(a.locked?1:0)||b.primaryScore-a.primaryScore).map((tag,index)=>({...tag,prominence:(tag.locked||tag.manualStatus==="confirmed"||index<2&&tag.primaryScore>=55)?"primary" as const:"secondary" as const})));
 }
 
 export function relationOf(left: unknown, right: unknown, dimension: OntologyDimension = "theme"): TagRelation {

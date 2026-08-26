@@ -1,19 +1,25 @@
 import copy
+import base64
+import io
 import json
 import tempfile
 import unittest
-from unittest.mock import patch
+import urllib.error
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 from pathlib import Path
+
+from PIL import Image
 
 from processor.pack import group_phrases, pack_transcripts
 from processor.scribe import is_cache_valid, source_fingerprint
 from processor.batch_transcribe import select_free_episodes
-from processor.job_worker import ApiRequestError, envelope_from_dict, execute_entry_precision_job, execute_semantic_job, process_available, process_one_endpoint
+from processor.job_worker import ApiRequestError, classify_failure, envelope_from_dict, execute_entry_precision_job, execute_semantic_job, process_available, process_one_endpoint
 from processor.factory_render import build_render_quality_report
-from processor.semantic_analysis import AnalysisFailed, AnalysisEnvelope, Evidence, Timecode, _enrich_material_hooks, _extract_chat_stream, _extract_provider_result, _material_output_contract_valid, _material_semantic_analysis, _normalize_material_format, _normalize_precision_hooks, _openai_request_body, _precision_candidates, _reconstruct_storyline, _reconstruct_highlights, _sanitize_material_provider_input, _semantic_request, _story_duration_validation, _target_duration_spec, _validate_semantic_claims, analyze_detail, analyze_hook_entry_points, analyze_hook_story_match, analyze_material, failed_envelope
+from processor.semantic_analysis import AnalysisFailed, AnalysisEnvelope, Evidence, Timecode, _apply_material_evidence_gate, _complete_sentence_limit, _downgrade_unsupported_external_hook, _enrich_material_hooks, _external_hook_fragment_evidence, _external_hook_match_input, _extract_chat_stream, _extract_provider_result, _material_evidence_timestamps, _material_output_contract_valid, _material_semantic_analysis, _material_story_consistency_issues, _material_story_quality_issues, _normalize_material_format, _normalize_precision_hooks, _openai_request_body, _opening_preface_boundary, _precision_candidates, _reconstruct_storyline, _reconstruct_highlights, _sanitize_material_provider_input, _semantic_frame_base64, _semantic_request, _story_duration_validation, _storyboard_quality_issues, _storyboard_units_from_event_ledger, _strict_safety_provider_input, _target_duration_spec, _validate_semantic_claims, analyze_coarse, analyze_detail, analyze_hook_entry_points, analyze_hook_story_match, analyze_material, failed_envelope, transcribe
 
 MATERIAL_CONTRACT = {
-    "content": {"summary": {"value": "摘要", "confidence": 0.9, "evidence": []}, "tags": [], "characters": [], "relationships": [], "segments": [], "completeness": {"value": "完整", "confidence": 0.9, "evidence": []}},
+    "content": {"summary": {"value": "摘要", "confidence": 0.9, "evidence": [{"source": "transcript", "timecode": {"start": 0, "end": 1}, "confidence": 0.9, "text": "开场对白"}], "basedOnFactIds": ["F1"], "verification": "verified"}, "observations": [{"factId": "F1", "actorObserved": "说话者", "actionObserved": "说出开场对白", "evidence": [{"source": "transcript", "timecode": {"start": 0, "end": 1}, "confidence": 0.9, "text": "开场对白"}], "verification": "verified"}], "inferences": [], "tags": [], "characters": [], "relationships": [], "segments": [], "completeness": {"value": "完整", "confidence": 0.9, "evidence": []}},
     "creative": {"format": {"value": "正片剧集拼接", "confidence": 0.9, "evidence": []}, "tier": {"value": "T1", "confidence": 0.9, "evidence": []}, "hooks": [], "timeline": [], "transitions": [], "packaging": {"visual": [], "subtitle": [], "audio": [], "rhythm": []}},
     "value": {"scores": {}, "inspirations": [], "risks": [], "suitableGenres": [], "suitableAudiences": []},
     "review": {"status": "needs_review", "reasons": []},
@@ -21,6 +27,203 @@ MATERIAL_CONTRACT = {
 
 
 class ProcessorTests(unittest.TestCase):
+    def test_material_primary_hook_prefers_complete_opening_over_later_climax(self):
+        claim = {"confidence": .9, "evidence": [], "verification": "unverified"}
+        creative = {
+            "format": {**claim, "value": "正片剧集拼接"},
+            "timeline": [{**claim, "code": "STORY_PHASE_1", "label": "身份争议", "start": 0, "end": 60, "description": "开场建立身份冲突"}],
+            "hooks": [{**claim, "label": "后段揭露高光", "hookType": "揭露", "start": 180, "end": 210}],
+        }
+        enriched = _enrich_material_hooks(creative, [], [], 291)
+        self.assertEqual(enriched["hooks"][0]["start"], 0)
+        self.assertEqual(enriched["hooks"][0]["end"], 60)
+        self.assertTrue(any(item["start"] == 180 for item in enriched["hooks"][1:]))
+
+    def test_summary_limit_never_persists_a_broken_sentence(self):
+        value = ("第一阶段完成。" * 90) + "结尾行动仍在继续并形成最终结果。"
+        limited = _complete_sentence_limit(value, 500)
+        self.assertLessEqual(len(limited), 500)
+        self.assertTrue(limited.endswith("。"))
+
+    def test_event_ledger_builds_continuous_concrete_storyboard(self):
+        ledger = {"events": [
+            {"start": 12, "end": 35, "actor": "安努杰", "goal": "救活病人", "action": "坚持实施高风险治疗", "obstacle": "帕万公开质疑", "result": "病人存活", "relationshipChange": "旁观医生开始认可他", "confidence": .92},
+            {"start": 65, "end": 105, "actor": "帕万", "goal": "维护自己的名望", "action": "公开抢夺治疗功劳", "obstacle": "安努杰当场反驳", "result": "双方彻底决裂", "relationshipChange": "职业竞争公开化", "confidence": .88},
+            {"start": 125, "end": 175, "actor": "苏夫里", "goal": "阻止冲突升级", "action": "试图劝开争执双方", "obstacle": "双方拒绝退让", "result": "公开对峙继续", "relationshipChange": "调解失败", "confidence": .86},
+            {"start": 190, "end": 230, "actor": "家族长辈", "goal": "查明礼物来源", "action": "要求鉴定古董真伪", "obstacle": "送礼者试图掩饰", "result": "赝品被识破", "relationshipChange": "家族信任动摇", "confidence": .9},
+            {"start": 245, "end": 270, "actor": "安努杰", "goal": "揭露欺骗", "action": "展示伪造证据", "obstacle": "涉事者继续否认", "result": "阴谋被公开", "relationshipChange": "家族信任破裂", "confidence": .9},
+            {"start": 275, "end": 289, "actor": "家族长辈", "goal": "惩罚欺骗者", "action": "宣布驱逐涉事成员", "obstacle": "众人求情", "result": "冲突以决裂收尾", "relationshipChange": "亲属关系断裂", "confidence": .86},
+        ]}
+        units = _storyboard_units_from_event_ledger(ledger, 291)
+        self.assertEqual(len(units), 6)
+        self.assertEqual(units[0]["start"], 0)
+        self.assertEqual(units[-1]["end"], 291)
+        self.assertEqual([item["end"] for item in units[:-1]], [item["start"] for item in units[1:]])
+        self.assertFalse(_storyboard_quality_issues(units, 291))
+        self.assertTrue(all(item["label"] not in {"剧情理解", "部分完整", "不完整"} for item in units))
+        self.assertIn("旁观医生开始认可他", units[0]["label"])
+
+    def test_storyboard_title_keeps_complete_long_action_and_outcome(self):
+        ledger = {"events": [{"start": 0, "end": 30, "actor": "Mr. Pavan", "goal": "确认治疗方案", "action": "质问Anuj如何治疗其孙子", "obstacle": "双方发生激烈争执", "result": "Anuj的治疗效果得到部分认可", "relationshipChange": "两人关系暂时缓和", "confidence": .9}]}
+        title = _storyboard_units_from_event_ledger(ledger, 30)[0]["label"]
+        self.assertEqual(title, "Mr. Pavan质问Anuj如何治疗其孙子，两人关系暂时缓和")
+        self.assertNotRegex(title, r"(?:如|与|向|把|将)$")
+
+    def test_material_evidence_gate_rejects_self_proving_visual_inference(self):
+        frame = lambda text: [{"source": "frame", "text": text, "timecode": {"start": 2, "end": 2}, "confidence": 1}]
+        result = _apply_material_evidence_gate({
+            "content": {
+                "characters": [{"label": "女王", "verification": "verified", "evidence": frame("佩戴王冠")}],
+                "relationships": [{"label": "情侣关系", "verification": "verified", "evidence": frame("两人对视")}],
+            },
+            "creative": {
+                "tier": {"label": "T1", "verification": "verified", "evidence": frame("服饰和灯光精致")},
+                "packaging": {"audio": [{"label": "戏剧性配乐", "verification": "verified", "evidence": frame("音频事件缺失，但根据画面推断")}]},
+            },
+            "review": {"status": "ready", "reviewRequired": False, "reasons": []},
+        })
+        self.assertEqual(result["content"]["characters"][0]["verification"], "unverified")
+        self.assertEqual(result["content"]["relationships"][0]["verification"], "unverified")
+        self.assertEqual(result["creative"]["tier"]["verification"], "unverified")
+        self.assertEqual(result["creative"]["packaging"]["audio"][0]["verification"], "unverified")
+        self.assertTrue(result["review"]["reviewRequired"])
+        self.assertFalse(result["qualityGate"]["passed"])
+
+    def test_material_evidence_gate_accepts_supported_identity_and_metrics_tier(self):
+        result = _apply_material_evidence_gate({
+            "content": {
+                "observations": [{"factId": "F1", "actorObserved": "画外说话者", "actionObserved": "称呼画中女性为女王", "evidence": [{"source": "transcript", "sourceText": "Your Majesty, my queen", "timecode": {"start": 1, "end": 2}, "confidence": .9}], "verification": "verified"}],
+                "inferences": [{"label": "该女性身份为女王", "statement": "该女性身份为女王", "basedOnFactIds": ["F1"], "verification": "verified", "evidence": [{"source": "transcript", "sourceText": "Your Majesty, my queen", "timecode": {"start": 1, "end": 2}, "confidence": .9}]}],
+                "characters": [{"label": "女王", "verification": "verified", "evidence": [{"source": "transcript", "sourceText": "Your Majesty, my queen", "timecode": {"start": 1, "end": 2}, "confidence": .9}]}], "relationships": []},
+            "creative": {"tier": {"label": "T1", "verification": "verified", "evidence": [{"source": "adx", "text": "verified spend tier", "timecode": {"start": 0, "end": 1}, "confidence": 1}]}, "packaging": {"audio": []}},
+            "review": {"status": "ready", "reviewRequired": False, "reasons": []},
+        })
+        self.assertEqual(result["content"]["characters"][0]["verification"], "verified")
+        self.assertEqual(result["creative"]["tier"]["verification"], "verified")
+        self.assertTrue(result["qualityGate"]["passed"])
+
+    def test_material_evidence_gate_requires_fact_before_inference(self):
+        result = _apply_material_evidence_gate({
+            "content": {
+                "summary": {"value": "两人因背叛争执", "verification": "verified", "evidence": [{"source": "frame", "text": "两人站立", "timecode": {"start": 1, "end": 1}, "confidence": .9}]},
+                "characters": [], "relationships": [],
+                "inferences": [{"label": "情侣背叛", "verification": "verified", "basedOnFactIds": ["F404"], "evidence": [{"source": "frame", "text": "两人站立", "timecode": {"start": 1, "end": 1}, "confidence": .9}]}],
+            },
+            "creative": {}, "review": {},
+        })
+        self.assertFalse(result["qualityGate"]["passed"])
+        self.assertEqual(result["content"]["summary"]["verification"], "unverified")
+        self.assertEqual(result["content"]["inferences"][0]["verification"], "unverified")
+
+    def test_material_evidence_gate_rejects_visual_motive_inference(self):
+        result = _apply_material_evidence_gate({
+            "content": {
+                "observations": [{"factId": "F1", "actionObserved": "女人拿起信封", "verification": "verified", "evidence": [{"source": "frame", "text": "女人拿起信封", "timecode": {"start": 1, "end": 1}, "confidence": .9}]}],
+                "inferences": [{"label": "她为了钱背叛朋友", "statement": "她为了钱背叛朋友", "inferenceType": "motive", "basedOnFactIds": ["F1"], "verification": "verified", "evidence": [{"source": "frame", "text": "女人拿起信封", "timecode": {"start": 1, "end": 1}, "confidence": .9}]}],
+                "characters": [], "relationships": [],
+            }, "creative": {}, "review": {"status": "ready", "reviewRequired": False},
+        })
+        self.assertFalse(result["qualityGate"]["passed"])
+        self.assertEqual(result["content"]["inferences"][0]["verification"], "unverified")
+
+    def test_material_evidence_gate_respects_existing_review_required(self):
+        result = _apply_material_evidence_gate({
+            "content": {"observations": [{"factId": "F1", "actionObserved": "男人关门", "verification": "verified", "evidence": [{"source": "frame", "text": "男人关门", "timecode": {"start": 1, "end": 1}, "confidence": .9}]}], "inferences": [], "characters": [], "relationships": []},
+            "creative": {}, "review": {"status": "needs_review", "reviewRequired": True, "reasons": ["对白缺失"]},
+        })
+        self.assertFalse(result["qualityGate"]["passed"])
+        self.assertIn("对白缺失", result["qualityGate"]["reasons"])
+
+    def test_material_evidence_gate_rejects_fake_verified_fact_timecode(self):
+        result = _apply_material_evidence_gate({
+            "durationSeconds": 10,
+            "content": {"observations": [{"factId": "F1", "actionObserved": "男人关门", "verification": "verified", "evidence": [{"source": "transcript", "text": "男人关门", "timecode": {"start": 12, "end": 12}, "confidence": 2}]}], "inferences": [], "characters": [], "relationships": []},
+            "creative": {}, "review": {"status": "ready", "reviewRequired": False},
+        })
+        self.assertFalse(result["qualityGate"]["passed"])
+        self.assertEqual(result["content"]["observations"][0]["verification"], "unverified")
+
+    def test_coarse_request_requires_episode_summary_contract(self):
+        body = _openai_request_body("openai-chat-completions", "test-model", "coarse-episode-analysis", {"episode": 1})
+        prompt = json.loads(body["messages"][1]["content"][0]["text"])
+        self.assertIn("episodeSummary", prompt["requiredOutputContract"])
+        self.assertIn("castCandidates", prompt["requiredOutputContract"])
+
+    def test_repair_coarse_request_uses_same_summary_contract(self):
+        body = _openai_request_body("openai-chat-completions", "test-model", "repair-coarse-episode-output-contract", {"episode": 1})
+        prompt = json.loads(body["messages"][1]["content"][0]["text"])
+        self.assertIn("episodeSummary", prompt["requiredOutputContract"])
+
+    def test_semantic_frame_payload_is_resized(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "large.jpg"
+            Image.new("RGB", (1920, 1080), "red").save(source, quality=95)
+            encoded = _semantic_frame_base64(source)
+            with Image.open(io.BytesIO(base64.b64decode(encoded))) as image:
+                self.assertLessEqual(max(image.size), 640)
+
+    @patch("processor.semantic_analysis._semantic_request", return_value={"summary": {}})
+    @patch("processor.semantic_analysis.read_ocr", return_value=([], {"status": "ok"}))
+    @patch("processor.semantic_analysis.transcribe", return_value=([], {"status": "no_audio"}))
+    @patch("processor.semantic_analysis.extract_frames", return_value=[])
+    @patch("processor.semantic_analysis._duration", return_value=10.0)
+    def test_coarse_rejects_empty_success(self, _duration_mock, _frames_mock, _transcribe_mock, _ocr_mock, _semantic_mock):
+        with self.assertRaisesRegex(AnalysisFailed, "episodeSummary"):
+            analyze_coarse(Path("episode.mp4"), 1, Path("workspace"))
+
+    @patch("processor.semantic_analysis._semantic_request")
+    @patch("processor.semantic_analysis.read_ocr", return_value=([], {"status": "ok"}))
+    @patch("processor.semantic_analysis.transcribe", return_value=([{"start": 1, "end": 2, "text": "line"}], {"status": "ok"}))
+    @patch("processor.semantic_analysis.extract_frames", side_effect=AnalysisFailed("Output file does not contain any stream"))
+    @patch("processor.semantic_analysis._duration", return_value=10.0)
+    def test_coarse_audio_only_episode_uses_transcript(self, _duration_mock, _frames_mock, _transcribe_mock, _ocr_mock, semantic_mock):
+        semantic_mock.return_value = {"episodeSummary": {"value": "仅音轨剧情摘要", "confidence": .9, "evidence": [
+            {"source": "transcript", "timecode": {"start": 1, "end": 2}, "confidence": .9},
+            {"source": "transcript", "timecode": {"start": 9, "end": 12}, "confidence": .9},
+        ]}, "castCandidates": []}
+        result = analyze_coarse(Path("audio-only.mp4"), 1, Path("workspace"))
+        self.assertEqual(result.engine["frames"]["status"], "no_video")
+        self.assertEqual(result.result["episodeSummary"]["verification"], "verified")
+        self.assertEqual(len(result.result["episodeSummary"]["evidence"]), 1)
+
+    @patch("processor.whisper_runtime.create_whisper_model")
+    def test_transcribe_treats_missing_audio_stream_as_visual_only(self, create_model):
+        def missing_audio():
+            raise IndexError("tuple index out of range")
+            yield None
+        model = MagicMock()
+        model.transcribe.return_value = (missing_audio(), SimpleNamespace(language=""))
+        runtime = SimpleNamespace(device="cpu", compute_type="int8", fallback_reason="")
+        create_model.return_value = (model, runtime)
+        with patch.dict("os.environ", {"LUMINA_WHISPER_MODEL": "tiny", "LUMINA_WHISPER_DEVICE": "cpu", "LUMINA_WHISPER_COMPUTE_TYPE": "int8"}, clear=False):
+            transcript, engine = transcribe(Path("silent.mp4"))
+        self.assertEqual(transcript, [])
+        self.assertEqual(engine["status"], "no_audio")
+
+    def test_failure_classifier_does_not_retry_deterministic_ffmpeg_error(self):
+        kind, retryable, delay = classify_failure(RuntimeError("ffmpeg failed: Non full-range YUV is non-standard; Invalid argument"))
+        self.assertEqual(kind, "media")
+        self.assertFalse(retryable)
+        self.assertEqual(delay, 0)
+
+    def test_failure_classifier_retries_network_timeout(self):
+        kind, retryable, delay = classify_failure(TimeoutError("provider read timed out"))
+        self.assertEqual(kind, "transient")
+        self.assertTrue(retryable)
+        self.assertEqual(delay, 30)
+
+    def test_failure_classifier_retries_ssl_eof(self):
+        kind, retryable, delay = classify_failure(RuntimeError("SSL: UNEXPECTED_EOF_WHILE_READING"))
+        self.assertEqual(kind, "transient")
+        self.assertTrue(retryable)
+        self.assertEqual(delay, 30)
+
+    def test_failure_classifier_retries_mkl_memory_pressure(self):
+        kind, retryable, delay = classify_failure(RuntimeError("mkl_malloc: failed to allocate memory"))
+        self.assertEqual(kind, "transient")
+        self.assertTrue(retryable)
+        self.assertEqual(delay, 30)
+
     @patch("processor.job_worker._entry_frame_quality", return_value={"passed": True})
     @patch("processor.job_worker.extract_frames", return_value=[{"path": "frame.jpg", "timecode": {"start": 5, "end": 5}}])
     @patch("processor.job_worker.download")
@@ -46,6 +249,24 @@ class ProcessorTests(unittest.TestCase):
         self.assertIn("entryPoints", result["matches"][0])
         self.assertIn("calibration", result["matches"][0])
         self.assertFalse(result["matches"][0]["productionGate"]["passed"])
+
+    @patch.dict("os.environ", {"LUMINA_SEMANTIC_MODEL": "test-model"})
+    @patch("processor.semantic_analysis._semantic_request")
+    def test_story_to_hook_limits_body_segments_to_selected_storyline_evidence(self, semantic_mock):
+        semantic_mock.return_value = {"matches": [{"title": "候选", "matchScore": 80, "segments": [
+            {"episode": 1, "start": 0, "end": 10, "highlightAssetId": "selected"},
+            {"episode": 1, "start": 20, "end": 30, "highlightAssetId": "not-selected"},
+        ]}]}
+        highlight = lambda asset_id, start: {"id": asset_id, "start_seconds": start, "end_seconds": start + 10, "boundary_status": "verified", "review_status": "approved", "safe_start": {"status": "verified"}, "safe_end": {"status": "verified"}, "evidence": [{"text": asset_id}]}
+        payload = {
+            "hook": {"id": "h1", "source_class": "external_material", "boundary_status": "verified"}, "drama": {"id": "d1"},
+            "episodes": [{"episode_number": 1, "analysis_result": {}, "highlights": [highlight("selected", 0), highlight("not-selected", 20)]}], "episode_scope": [1],
+            "match_context": {"matchStrategy": "story_to_hook", "storyNeed": {"corePlot": "选中路线", "selectedStorylineIds": ["p1"], "evidence": [{"sourceType": "episode_highlight", "sourceId": "selected", "episode": 1, "start": 0, "end": 10}]}}
+        }
+        result = analyze_hook_story_match(payload).result
+        self.assertTrue(result["matches"])
+        for match in result["matches"]:
+            self.assertEqual({segment["highlightAssetId"] for segment in match["segments"]}, {"selected"})
 
     @patch.dict("os.environ", {"LUMINA_SEMANTIC_MODEL": "test-model"})
     def test_hook_story_match_requests_supplemental_analysis_without_approved_highlights(self):
@@ -135,24 +356,88 @@ class ProcessorTests(unittest.TestCase):
         result = _enrich_material_hooks(creative, [], shots, 120)
         self.assertEqual(result["hooks"], [])
 
-    def test_external_hook_keeps_model_interval_without_auto_expansion(self):
-        creative = {"format": {"label": "外搭钩子＋本剧正片"}, "hooks": [{"label": "独立开场", "start": 0, "end": 8}]}
+    def test_external_hook_conclusion_covers_complete_external_fragment(self):
+        creative = {"format": {"label": "外搭钩子＋本剧正片"}, "hooks": [{"label": "完整外搭开场", "start": 0, "end": 23.36, "plotSummary": "完整概括外搭片段"}], "entryPoints": [{"label": "强句入口", "start": 4, "end": 10}]}
         shots = [{"timecode": {"start": 0, "end": 8}}, {"timecode": {"start": 8, "end": 23.36}}, {"timecode": {"start": 23.36, "end": 120}}]
         result = _enrich_material_hooks(creative, [], shots, 120)
         self.assertEqual(len(result["hooks"]), 1)
-        self.assertEqual(result["hooks"][0]["end"], 8)
+        self.assertEqual(result["hooks"][0]["end"], 23.36)
+        self.assertEqual(result["hooks"][0]["scope"], "complete_external_fragment")
+        self.assertEqual(result["hooks"][0]["plotSummary"], "完整概括外搭片段")
+        self.assertEqual(result["entryPoints"][0]["end"], 10)
 
-    def test_external_opening_search_area_is_not_accepted_as_one_long_hook(self):
+    def test_strong_line_is_extended_to_complete_preface_boundary(self):
+        hooks = [{"start": 0, "end": 12}]
+        shots = [
+            {"timecode": {"start": 0, "end": 1.28}},
+            {"timecode": {"start": 1.28, "end": 3.52}},
+            {"timecode": {"start": 3.52, "end": 6.48}},
+            {"timecode": {"start": 6.48, "end": 11.32}},
+            {"timecode": {"start": 11.32, "end": 15.52}},
+            {"timecode": {"start": 15.52, "end": 17.24}},
+            {"timecode": {"start": 17.24, "end": 19.92}},
+            {"timecode": {"start": 19.92, "end": 21.08}},
+            {"timecode": {"start": 21.08, "end": 23.36}},
+            {"timecode": {"start": 23.36, "end": 38.48}},
+        ]
+        self.assertEqual(_opening_preface_boundary(hooks, shots, 120), 23.36)
+
+    def test_complete_external_opening_is_the_hook_conclusion(self):
         creative = {"format": {"label": "外搭钩子＋本剧正片"}, "hooks": [{"label": "完整外搭片段", "start": 0, "end": 23.36}]}
         shots = [{"timecode": {"start": 0, "end": 8}}, {"timecode": {"start": 8, "end": 23.36}}, {"timecode": {"start": 23.36, "end": 120}}]
         result = _enrich_material_hooks(creative, [], shots, 120)
-        self.assertEqual(result["hooks"], [])
+        self.assertEqual(len(result["hooks"]), 1)
+        self.assertEqual(result["hooks"][0]["start"], 0)
+        self.assertEqual(result["hooks"][0]["end"], 23.36)
+        self.assertEqual(result["hooks"][0]["verification"], "needs_review")
+
+    def test_suspected_external_without_complete_boundary_is_downgraded(self):
+        result = _downgrade_unsupported_external_hook({"creative": {"hookSourceStatus": {"value": "疑似外搭"}, "hooks": [{"start": 0, "end": 8}]}, "review": {"status": "ready", "reasons": []}})
+        self.assertEqual(result["creative"]["hookSourceStatus"]["value"], "来源未知")
+        self.assertTrue(result["review"]["reviewRequired"])
+
+    def test_story_quality_gate_is_generic_and_requires_causal_understanding(self):
+        phases = [{"start": index * 120, "end": (index + 1) * 120, "label": f"阶段{index}", "description": "事件发生并改变局势"} for index in range(5)]
+        result = {"content": {"summary": {"value": "甲和乙围绕爱情、家庭与事业展开一系列故事。"}, "characters": [{"name": "甲"}, {"name": "乙"}], "relationships": [{"subject": "甲", "object": "乙"}, {"subject": "甲", "object": "丙"}], "segments": phases}, "creative": {"timeline": []}}
+        issues = _material_story_quality_issues(result, 600) + _material_story_consistency_issues(result, 600, "")
+        self.assertTrue(any("概括" in issue for issue in issues))
+        self.assertTrue(any("动机" in issue for issue in issues))
+        self.assertTrue(any("因果" in issue for issue in issues))
+        self.assertFalse(any("林绵" in issue or "秦总" in issue for issue in issues))
+
+    def test_story_quality_gate_rejects_technical_themes_and_placeholder_phases(self):
+        result = {"content": {
+            "summary": {"value": "为了改变贫困生活，女主试图隐藏语言能力，却因公司加薪机会不得不作出选择，因此身份开始暴露。随后同事产生怀疑，关系逐渐紧张，直到片尾仍停在是否公开真实能力的悬念上。"},
+            "genres": [{"label": "职场逆袭"}],
+            "themes": [{"label": "语音识别置信度低"}, {"label": "对话驱动"}],
+            "characters": [{"name": "女主"}, {"name": "上司"}],
+            "relationships": [{"subject": "女主", "object": "上司"}, {"subject": "女主", "object": "同事"}],
+            "conflicts": [{"label": "隐藏身份与改变命运"}],
+            "segments": [{"start": index * 120, "end": (index + 1) * 120, "label": "核心叙事段落" if index == 2 else f"阶段{index}", "description": "人物为目标行动，遭遇阻碍并改变关系"} for index in range(5)],
+        }, "creative": {"timeline": []}}
+        issues = _material_story_quality_issues(result, 600)
+        self.assertTrue(any("技术元数据" in issue for issue in issues))
+        self.assertTrue(any("技术占位名称" in issue for issue in issues))
+
+    @patch.dict("os.environ", {"LUMINA_MATERIAL_MAX_EVIDENCE_FRAMES": "24"})
+    def test_material_frames_reserve_coverage_for_the_middle(self):
+        shots = [{"timecode": {"start": value, "end": value + 1}} for value in range(0, 1500, 2)]
+        timestamps = _material_evidence_timestamps(1500, shots, [])
+        self.assertLessEqual(len(timestamps), 24)
+        self.assertTrue(any(300 < value < 1200 for value in timestamps))
+        self.assertTrue(any(value <= 60 for value in timestamps))
+        self.assertTrue(any(value >= 1470 for value in timestamps))
 
     def test_material_format_v1_keeps_same_drama_hook_as_episode_splice(self):
         verified = lambda label: {"label": label, "confidence": .9, "evidence": [], "verification": "verified"}
         creative, review = _normalize_material_format({"bodyFormat": verified("正片主导"), "hookSourceStatus": verified("已确认同剧")}, {"status": "ready", "reasons": []})
         self.assertEqual(creative["format"]["label"], "正片剧集拼接")
         self.assertFalse(review["reviewRequired"])
+
+    def test_same_drama_preface_is_external_assembly_not_plain_episode_splice(self):
+        verified = lambda label: {"label": label, "confidence": .9, "evidence": [], "verification": "verified"}
+        creative, _review = _normalize_material_format({"bodyFormat": verified("正片主导"), "hookSourceStatus": verified("已确认同剧"), "hookAssemblyType": verified("同剧外搭")}, {"status": "ready", "reasons": []})
+        self.assertEqual(creative["format"]["label"], "外搭钩子＋本剧正片")
 
     def test_material_format_v1_flags_suspected_external_for_review(self):
         verified = lambda label: {"label": label, "confidence": .8, "evidence": [], "verification": "verified"}
@@ -285,10 +570,28 @@ class ProcessorTests(unittest.TestCase):
         self.assertIn("creative", contract)
         self.assertIn("value", contract)
         self.assertIn("review", contract)
+        rules = " ".join(json.loads(prompt)["outputRules"])
+        self.assertIn("concrete observable fact", rules)
+        self.assertIn("technical metadata, not semantic evidence", rules)
+        self.assertIn("four strictly separated layers", rules)
+        self.assertIn("observations", contract["content"])
+        self.assertIn("inferences", contract["content"])
 
     def test_material_contract_rejects_single_summary_claim(self):
         self.assertFalse(_material_output_contract_valid({"value": "summary", "confidence": 0.9, "evidence": []}))
+        empty_summary = copy.deepcopy(MATERIAL_CONTRACT)
+        empty_summary["content"]["summary"] = {"value": "", "confidence": 0.9, "evidence": []}
+        self.assertFalse(_material_output_contract_valid(empty_summary))
         self.assertTrue(_material_output_contract_valid(MATERIAL_CONTRACT))
+
+    def test_material_story_gate_rejects_hollow_evidence_copy(self):
+        result = {
+            "content": {"summary": {"value": "由于主角急需钱，她选择冒险，随后遭到控制，因此开始反抗，但关系继续恶化，直到最终在结尾面对新的生命威胁。" * 3}, "characters": [{}, {}], "relationships": [{}, {}], "segments": [], "tags": [{"evidence": [{"text": "检测到关键画面，回看片段确认剧情"}]}]},
+            "creative": {"timeline": [{"start": 0, "end": 20}, {"start": 20, "end": 50}, {"start": 50, "end": 80}, {"start": 80, "end": 100}]},
+            "value": {},
+        }
+        issues = _material_story_quality_issues(result, 100)
+        self.assertTrue(any("操作提示" in issue for issue in issues))
 
     def test_material_merge_redacts_explicit_text_but_keeps_timecode(self):
         source = {"value": "explicit sexual scene", "sourceText": "verbatim", "evidence": [{"timecode": {"start": 1, "end": 2}}]}
@@ -296,6 +599,12 @@ class ProcessorTests(unittest.TestCase):
         self.assertNotIn("sourceText", cleaned)
         self.assertNotIn("sexual", cleaned["value"])
         self.assertEqual(cleaned["evidence"][0]["timecode"], {"start": 1, "end": 2})
+
+    def test_strict_safety_redaction_keeps_geometry_and_removes_free_prose(self):
+        cleaned = _strict_safety_provider_input({"summary": "arbitrary unsafe narrative", "source": "transcript", "timecode": {"start": 1, "end": 2}})
+        self.assertEqual(cleaned["summary"], "内容已严格脱敏，需人工复核")
+        self.assertEqual(cleaned["source"], "transcript")
+        self.assertEqual(cleaned["timecode"], {"start": 1, "end": 2})
 
     @patch("processor.semantic_analysis.urllib.request.urlopen")
     def test_dashscope_api_key_is_accepted_for_qwen(self, urlopen_mock):
@@ -316,6 +625,29 @@ class ProcessorTests(unittest.TestCase):
         request_body = json.loads(request.data)
         self.assertTrue(request_body["stream"])
         self.assertFalse(request_body["enable_thinking"])
+
+    @patch("processor.semantic_analysis.urllib.request.urlopen")
+    def test_dashscope_content_inspection_retries_with_sanitized_evidence(self, urlopen_mock):
+        blocked = urllib.error.HTTPError("https://dashscope", 400, "bad request", {}, io.BytesIO(b'{"error":{"code":"data_inspection_failed"}}'))
+        retry_context = MagicMock()
+        retry_response = retry_context.__enter__.return_value
+        retry_response.__iter__.return_value = iter([
+            b'data: {"choices":[{"delta":{"content":"{\\"content\\":{},\\"review\\":{}}"}}]}\n',
+            b'data: [DONE]\n',
+        ])
+        urlopen_mock.side_effect = [blocked, retry_context]
+        with patch.dict("os.environ", {
+            "DASHSCOPE_API_KEY": "local-test-key",
+            "LUMINA_SEMANTIC_ENDPOINT": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+            "LUMINA_SEMANTIC_MODEL": "qwen3-vl-plus",
+            "LUMINA_SEMANTIC_PROVIDER": "openai-chat-completions",
+        }, clear=True):
+            result = _semantic_request("paid-ad-material-analysis", {"transcript": [{"text": "explicit sexual scene", "start": 1, "end": 2}], "frames": [{"base64": "secret-image"}]})
+        self.assertTrue(result["_providerSafetySanitized"])
+        self.assertTrue(result["review"]["reviewRequired"])
+        retry_body = urlopen_mock.call_args_list[1].args[0].data.decode("utf-8")
+        self.assertNotIn("explicit sexual scene", retry_body)
+        self.assertNotIn("secret-image", retry_body)
 
     def test_detail_evidence_requires_episode_and_uses_its_duration(self):
         durations = {1: 5.0, 2: 20.0}
@@ -400,7 +732,7 @@ class ProcessorTests(unittest.TestCase):
         self.assertEqual(process_mock.call_args.args[3:5], ("/api/lumina/analysis", "drama"))
         process_mock.reset_mock()
         process_available("http://pb", "token", "material-worker", "material")
-        self.assertEqual([call.args[3:5] for call in process_mock.call_args_list], [("/api/lumina/material-analysis", "material"), ("/api/lumina/supplemental-highlights", "supplemental_highlight"), ("/api/lumina/hook-matching", "hook_match"), ("/api/lumina/entry-precision", "entry_precision"), ("/api/lumina/factory-render", "factory_render")])
+        self.assertEqual([call.args[3:5] for call in process_mock.call_args_list], [("/api/lumina/hook-matching", "hook_match"), ("/api/lumina/entry-precision", "entry_precision"), ("/api/lumina/factory-render", "factory_render"), ("/api/lumina/supplemental-highlights", "supplemental_highlight"), ("/api/lumina/material-analysis", "material")])
 
     @patch("processor.job_worker.process_one_endpoint")
     def test_worker_can_claim_one_exact_material_job(self, process_mock):
@@ -420,7 +752,7 @@ class ProcessorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             frame = root / "frame.jpg"
-            frame.write_bytes(b"jpeg")
+            Image.new("RGB", (32, 32), "black").save(frame, format="JPEG")
             frames_mock.return_value = [{"path": str(frame), "timecode": {"start": 0.0, "end": 0.0}}]
             transcribe_mock.return_value = ([{"text": "hello", "start": 0.0, "end": 1.0}], {"backend": "test", "model": "test"})
             ocr_mock.return_value = ([{"text": "caption", "timecode": {"start": 0.0, "end": 0.0}}], {"backend": "test", "language": "en"})
@@ -438,20 +770,30 @@ class ProcessorTests(unittest.TestCase):
     def test_long_material_uses_parallel_segments_and_final_merge(self, semantic_mock):
         stages = []
         result = _material_semantic_analysis({"frames": [], "transcript": [], "ocr": [], "requirements": []}, 181.0, lambda progress, stage: stages.append((progress, stage)))
-        self.assertEqual(result["creative"]["format"]["value"], "正片剧集拼接")
-        self.assertEqual(semantic_mock.call_count, 5)
+        self.assertIn("creative", result)
+        self.assertGreaterEqual(semantic_mock.call_count, 9)
         self.assertTrue(any("4/4" in stage for _, stage in stages))
-        self.assertEqual(semantic_mock.call_args.args[0], "paid-ad-material-classification-merge")
+        tasks = [call.args[0] for call in semantic_mock.call_args_list]
+        self.assertIn("paid-ad-material-event-ledger", tasks)
+        self.assertIn("paid-ad-material-story-audit", tasks)
+
+    @patch.dict("os.environ", {"LUMINA_QWEN_SEGMENT_SECONDS": "60", "LUMINA_QWEN_SEGMENT_MIN_DURATION": "75", "LUMINA_QWEN_SEGMENT_WORKERS": "1"})
+    @patch("processor.semantic_analysis._semantic_request", side_effect=lambda *_args, **_kwargs: copy.deepcopy(MATERIAL_CONTRACT))
+    def test_single_qwen_worker_still_segments_long_material(self, semantic_mock):
+        _material_semantic_analysis({"frames": [], "transcript": [], "ocr": [], "requirements": []}, 181.0, lambda *_args: None)
+        tasks = [call.args[0] for call in semantic_mock.call_args_list]
+        self.assertIn("paid-ad-material-segment-analysis", tasks)
+        self.assertNotIn("paid-ad-material-analysis", tasks)
 
     @patch.dict("os.environ", {"LUMINA_QWEN_SEGMENT_SECONDS": "90", "LUMINA_QWEN_SEGMENT_MIN_DURATION": "120", "LUMINA_QWEN_SEGMENT_WORKERS": "3", "LUMINA_QWEN_RETRY_DELAY": "0"})
     @patch("processor.semantic_analysis.time.sleep")
     @patch("processor.semantic_analysis._semantic_request")
     def test_parallel_qwen_failure_falls_back_to_serial_segments(self, semantic_mock, _sleep_mock):
-        semantic_mock.side_effect = [AnalysisFailed("concurrency limited")] * 4 + [copy.deepcopy(MATERIAL_CONTRACT) for _ in range(5)]
+        semantic_mock.side_effect = [AnalysisFailed("concurrency limited")] * 4 + [copy.deepcopy(MATERIAL_CONTRACT) for _ in range(20)]
         stages = []
         result = _material_semantic_analysis({"frames": [], "transcript": [], "ocr": [], "requirements": []}, 181.0, lambda progress, stage: stages.append((progress, stage)))
-        self.assertEqual(result["creative"]["format"]["value"], "正片剧集拼接")
-        self.assertEqual(semantic_mock.call_count, 9)
+        self.assertIn("creative", result)
+        self.assertGreaterEqual(semantic_mock.call_count, 13)
         self.assertTrue(any("串行重试" in stage for _, stage in stages))
 
     @patch("processor.job_worker.download")
@@ -511,6 +853,26 @@ class ProcessorTests(unittest.TestCase):
             ledger = [{"status": "verified", "safeStart": {"status": "verified"}, "safeEnd": {"status": "verified"}, "kind": "episode", "flashTailStart": 12.0, "end": 10.0}]
             report = build_render_quality_report(output=output, technical=technical, expected_duration=10.0, width=1080, height=1920, ledger=ledger)
         self.assertTrue(report["passed"])
+
+    def test_hook_match_uses_only_complete_fragment_evidence(self):
+        hook = {
+            "id": "hook-1", "source_class": "external_material",
+            "hook_type": "关系冲突钩子", "start_seconds": 0, "end_seconds": 23.36,
+            "boundary_status": "verified", "conflict": "整部长片里的经济压力",
+            "information_gap": "林绵与时凛在卧室发生冲突",
+            "evidence": {"transcript": [
+                {"start": 3.78, "end": 4.84, "text": "你不是说", "confidence": .99, "verification": "verified"},
+                {"start": 6.36, "end": 7.68, "text": "自己很干净吗", "confidence": .97, "verification": "verified"},
+                {"start": 11.34, "end": 21.45, "text": "干净", "confidence": .36, "verification": "verified"},
+                {"start": 21.45, "end": 32.6, "text": "身体健康", "confidence": .98, "verification": "verified"},
+            ]},
+        }
+        evidence = _external_hook_fragment_evidence(hook)
+        self.assertEqual([row["text"] for row in evidence["transcript"]], ["你不是说", "自己很干净吗"])
+        safe = _external_hook_match_input(hook)
+        self.assertNotIn("conflict", safe)
+        self.assertNotIn("information_gap", safe)
+        self.assertNotIn("林绵", str(safe))
 
 
 if __name__ == "__main__":

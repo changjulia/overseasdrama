@@ -62,6 +62,20 @@ pb-hook-test.*.log
 /tmp_content_factory_sources.txt
 *.tsbuildinfo
 
+# local runtime logs and browser profiles
+/*.log
+/.runtime/
+/.worker-logs/
+
+# generated analysis/import artifacts and local scratch data
+/analysis_artifacts/
+/analysis_*/
+/temp/
+/pb_data/logs.db
+/public/material-analysis/
+/public/material-covers/
+/public/material-previews/
+
 # local video fixtures and processor outputs
 /test-fixtures/
 /analysis_cache/

@@ -389,6 +389,7 @@
     grid-column: 1/-1;
   }
 }
+.favoriteActionBar .deleteAssetAction,.rowActions .deleteAssetAction{border-color:#fecaca;color:#c2414b;background:#fff}.favoriteActionBar .deleteAssetAction:hover,.rowActions .deleteAssetAction:hover{background:#fef2f2;border-color:#fca5a5}
 
 /* Preserve dashboard density without the original 6–9px UI text. */
 .creations > header > div:first-child > span,

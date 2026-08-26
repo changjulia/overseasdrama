@@ -4,7 +4,7 @@ import type { FactoryEpisodeMedia } from "../features/factory/types";
 import { normalizeAnalysisPayload } from "./ontology/normalization";
 
 const configuredUrl = typeof process !== "undefined" ? process.env.NEXT_PUBLIC_POCKETBASE_URL : undefined;
-const PB_URL = (configuredUrl || "http://127.0.0.1:8090").replace(/\/$/, "");
+const PB_URL = (configuredUrl || (typeof window !== "undefined" ? "/pb" : "http://127.0.0.1:8090")).replace(/\/$/, "");
 
 type PocketBaseRecord = Record<string, unknown> & { id: string; collectionId: string; collectionName: string };
 
@@ -39,6 +39,7 @@ export type PocketBaseDramaRecord = {
   parseState: string;
   parseConfig: unknown;
   analysis?: unknown;
+  ontologyTags?: unknown[];
   coarseStatus: string;
   coarseProgress: number;
   detailStatus: string;
@@ -50,7 +51,36 @@ export type PocketBaseDramaRecord = {
   precisionResults: Array<{ episode: number; result: unknown; parameters?: unknown }>;
   posterUrl?: string;
   episodeMedia: Record<number, FactoryEpisodeMedia>;
+  sourceType: "内部" | "外部";
+  sourcePlatform?: string;
+  sourceRecordId?: string;
+  acquisitionMethod?: string;
+  sourceMetadata?: Record<string, unknown>;
 };
+
+export type ExternalDramaInput = {
+  name: string;
+  platform: string;
+  sourceId: string;
+  totalEpisodes: number;
+  coverUrl?: string;
+  sourceMetadata?: Record<string, unknown>;
+  episodes?: Array<{episode:number;url:string}>;
+  onProgress?: (completed:number,total:number)=>void;
+};
+
+export async function deletePocketBaseDrama(id: string): Promise<void> {
+  await pbFetch(`/api/collections/dramas/records/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function deletePocketBaseDramaEpisode(dramaId: string, episode: number): Promise<void> {
+  const filter = encodeURIComponent(`drama="${dramaId.replace(/"/g, "\\\"")}" && episode_number=${episode}`);
+  const response = await pbFetch(`/api/collections/drama_episodes/records?perPage=1&filter=${filter}`);
+  const payload = await response.json() as { items?: PocketBaseRecord[] };
+  const record = payload.items?.[0];
+  if (!record) throw new Error(`第 ${episode} 集不存在或已被删除`);
+  await pbFetch(`/api/collections/drama_episodes/records/${encodeURIComponent(record.id)}`, { method: "DELETE" });
+}
 
 async function pbFetch(path: string, init?: RequestInit) {
   let response: Response;
@@ -60,8 +90,9 @@ async function pbFetch(path: string, init?: RequestInit) {
     throw new Error(`无法连接 PocketBase（${PB_URL}），请先启动本项目的 PocketBase 服务`);
   }
   if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { message?: string; data?: unknown } | null;
-    throw new Error(payload?.message || `PocketBase 请求失败（HTTP ${response.status}）`);
+    const payload = await response.json().catch(() => null) as { message?: string; data?:Record<string,{message?:string}> } | null;
+    const fieldMessage=payload?.data&&Object.entries(payload.data).map(([field,value])=>value?.message?`${field}: ${value.message}`:"").find(Boolean);
+    throw new Error(fieldMessage || payload?.message || `PocketBase 请求失败（HTTP ${response.status}）`);
   }
   return response;
 }
@@ -113,6 +144,8 @@ export async function saveDramaToPocketBase(input: PocketBaseDramaInput): Promis
   dramaForm.set("copyright_status", input.copyrightStatus);
   dramaForm.set("parse_state", "queued");
   dramaForm.set("parse_config", JSON.stringify(input.parseConfig));
+  dramaForm.set("source_type", "内部");
+  dramaForm.set("acquisition_method", "手动上传");
   if (input.posterDataUrl) dramaForm.set("poster", await dataUrlToFile(input.posterDataUrl, `${input.externalId}-poster.jpg`));
 
   const existing = await findDramaByExternalId(input.externalId);
@@ -145,6 +178,73 @@ export async function saveDramaToPocketBase(input: PocketBaseDramaInput): Promis
   }
   input.onProgress?.({ completed: input.episodes.length, total: input.episodes.length, loadedBytes:input.episodes.reduce((sum,item)=>sum+item.file.size,0), totalBytes:input.episodes.reduce((sum,item)=>sum+item.file.size,0), phase: "complete" });
   return getPocketBaseDrama(drama.id);
+}
+
+async function findDramaBySource(platform: string, sourceId: string) {
+  const safePlatform=platform.replace(/"/g,"\\\"");
+  const safeSourceId=sourceId.replace(/"/g,"\\\"");
+  const filter=encodeURIComponent(`source_type="外部" && source_platform="${safePlatform}" && source_record_id="${safeSourceId}"`);
+  const response=await pbFetch(`/api/collections/dramas/records?perPage=1&filter=${filter}`);
+  const payload=await response.json() as {items:PocketBaseRecord[]};
+  return payload.items[0];
+}
+
+export async function saveExternalDramaToPocketBase(input: ExternalDramaInput): Promise<PocketBaseDramaRecord> {
+  if (!input.name.trim() || !input.platform.trim() || !input.sourceId.trim()) throw new Error("外部剧目缺少名称或平台身份");
+  if (!Number.isInteger(input.totalEpisodes) || input.totalEpisodes < 1) throw new Error("外部剧目缺少有效总集数");
+  const sourceKey = `${input.platform}:${input.sourceId}`;
+  let hash = 2166136261;
+  for (let index = 0; index < sourceKey.length; index += 1) hash = Math.imul(hash ^ sourceKey.charCodeAt(index), 16777619);
+  const externalId = String(1_000_000_000 + (hash >>> 0) % 1_000_000_000);
+  const existing = await findDramaBySource(input.platform.trim(),input.sourceId.trim()) ?? await findDramaByExternalId(externalId);
+  const body = {
+    external_id: externalId,
+    title: input.name.trim(),
+    cn: input.name.trim(),
+    genre: "待补充",
+    language: "待识别",
+    total_episodes: input.totalEpisodes,
+    free_episodes: 0,
+    copyright_status: "外部数据 · 授权待确认",
+    parse_state: "external_ready",
+    parse_config: { coarse: "未配置", detail: "未配置", precision: "未配置" },
+    source_type: "外部",
+    source_platform: input.platform.trim(),
+    source_record_id: input.sourceId.trim(),
+    acquisition_method: "开放 API",
+    external_cover_url: input.coverUrl || "",
+    source_metadata: { ...(input.sourceMetadata ?? {}), imported_at: new Date().toISOString() },
+  };
+  const response = await pbFetch(existing ? `/api/collections/dramas/records/${existing.id}` : "/api/collections/dramas/records", {
+    method: existing ? "PATCH" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const stored = await response.json() as PocketBaseRecord;
+  if(input.episodes?.length){
+    const filter=encodeURIComponent(`drama="${stored.id}"`);
+    const episodeResponse=await pbFetch(`/api/collections/drama_episodes/records?perPage=500&filter=${filter}&fields=id,episode_number`);
+    const episodePayload=await episodeResponse.json() as {items:PocketBaseRecord[]};
+    const existingNumbers=new Set(episodePayload.items.map(item=>Number(item.episode_number)));
+    let completed=0;input.onProgress?.(completed,input.episodes.length);
+    for(const item of input.episodes){
+      if(existingNumbers.has(item.episode)){completed++;input.onProgress?.(completed,input.episodes.length);continue}
+      const mediaResponse=await fetch(item.url,{cache:"no-store"});
+      if(!mediaResponse.ok)throw new Error(`第 ${item.episode} 集下载失败（HTTP ${mediaResponse.status}）`);
+      const blob=await mediaResponse.blob();
+      const file=new File([blob],`EP${String(item.episode).padStart(3,"0")}.mp4`,{type:blob.type||"video/mp4"});
+      const form=new FormData();form.set("drama",stored.id);form.set("episode_number",String(item.episode));form.set("original_name",file.name);form.set("mime_type",file.type);form.set("byte_size",String(file.size));form.set("duration_seconds","0");form.set("analysis_status","idle");form.set("analysis_progress","0");form.set("video",file,file.name);
+      await pbUpload("/api/collections/drama_episodes/records","POST",form);
+      completed++;input.onProgress?.(completed,input.episodes.length);
+    }
+  }
+  return getPocketBaseDrama(stored.id);
+}
+
+export async function startPocketBaseDramaAnalysis(recordId:string):Promise<{episode_count:number;created_jobs:number}>{
+  const response=await pbFetch(`/api/lumina/analysis/dramas/${encodeURIComponent(recordId)}/start`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+  const payload=await response.json() as {data:{episode_count:number;created_jobs:number}};
+  return payload.data;
 }
 
 export async function upsertPocketBaseDramaEpisodes(
@@ -193,13 +293,13 @@ export async function upsertPocketBaseDramaEpisodes(
   return getPocketBaseDrama(recordId);
 }
 
-async function getPocketBaseDrama(recordId: string): Promise<PocketBaseDramaRecord> {
-  const dramaResponse = await pbFetch(`/api/collections/dramas/records/${recordId}`);
+async function getPocketBaseDrama(recordId: string, signal?: AbortSignal): Promise<PocketBaseDramaRecord> {
+  const dramaResponse = await pbFetch(`/api/collections/dramas/records/${recordId}`, { signal });
   const drama = await dramaResponse.json() as PocketBaseRecord;
   const filter = encodeURIComponent(`drama="${recordId}"`);
-  const episodesResponse = await pbFetch(`/api/collections/drama_episodes/records?perPage=500&sort=episode_number&filter=${filter}`);
+  const episodesResponse = await pbFetch(`/api/collections/drama_episodes/records?perPage=500&sort=episode_number&filter=${filter}`, { signal });
   const payload = await episodesResponse.json() as { items: PocketBaseRecord[] };
-  const jobsResponse = await pbFetch(`/api/collections/analysis_jobs/records?perPage=500&sort=created&filter=${filter}&expand=episode`);
+  const jobsResponse = await pbFetch(`/api/collections/analysis_jobs/records?perPage=500&sort=created&filter=${filter}&expand=episode`, { signal });
   const jobsPayload = await jobsResponse.json() as { items: PocketBaseRecord[] };
   const episodeNumberById = new Map(payload.items.map((item) => [item.id, Number(item.episode_number)]));
   const coarseJobs = jobsPayload.items.filter((item) => item.stage === "coarse");
@@ -257,6 +357,7 @@ async function getPocketBaseDrama(recordId: string): Promise<PocketBaseDramaReco
     parseState: String(drama.parse_state || "queued"),
     parseConfig: drama.parse_config,
     analysis: normalizeAnalysisPayload(drama.analysis),
+    ontologyTags: Array.isArray(drama.ontology_tags) ? drama.ontology_tags : [],
     coarseStatus: coarse.status,
     coarseProgress: coarse.progress,
     detailStatus: detail.status,
@@ -266,15 +367,20 @@ async function getPocketBaseDrama(recordId: string): Promise<PocketBaseDramaReco
     analysisError: [coarse.status, detail.status, precision.status].includes("failed") ? String(drama.analysis_error || "") || undefined : undefined,
     detailResult: normalizeAnalysisPayload(latestDetail?.result ?? drama.analysis),
     precisionResults,
-    posterUrl: fileUrl(drama, drama.poster, "300x400"),
+    posterUrl: fileUrl(drama, drama.poster, "300x400") || (typeof drama.external_cover_url === "string" ? drama.external_cover_url : undefined),
     episodeMedia,
+    sourceType: drama.source_type === "外部" ? "外部" : "内部",
+    sourcePlatform: String(drama.source_platform || "") || undefined,
+    sourceRecordId: String(drama.source_record_id || "") || undefined,
+    acquisitionMethod: String(drama.acquisition_method || "") || undefined,
+    sourceMetadata: drama.source_metadata && typeof drama.source_metadata === "object" && !Array.isArray(drama.source_metadata) ? drama.source_metadata as Record<string, unknown> : undefined,
   };
 }
 
-export async function listPocketBaseDramas(): Promise<PocketBaseDramaRecord[]> {
-  const response = await pbFetch("/api/collections/dramas/records?perPage=500");
+export async function listPocketBaseDramas(signal?: AbortSignal): Promise<PocketBaseDramaRecord[]> {
+  const response = await pbFetch("/api/collections/dramas/records?perPage=500", { signal });
   const payload = await response.json() as { items: PocketBaseRecord[] };
-  return Promise.all(payload.items.map((item) => getPocketBaseDrama(item.id)));
+  return Promise.all(payload.items.map((item) => getPocketBaseDrama(item.id, signal)));
 }
 
 export async function updatePocketBaseDramaPoster(recordId: string, posterDataUrl: string) {
@@ -291,6 +397,11 @@ export async function updatePocketBaseDramaAnalysis(recordId: string, analysis: 
   return getPocketBaseDrama(recordId);
 }
 
+export async function updatePocketBaseDramaOntologyTags(recordId:string, ontologyTags:unknown[]) {
+  await pbFetch(`/api/collections/dramas/records/${encodeURIComponent(recordId)}`, {method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({ontology_tags:ontologyTags})});
+  return getPocketBaseDrama(recordId);
+}
+
 export async function updatePocketBaseDramaParseConfig(recordId: string, parseConfig: { coarse: string; detail: string; precision: string }) {
   await pbFetch(`/api/collections/dramas/records/${recordId}`, {
     method: "PATCH",
@@ -304,7 +415,7 @@ export async function retryPocketBaseDramaDetail(recordId: string) {
   await pbFetch(`/api/lumina/analysis/dramas/${encodeURIComponent(recordId)}/retry-detail`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: "{}",
+    body: JSON.stringify({ force: true }),
   });
   return getPocketBaseDrama(recordId);
 }

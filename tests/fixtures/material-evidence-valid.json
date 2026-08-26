@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "material-v2",
+  "content": {
+    "summary": {
+      "value": "画外说话者称呼画中女性为女王，女性随后转头回应。",
+      "confidence": 0.94,
+      "basedOnFactIds": ["F1"],
+      "evidence": [{"source": "transcript", "timecode": {"start": 1, "end": 2}, "confidence": 0.96, "sourceText": "Your Majesty, my queen"}],
+      "verification": "verified"
+    },
+    "observations": [
+      {
+        "factId": "F1",
+        "start": 1,
+        "end": 2,
+        "actorObserved": "画外说话者",
+        "actionObserved": "称呼画中女性为女王",
+        "objectOrTargetObserved": "画中女性",
+        "resultObserved": "女性转头回应",
+        "evidence": [{"source": "transcript", "timecode": {"start": 1, "end": 2}, "confidence": 0.96, "sourceText": "Your Majesty, my queen"}],
+        "verification": "verified"
+      }
+    ],
+    "inferences": [
+      {
+        "code": "IDENTITY_QUEEN",
+        "label": "该女性身份为女王",
+        "statement": "对白明确称呼该女性为女王",
+        "inferenceType": "identity",
+        "basedOnFactIds": ["F1"],
+        "confidence": 0.94,
+        "evidence": [{"source": "transcript", "timecode": {"start": 1, "end": 2}, "confidence": 0.96, "sourceText": "Your Majesty, my queen"}],
+        "verification": "verified"
+      }
+    ],
+    "characters": [
+      {
+        "code": "ROLE_QUEEN",
+        "label": "女王",
+        "confidence": 0.94,
+        "evidence": [{"source": "transcript", "timecode": {"start": 1, "end": 2}, "confidence": 0.96, "sourceText": "Your Majesty, my queen"}],
+        "verification": "verified"
+      }
+    ],
+    "relationships": []
+  },
+  "creative": {
+    "tier": {
+      "code": "T1",
+      "label": "T1",
+      "confidence": 1,
+      "evidence": [{"source": "adx", "timecode": {"start": 0, "end": 1}, "confidence": 1, "text": "ADX 投放分层记录为 T1"}],
+      "verification": "verified"
+    },
+    "packaging": {"audio": []}
+  },
+  "review": {"status": "ready", "reviewRequired": false, "reasons": []}
+}

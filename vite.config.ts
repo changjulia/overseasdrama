@@ -49,6 +49,15 @@ export default defineConfig(async () => {
       // agent. During the initial HMR handshake that forwarder can recursively
       // report its own "send was called before connect" rejection.
       forwardConsole: false,
+      proxy: {
+        "/pb": {
+          target: "http://127.0.0.1:8090",
+          // Preserve the local UI Origin header. PocketBase's custom routes
+          // intentionally reject requests that do not come from the app.
+          changeOrigin: false,
+          rewrite: (path) => path.replace(/^\/pb/, ""),
+        },
+      },
       ...(isCodexSeatbeltSandbox
         ? { watch: { useFsEvents: false, usePolling: true } }
         : {}),

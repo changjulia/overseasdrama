@@ -2,7 +2,7 @@
 
 onRecordAfterCreateSuccess((e) => {
   const helpers = require(`${__hooks}/material_analysis_helpers.js`);
-  if (e.record.getString("video")) helpers.createJob(e.app, e.record);
+  if (e.record.getString("video") && e.record.getString("analysis_status") === "queued") helpers.createJob(e.app, e.record);
   e.next();
 }, "ad_materials");
 
@@ -16,11 +16,16 @@ routerAdd("POST", "/api/lumina/material-analysis/claim", (e) => {
   if (!workerId) throw new BadRequestError("worker_id is required");
   let claimed = null;
   e.app.runInTransaction((tx) => {
-    const candidates = tx.findRecordsByFilter("material_analysis_jobs", "status = 'queued' || status = 'running' || status = 'failed'", "id", 200, 0).filter(Boolean);
+    const candidates = tx.findRecordsByFilter("material_analysis_jobs", "status = 'queued' || status = 'running' || status = 'failed'", "-priority,id", 200, 0).filter(Boolean);
     const now = Date.now();
     const job = candidates.find((item) => {
       if (requestedJobId && item.id !== requestedJobId) return false;
-      if (item.getString("status") === "queued" || item.getString("status") === "failed") return item.getInt("attempt") < item.getInt("max_attempts");
+      if (item.getString("status") === "queued") return true;
+      if (item.getString("status") === "failed") {
+        if (["permanent", "media", "validation"].includes(item.getString("error_kind"))) return false;
+        const nextAttempt = Date.parse(item.getString("next_attempt_at"));
+        return item.getInt("attempt") < item.getInt("max_attempts") && (!nextAttempt || nextAttempt <= now);
+      }
       const lease = Date.parse(item.getString("lease_until"));
       return !lease || lease <= now;
     });
@@ -91,6 +96,17 @@ routerAdd("PATCH", "/api/lumina/material-analysis/jobs/{id}", (e) => {
     job.set("status", nextStatus);
     job.set("progress", progress);
     job.set("error", nextStatus === "failed" ? String(body.error || "analysis failed").slice(0, 4000) : "");
+    if (nextStatus === "failed") {
+      const errorKind = String(body.error_kind || "permanent");
+      job.set("error_kind", errorKind);
+      const retryable = body.retryable === true && !["permanent", "media", "validation"].includes(errorKind);
+      const delay = Math.max(0, Math.min(1800, Number(body.retry_after_seconds || 0)));
+      job.set("next_attempt_at", retryable && delay ? new Date(Date.now() + delay * 1000).toISOString() : "");
+      if (!retryable) job.set("max_attempts", job.getInt("attempt"));
+    } else {
+      job.set("error_kind", "");
+      job.set("next_attempt_at", "");
+    }
     if (body.result != null) job.set("result", body.result);
     if (body.logs != null) job.set("logs", body.logs);
     const reportedStage = String(body.current_stage || body.stage_name || "");
@@ -144,7 +160,10 @@ routerAdd("POST", "/api/lumina/material-analysis/jobs/{id}/retry", (e) => {
   const helpers = require(`${__hooks}/material_analysis_helpers.js`);
   helpers.authorize(e);
   const job = e.app.findRecordById("material_analysis_jobs", e.request.pathValue("id"));
-  if (job.getString("status") !== "failed") throw new BadRequestError("only failed jobs can be retried");
+  const status = job.getString("status");
+  const leaseUntil = Date.parse(job.getString("lease_until"));
+  const staleRunning = status === "running" && (!leaseUntil || leaseUntil <= Date.now());
+  if (status !== "failed" && !staleRunning) throw new BadRequestError("only failed or lease-expired running jobs can be retried");
   job.set("status", "queued");
   job.set("progress", 0);
   job.set("attempt", 0);
@@ -188,12 +207,14 @@ routerAdd("POST", "/api/lumina/material-analysis/materials/{id}/reproject", (e) 
   const bodyFormat = helpers.resultValue({ result: creative.bodyFormat || {} }, ["value", "label", "code"], "");
   const narrationCoverage = Number(helpers.resultValue({ result: creative.narrationCoverage || {} }, ["value"], NaN));
   const hookSourceStatus = helpers.resultValue({ result: creative.hookSourceStatus || {} }, ["value", "label", "code"], "");
+  const hookAssemblyType = helpers.resultValue({ result: creative.hookAssemblyType || {} }, ["value", "label", "code"], "");
+  const hasPreface = ["同剧外搭", "跨剧外搭", "外搭来源待确认"].includes(String(hookAssemblyType));
   let format = "未确定";
-  if (["疑似外搭", "已确认外搭"].includes(String(hookSourceStatus))) format = "外搭钩子＋本剧正片";
+  if (hasPreface || ["疑似外搭", "已确认外搭"].includes(String(hookSourceStatus))) format = "外搭钩子＋本剧正片";
   else if (String(bodyFormat) === "解说主导") format = "正片剧集解说";
   else if (String(bodyFormat) === "正片主导") format = "正片剧集拼接";
   else if (String(bodyFormat) === "混合" && Number.isFinite(narrationCoverage)) format = narrationCoverage >= .5 ? "正片剧集解说" : "正片剧集拼接";
-  const basis = ["疑似外搭", "已确认外搭"].includes(String(hookSourceStatus)) ? creative.hookSourceStatus : creative.bodyFormat;
+  const basis = hasPreface ? creative.hookAssemblyType : ["疑似外搭", "已确认外搭"].includes(String(hookSourceStatus)) ? creative.hookSourceStatus : creative.bodyFormat;
   creative.format = {
     code: { "正片剧集拼接": "EPISODE_SPLICE", "正片剧集解说": "EPISODE_NARRATION", "外搭钩子＋本剧正片": "EXTERNAL_HOOK_BODY", "未确定": "UNDETERMINED" }[format],
     label: format,
@@ -203,6 +224,7 @@ routerAdd("POST", "/api/lumina/material-analysis/materials/{id}/reproject", (e) 
     verification: basis && basis.verification ? basis.verification : "unverified"
   };
   result.creative = creative;
+  if (result.semantic && typeof result.semantic === "object") result.semantic.creative = creative;
   material.set("analysis_result", result);
   const projection = helpers.projectMaterialResult(result, material.getString("review_status"));
   material.set("material_format", projection.format);
@@ -213,9 +235,42 @@ routerAdd("POST", "/api/lumina/material-analysis/materials/{id}/reproject", (e) 
   material.set("review_flags", projection.reviewFlags);
   material.set("ontology_tags", projection.ontologyTags);
   material.set("production_gate", projection.productionGate);
+  material.set("analysis_status", "succeeded");
+  material.set("analysis_progress", 100);
+  material.set("analysis_stage", "completed");
+  material.set("analysis_error", "");
   const hookAssetIds = helpers.syncMaterialHookAssets(e.app, material, result, projection);
   e.app.save(material);
   return e.json(200, { id: material.id, material_format: projection.format, creative_tier: material.getString("creative_tier"), hook_asset_ids: hookAssetIds });
+});
+
+routerAdd("POST", "/api/lumina/maintenance/clear-hook-review-data", (e) => {
+  const helpers = require(`${__hooks}/material_analysis_helpers.js`);
+  helpers.authorizeLocalUi(e);
+  const body = e.requestInfo().body || {};
+  if (body.confirm !== "CLEAR_HOOKS_AND_REVIEWS") throw new BadRequestError("explicit confirmation is required");
+  const hooks = e.app.findRecordsByFilter("hook_assets", "id != ''", "id", 5000, 0);
+  for (const hook of hooks) e.app.delete(hook);
+  const materials = e.app.findRecordsByFilter("ad_materials", "id != ''", "id", 5000, 0);
+  for (const material of materials) {
+    let result = {};
+    try {
+      const stored = material.getString("analysis_result");
+      result = stored ? JSON.parse(stored) : {};
+      for (let index = 0; index < 2 && typeof result === "string"; index++) result = JSON.parse(result || "{}");
+    } catch (_) { result = {}; }
+    if (result && typeof result === "object") {
+      result.review = { ...(result.review || {}), status: "ready", reviewRequired: false, items: [], reasons: [] };
+      if (result.semantic && typeof result.semantic === "object") result.semantic.review = result.review;
+      material.set("analysis_result", result);
+    }
+    material.set("review_status", "已通过");
+    material.set("review_flags", []);
+    const gate = material.get("production_gate") || {};
+    if (gate && typeof gate === "object") material.set("production_gate", { ...gate, reviewRequired: false, reasons: [] });
+    e.app.save(material);
+  }
+  return e.json(200, { deletedHookAssets: hooks.length, clearedMaterialReviews: materials.length });
 });
 
 routerAdd("POST", "/api/lumina/material-analysis/jobs/{id}/reset", (e) => {
@@ -247,10 +302,15 @@ routerAdd("POST", "/api/lumina/material-analysis/materials/{id}/retry", (e) => {
   helpers.authorizeLocalUi(e);
   const body = e.requestInfo().body || {};
   const force = body.force === true;
+  const forceSemanticRefresh = body.force_semantic_refresh === true || force;
   const material = e.app.findRecordById("ad_materials", e.request.pathValue("id"));
   const jobs = e.app.findRecordsByFilter("material_analysis_jobs", "material = {:material}", "-id", 1, 0, { material: material.id }).filter(Boolean);
   const job = jobs[0];
-  if (!job) throw new BadRequestError("material analysis job not found");
+  if (!job) {
+    if (!material.getString("video")) throw new BadRequestError("material has no uploaded video");
+    const created = helpers.createJob(e.app, material);
+    return e.json(200, { id: created.id, status: "queued", attempt: 0 });
+  }
   if (["queued", "running"].includes(job.getString("status")) && !force) {
     return e.json(200, { id: job.id, status: job.getString("status"), attempt: job.getInt("attempt") });
   }
@@ -263,6 +323,8 @@ routerAdd("POST", "/api/lumina/material-analysis/materials/{id}/retry", (e) => {
   job.set("error", "");
   job.set("result", null);
   job.set("current_stage", "queued");
+  const previousLogs = job.get("logs");
+  job.set("logs", { ...(previousLogs && typeof previousLogs === "object" ? previousLogs : {}), force_semantic_refresh: forceSemanticRefresh });
   e.app.save(job);
   material.set("analysis_status", "queued");
   material.set("analysis_progress", 0);

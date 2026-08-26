@@ -6,9 +6,18 @@ function authorize(e) {
 
 function authorizeLocalUi(e) {
   const origin = String(e.requestInfo().headers.origin || "");
-  if (!/^https?:\/\/(localhost|127\.0\.0\.1):300[01]$/i.test(origin)) {
+  if (!/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]):300[01]$/i.test(origin)) {
     throw new ForbiddenError("Drama retry is only available to the local Lumina UI");
   }
+}
+
+function storedJsonArray(record, field) {
+  const value = record.get(field);
+  if (Array.isArray(value) && value.every((item) => Number.isInteger(item) && item >= 0 && item <= 255)) {
+    try { let text=""; for(let i=0;i<value.length;){const a=value[i++];if(a<128){text+=String.fromCharCode(a);continue}if((a&224)===192){const b=value[i++];text+=String.fromCharCode(((a&31)<<6)|(b&63));continue}const b=value[i++],c=value[i++];text+=String.fromCharCode(((a&15)<<12)|((b&63)<<6)|(c&63));}const parsed=JSON.parse(text);return Array.isArray(parsed)?parsed:[]; } catch (_) { return []; }
+  }
+  if (typeof value === "string") { try { const parsed=JSON.parse(value);return Array.isArray(parsed)?parsed:[]; } catch (_) { return []; } }
+  return Array.isArray(value) ? value : [];
 }
 
 function createCoarseJob(app, episode) {
@@ -160,4 +169,30 @@ function syncPrecisionHookAssets(app, job, envelope) {
   return created;
 }
 
-module.exports = { authorize, authorizeLocalUi, createCoarseJob, refreshDrama, refreshStage, ensureDramaStageJob, ensurePrecisionJobs, syncPrecisionHookAssets };
+function projectDramaOntologyTags(result, existing) {
+  let root = result && typeof result === "object" ? result : {};
+  for (let depth = 0; depth < 4 && root && root.result && typeof root.result === "object"; depth += 1) root = root.result;
+  const aliases = {genre:"genre",genres:"genre",theme:"theme",themes:"theme",role:"role",roles:"role",character:"role",characters:"role",relation:"relation",relations:"relation",relationship:"relation",relationships:"relation",conflict:"conflict",conflicts:"conflict",emotion:"emotion",emotions:"emotion",storybeat:"storyBeat",storybeats:"storyBeat",plot:"storyBeat",plots:"storyBeat",scene:"scene",scenes:"scene",audience:"audience",audiences:"audience",acquisition:"acquisition",aduse:"acquisition"};
+  const fields = [["genres","genre"],["themes","theme"],["roles","role"],["relationships","relation"],["conflicts","conflict"],["emotions","emotion"],["storyBeats","storyBeat"],["plots","storyBeat"],["scenes","scene"],["audiences","audience"],["acquisition","acquisition"]];
+  const raw = Array.isArray(root.contentTags) ? root.contentTags.slice() : [];
+  fields.forEach(([field, dimension]) => (Array.isArray(root[field]) ? root[field] : []).forEach((item) => raw.push(item && typeof item === "object" ? Object.assign({}, item, {dimension}) : {value:item,dimension})));
+  const saved = Array.isArray(existing) ? existing : [], manual = saved.filter((tag) => tag && (tag.locked === true || tag.manualStatus));
+  const seen = {}, projected = [];
+  raw.forEach((item, index) => {
+    const object = item && typeof item === "object" ? item : {value:item};
+    const key = String(object.dimension || "theme").toLowerCase().replace(/[\s_-]+/g, "");
+    const dimension = aliases[key] || "theme", label = String(object.value || object.label || object.name || "").trim();
+    if (!label) return;
+    const code = String(object.code || `${dimension}.${label.replace(/[^\w\u4e00-\u9fff]+/g,"-")}`), dedupe = `${dimension}:${code}`;
+    if (seen[dedupe]) return; seen[dedupe] = true;
+    const evidence = Array.isArray(object.evidence) ? object.evidence : [], episodes = Array.isArray(object.episodes) ? object.episodes.map(Number).filter(Boolean) : [];
+    const confidence = Number(object.confidence || 0), primaryScore = Math.round(Math.min(100, confidence * 40 + Math.min(1, evidence.length / 3) * 20 + Math.min(1, episodes.length / 10) * 25));
+    projected.push({code,dimension,label,original:label,confidence:confidence || undefined,evidence,episodes,start:Number(object.start)||undefined,end:Number(object.end)||undefined,prominence:primaryScore>=55?"primary":"secondary",primaryScore,source:"model",analysisVersion:"hook-ontology-v1.1",order:index});
+  });
+  manual.forEach((tag) => { const index = projected.findIndex((item) => item.code === tag.code); if (index >= 0) projected[index] = Object.assign({}, projected[index], tag); else projected.push(tag); });
+  const primaryByDimension = {};
+  projected.sort((a,b)=>(b.locked?1:0)-(a.locked?1:0)||Number(b.primaryScore||0)-Number(a.primaryScore||0)).forEach((tag) => { if (tag.manualStatus === "rejected") return; const count=primaryByDimension[tag.dimension]||0;if(tag.locked||tag.manualStatus==="confirmed"||tag.primaryScore>=55&&count<2){tag.prominence="primary";primaryByDimension[tag.dimension]=count+1}else tag.prominence="secondary"; });
+  return projected;
+}
+
+module.exports = { authorize, authorizeLocalUi, storedJsonArray, createCoarseJob, refreshDrama, refreshStage, ensureDramaStageJob, ensurePrecisionJobs, syncPrecisionHookAssets, projectDramaOntologyTags };

@@ -101,19 +101,82 @@ def _render_clip(source: Path, target: Path, start: float, end: float, fade_in: 
         raise AnalysisFailed(f"clip render failed: {result.stderr[-1200:]}")
 
 
+def _resolve_timeline_segment(
+    available: list[dict[str, Any]],
+    *,
+    episode: int,
+    start: float | None,
+    end: float | None,
+    tolerance: float = 0.05,
+) -> tuple[dict[str, Any] | None, list[int]]:
+    """Resolve a timeline clip against one or more contiguous evidence segments.
+
+    The editor intentionally merges adjacent story beats from the same episode
+    into one continuous clip.  The renderer used to accept only a 1:1 match,
+    which rejected an otherwise fully evidenced merged clip.  This resolver
+    accepts the merge only when its outer boundaries match and every interval
+    between them is covered (overlaps are allowed; uncovered gaps are not).
+    """
+    indexed = [
+        (index, item)
+        for index, item in enumerate(available)
+        if int(item.get("episode") or 0) == episode
+    ]
+    for index, item in indexed:
+        item_start, item_end = float(item.get("start") or 0), float(item.get("end") or 0)
+        if (start is None or abs(item_start - start) <= tolerance) and (end is None or abs(item_end - end) <= tolerance):
+            return dict(item), [index]
+    if start is None or end is None:
+        return None, []
+    candidates = sorted(
+        ((index, item) for index, item in indexed if float(item.get("end") or 0) >= start - tolerance and float(item.get("start") or 0) <= end + tolerance),
+        key=lambda pair: (float(pair[1].get("start") or 0), float(pair[1].get("end") or 0)),
+    )
+    if not candidates or abs(float(candidates[0][1].get("start") or 0) - start) > tolerance:
+        return None, []
+    covered_end = start
+    consumed: list[tuple[int, dict[str, Any]]] = []
+    for index, item in candidates:
+        item_start, item_end = float(item.get("start") or 0), float(item.get("end") or 0)
+        if item_start > covered_end + tolerance:
+            return None, []
+        if item_end > covered_end:
+            consumed.append((index, item))
+            covered_end = item_end
+        if covered_end >= end - tolerance:
+            break
+    if abs(covered_end - end) > tolerance or not consumed:
+        return None, []
+    first, last = consumed[0][1], consumed[-1][1]
+    merged = {
+        "episode": episode,
+        "start": start,
+        "end": end,
+        "purpose": "+".join(dict.fromkeys(str(item.get("purpose") or "story") for _, item in consumed)),
+        "safeStart": first.get("safeStart") or {},
+        "safeEnd": last.get("safeEnd") or {},
+        "evidence": [evidence for _, item in consumed for evidence in (item.get("evidence") or [])],
+        "sourceSegments": [str(item.get("highlightAssetId") or "") for _, item in consumed],
+    }
+    return merged, [index for index, _ in consumed]
+
+
 def render_factory_project(response: dict[str, Any], base_url: str, workspace: Path, output_root: Path, on_progress: Callable[[int, str], None] | None = None) -> dict[str, Any]:
     project, hook, match, material = (dict(response.get(name) or {}) for name in ("project", "hook", "match", "material"))
     episodes = [dict(item) for item in response.get("episodes") or []]
-    if hook.get("source_class") != "external_material" or hook.get("boundary_status") != "verified":
+    is_episode_splice = project.get("mode") == "episode-splice"
+    if not is_episode_splice and (hook.get("source_class") != "external_material" or hook.get("boundary_status") != "verified"):
         raise AnalysisFailed("render requires a verified external hook asset")
     segments = match.get("segments") if isinstance(match.get("segments"), list) else []
-    if not segments:
+    if not is_episode_splice and not segments:
         raise AnalysisFailed("story match contains no segments")
     if on_progress:
         on_progress(8, "下载钩子与剧集片源")
-    material_name = str(material.get("video") or "")
-    material_path = workspace / f"hook-source{Path(material_name).suffix or '.mp4'}"
-    _download(f"{base_url.rstrip('/')}/api/files/{material.get('collectionId')}/{material.get('id')}/{urllib.parse.quote(material_name)}", material_path)
+    material_path: Path | None = None
+    if not is_episode_splice:
+        material_name = str(material.get("video") or "")
+        material_path = workspace / f"hook-source{Path(material_name).suffix or '.mp4'}"
+        _download(f"{base_url.rstrip('/')}/api/files/{material.get('collectionId')}/{material.get('id')}/{urllib.parse.quote(material_name)}", material_path)
     episode_paths: dict[int, Path] = {}
     for episode in episodes:
         number = int(episode.get("episode_number") or 0)
@@ -125,9 +188,13 @@ def render_factory_project(response: dict[str, Any], base_url: str, workspace: P
         on_progress(24, "检测剧集闪光结尾与安全边界")
     tail_starts = {number: detect_flash_tail(path, _duration(path)) for number, path in episode_paths.items()}
     ledger: list[dict[str, Any]] = []
-    clip_specs: list[tuple[Path, float, float, str]] = [(material_path, float(hook.get("start_seconds") or 0), float(hook.get("end_seconds") or 0), "hook")]
-    ledger.append({"kind": "hook", "start": clip_specs[0][1], "end": clip_specs[0][2], "safeStart": hook.get("safe_start"), "safeEnd": hook.get("safe_end"), "status": "verified"})
+    clip_specs: list[tuple[Path, float, float, str]] = []
+    if material_path is not None:
+        clip_specs.append((material_path, float(hook.get("start_seconds") or 0), float(hook.get("end_seconds") or 0), "hook"))
+        ledger.append({"kind": "hook", "start": clip_specs[0][1], "end": clip_specs[0][2], "safeStart": hook.get("safe_start"), "safeEnd": hook.get("safe_end"), "status": "verified"})
     timeline = project.get("timeline") if isinstance(project.get("timeline"), list) else []
+    transition = project.get("transition") if isinstance(project.get("transition"), dict) else {}
+    sequential_external_body = transition.get("bodyAssemblyMode") == "sequential_from_highlight"
     ordered_segments: list[dict[str, Any]] = []
     unused = list(segments)
     for item in timeline:
@@ -136,15 +203,61 @@ def render_factory_project(response: dict[str, Any], base_url: str, workspace: P
         episode = int(item.get("episode") or 0)
         start_value = item.get("startSeconds", item.get("start"))
         end_value = item.get("endSeconds", item.get("end"))
-        match_index = next((index for index, segment in enumerate(unused) if int(segment.get("episode") or 0) == episode and (start_value is None or abs(float(segment.get("start") or 0)-float(start_value)) <= .05) and (end_value is None or abs(float(segment.get("end") or 0)-float(end_value)) <= .05)), None)
-        if match_index is None:
-            raise AnalysisFailed(f"timeline episode {episode} is not backed by an approved story segment")
-        ordered_segments.append(unused.pop(match_index))
+        if is_episode_splice:
+            ordered_segments.append({
+                "episode": episode, "start": float(start_value or 0), "end": float(end_value or 0),
+                "purpose": "sequential-episode-body",
+                "safeStart": item.get("safeStart") or {"status": "verified", "source": "approved_highlight_start"},
+                "safeEnd": item.get("safeEnd") or {"status": "verified", "source": "episode_end"},
+                "evidence": item.get("evidence") or [],
+            })
+            continue
+        if sequential_external_body:
+            start = float(start_value) if start_value is not None else 0.0
+            end = float(end_value) if end_value is not None else _duration(episode_paths[episode])
+            if not ordered_segments:
+                anchor = next(
+                    (
+                        segment for segment in segments
+                        if int(segment.get("episode") or 0) == episode
+                        and abs(float(segment.get("start") or 0) - start) <= 0.05
+                    ),
+                    None,
+                )
+                if anchor is None:
+                    raise AnalysisFailed("sequential body does not start at an approved highlight")
+                safe_start = anchor.get("safeStart") or {"status": "verified", "source": "approved_highlight_start"}
+            else:
+                previous_episode = int(ordered_segments[-1].get("episode") or 0)
+                if episode != previous_episode + 1 or abs(start) > 0.05:
+                    raise AnalysisFailed("sequential body episodes are not consecutive")
+                safe_start = {"status": "verified", "source": "episode_start"}
+            source_duration = _duration(episode_paths[episode])
+            if abs(end - source_duration) > 0.1:
+                raise AnalysisFailed(f"episode {episode} must continue to its source ending")
+            ordered_segments.append({
+                "episode": episode, "start": start, "end": end,
+                "purpose": "sequential_from_highlight",
+                "safeStart": safe_start,
+                "safeEnd": {"status": "verified", "source": "episode_end"},
+                "evidence": [],
+            })
+            continue
+        resolved, consumed_indices = _resolve_timeline_segment(
+            unused,
+            episode=episode,
+            start=float(start_value) if start_value is not None else None,
+            end=float(end_value) if end_value is not None else None,
+        )
+        if resolved is None:
+            raise AnalysisFailed(f"timeline episode {episode} is not fully covered by timestamped story evidence")
+        ordered_segments.append(resolved)
+        for consumed_index in sorted(consumed_indices, reverse=True):
+            unused.pop(consumed_index)
     if ordered_segments:
         segments = ordered_segments
     ratio = str(project.get("ratio") or "9:16")
     width, height = {"9:16": (1080, 1920), "16:9": (1920, 1080), "1:1": (1080, 1080)}.get(ratio, (1080, 1920))
-    transition = project.get("transition") if isinstance(project.get("transition"), dict) else {}
     transition_id = str(transition.get("id") or "fade-cut")
     fade_seconds = 0.0 if transition_id == "hard-cut" else min(.5, max(.05, float(transition.get("durationSeconds") or .25)))
     for segment in segments:
@@ -152,7 +265,7 @@ def render_factory_project(response: dict[str, Any], base_url: str, workspace: P
         if number not in episode_paths:
             raise AnalysisFailed(f"episode {number} source is unavailable")
         safe_start, safe_end = segment.get("safeStart") or {}, segment.get("safeEnd") or {}
-        if safe_start.get("status") != "verified" or safe_end.get("status") != "verified":
+        if not is_episode_splice and not sequential_external_body and (safe_start.get("status") != "verified" or safe_end.get("status") != "verified"):
             raise AnalysisFailed(f"episode {number} has an unverified dialogue/action boundary")
         flash_start = tail_starts.get(number)
         adjusted_end = min(end, max(start, flash_start - 0.05)) if flash_start is not None else end
@@ -165,7 +278,7 @@ def render_factory_project(response: dict[str, Any], base_url: str, workspace: P
         if on_progress:
             on_progress(30 + round(45 * index / max(1, len(clip_specs))), f"渲染片段 {index + 1}/{len(clip_specs)}")
         target = workspace / f"clip-{index:03d}.mp4"
-        _render_clip(source, target, start, end, fade_in=index == 1, fade_out=index == 0, width=width, height=height, fade_seconds=fade_seconds)
+        _render_clip(source, target, start, end, fade_in=(index == 1 and not is_episode_splice), fade_out=(index == 0 and not is_episode_splice), width=width, height=height, fade_seconds=fade_seconds)
         rendered.append(target)
     concat_file = workspace / "concat.txt"
     concat_file.write_text("\n".join(f"file '{path.as_posix()}'" for path in rendered), encoding="utf-8")
@@ -181,6 +294,10 @@ def render_factory_project(response: dict[str, Any], base_url: str, workspace: P
     probe = subprocess.run([_executable("ffprobe"), "-v", "error", "-show_entries", "stream=codec_name,codec_type,width,height", "-show_entries", "format=duration,size", "-of", "json", str(output)], capture_output=True, text=True)
     technical = json.loads(probe.stdout or "{}") if probe.returncode == 0 else {}
     expected_duration = sum(end - start for _, start, end, _ in clip_specs)
+    if is_episode_splice and not 300 <= expected_duration <= 900:
+        raise AnalysisFailed(
+            f"sequential splice output must be 5-15 minutes after tail removal (actual {expected_duration:.2f}s)"
+        )
     render_quality = build_render_quality_report(output=output, technical=technical, expected_duration=expected_duration, width=width, height=height, ledger=ledger)
     if not render_quality["passed"]:
         raise AnalysisFailed(f"rendered output quality check failed: {', '.join(render_quality['failureCodes'])}")

@@ -3,6 +3,7 @@
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import type { OperationsSection, PipelineTask, SourceRecord } from "./types";
 import { deletePocketBaseAnalysisTask, pausePocketBaseAnalysisTask, resumePocketBaseAnalysisTask } from "../../lib/pocketbase-analysis-store";
+import ExternalDataConsole from "./ExternalDataConsole";
 import styles from "./operations.module.css";
 
 const initialSources: SourceRecord[] = [
@@ -126,7 +127,20 @@ export function OperationsWorkspace({
     setSelectedTask((current) => tasks.find((task) => task.id === current?.id) ?? tasks[0]);
   }, [tasks]);
 
-  if (section === "sources")
+  if (section === "sources") {
+    return (
+      <section className={styles.workspace} aria-label="外部短剧数据">
+        <PageHeader
+          eyebrow="EXTERNAL OPEN API"
+          title="外部短剧数据"
+          description="手动查询月度短剧榜、全集播放地址和 ADX 素材；结果不会自动入库或进入分析队列。"
+        />
+        <ExternalDataConsole onNotify={notify} />
+      </section>
+    );
+  }
+
+  if (false)
     return (
       <section className={styles.workspace} aria-label="数据源管理">
         <PageHeader
@@ -146,6 +160,7 @@ export function OperationsWorkspace({
           <Metric label="最近同步成功率" value="98.7%" hint="过去 24 小时" />
           <Metric label="存储使用" value="4.82 TB" hint="热存 30 天" />
         </div>
+        <ExternalDataConsole />
         <div className={styles.toolbar}>
           <label className={styles.search}>
             ⌕
@@ -812,8 +827,8 @@ function PageHeader({
   eyebrow: string;
   title: string;
   description: string;
-  action: string;
-  onAction: () => void;
+  action?: string;
+  onAction?: () => void;
 }) {
   return (
     <header className={styles.pageHeader}>
@@ -822,9 +837,9 @@ function PageHeader({
         <h1>{title}</h1>
         <p>{description}</p>
       </div>
-      <button className={styles.primary} onClick={onAction}>
+      {action && onAction && <button className={styles.primary} onClick={onAction}>
         {action}
-      </button>
+      </button>}
     </header>
   );
 }

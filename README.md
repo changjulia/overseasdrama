@@ -87,6 +87,24 @@ python3 -m unittest tests/test_processor.py
 npm run build
 ```
 
+## 外部短剧数据接口
+
+月榜、全集播放地址和 ADX 素材查询通过服务端代理接入，浏览器端不会接触上游 API Key。启动前配置：
+
+```powershell
+$env:EXTERNAL_OPEN_API_KEY = "由服务方提供的 API Key"
+$env:EXTERNAL_OPEN_API_BASE_URL = "http://121.41.8.142:3000/api/open/v1"
+npm run dev
+```
+
+应用内接口分别为：
+
+- `GET /api/external-data/rankings?month=YYYY-MM`
+- `GET /api/external-data/playback?name=完整剧名`
+- `POST /api/external-data/materials`
+
+生产环境必须把 `EXTERNAL_OPEN_API_BASE_URL` 换成服务方提供的 HTTPS 地址。
+
 ## 安全
 
 - `.env`、API Key、缓存和本地视频不会提交到仓库。

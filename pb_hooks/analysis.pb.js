@@ -2,9 +2,27 @@
 
 onRecordAfterCreateSuccess((e) => {
   const helpers = require(`${__hooks}/analysis_helpers.js`);
-  if (e.record.getString("video")) helpers.createCoarseJob(e.app, e.record);
+  if (e.record.getString("video") && e.record.getString("analysis_status") === "queued") helpers.createCoarseJob(e.app, e.record);
   e.next();
 }, "drama_episodes");
+
+routerAdd("POST", "/api/lumina/analysis/dramas/{id}/start", (e) => {
+  const helpers = require(`${__hooks}/analysis_helpers.js`);
+  helpers.authorizeLocalUi(e);
+  const dramaId = e.request.pathValue("id");
+  const drama = e.app.findRecordById("dramas", dramaId);
+  const episodes = e.app.findRecordsByFilter("drama_episodes", "drama = {:drama} && video != ''", "episode_number", 10000, 0, { drama: dramaId }).filter(Boolean);
+  if (!episodes.length) throw new BadRequestError("当前剧目没有已入库视频");
+  let created = 0;
+  episodes.forEach((episode) => {
+    const before = e.app.findRecordsByFilter("analysis_jobs", "episode = {:episode} && stage = 'coarse'", "id", 1, 0, { episode: episode.id }).filter(Boolean).length;
+    helpers.createCoarseJob(e.app, episode);
+    episode.set("analysis_status", "queued"); episode.set("analysis_progress", 0); episode.set("analysis_error", ""); e.app.save(episode);
+    if (!before) created++;
+  });
+  drama.set("coarse_status", "queued"); drama.set("coarse_progress", 0); drama.set("parse_state", "queued"); e.app.save(drama);
+  return e.json(200, { code: 0, message: "success", data: { episode_count: episodes.length, created_jobs: created } });
+});
 
 routerAdd("POST", "/api/lumina/analysis/claim", (e) => {
   const helpers = require(`${__hooks}/analysis_helpers.js`);
@@ -66,7 +84,10 @@ routerAdd("POST", "/api/lumina/analysis/claim", (e) => {
     drama.set(`${stage}_progress`, job.getInt("progress"));
     tx.save(drama);
     let parameters = {};
-    try { parameters = JSON.parse(JSON.stringify(job.get("logs") || {})); } catch (_) {}
+    try {
+      const rawParameters = JSON.parse(JSON.stringify(job.get("logs") || {}));
+      parameters = rawParameters && typeof rawParameters === "object" && !Array.isArray(rawParameters) ? rawParameters : {};
+    } catch (_) {}
     if (stage === "precision" && (!parameters.interval || parameters.interval.start == null || parameters.interval.end == null)) {
       const parts = job.getString("idempotency_key").split(":");
       if (parts.length >= 5) parameters = { ...parameters, interval: { start: Number(parts[2]), end: Number(parts[3]) } };
@@ -152,7 +173,7 @@ routerAdd("PATCH", "/api/lumina/analysis/jobs/{id}", (e) => {
     drama.set(`${stage}_progress`, progress);
     if (nextStatus === "failed") drama.set("analysis_error", job.getString("error"));
     else if (nextStatus === "succeeded") drama.set("analysis_error", "");
-    if (stage === "detail" && nextStatus === "succeeded" && body.result) drama.set("analysis", body.result);
+    if (stage === "detail" && nextStatus === "succeeded" && body.result) { drama.set("analysis", body.result); drama.set("ontology_tags", helpers.projectDramaOntologyTags(body.result, helpers.storedJsonArray(drama, "ontology_tags"))); }
     tx.save(drama);
     completedStage = nextStatus === "succeeded" ? stage : "";
     completedResult = body.result || null;
@@ -170,7 +191,8 @@ routerAdd("POST", "/api/lumina/analysis/jobs/{id}/retry", (e) => {
   const helpers = require(`${__hooks}/analysis_helpers.js`);
   helpers.authorize(e);
   const job = e.app.findRecordById("analysis_jobs", e.request.pathValue("id"));
-  if (job.getString("status") !== "failed") throw new BadRequestError("only failed jobs can be retried");
+  const force = Boolean((e.requestInfo().body || {}).force);
+  if (job.getString("status") !== "failed" && !force) throw new BadRequestError("only failed jobs can be retried without force");
   job.set("status", "queued");
   job.set("progress", 0);
   job.set("worker_id", "");
@@ -322,9 +344,10 @@ routerAdd("POST", "/api/lumina/analysis/dramas/{id}/retry-detail", (e) => {
   helpers.authorizeLocalUi(e);
   const dramaId = e.request.pathValue("id");
   const drama = e.app.findRecordById("dramas", dramaId);
+  const force = Boolean((e.requestInfo().body || {}).force);
   const detailJobs = e.app.findRecordsByFilter("analysis_jobs", "drama = {:drama} && stage = 'detail'", "-id", 1, 0, { drama: dramaId }).filter(Boolean);
   let job = detailJobs[0];
-  if (job && ["queued", "running"].includes(job.getString("status"))) {
+  if (job && ["queued", "running"].includes(job.getString("status")) && !force) {
     return e.json(200, { id: job.id, drama: dramaId, status: job.getString("status") });
   }
   const precisionJobs = e.app.findRecordsByFilter("analysis_jobs", "drama = {:drama} && stage = 'precision'", "id", 10000, 0, { drama: dramaId }).filter(Boolean);

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeTag, normalizeTags, relationOf, compareTagSets } from "../app/lib/ontology/normalization.ts";
+import { normalizeDimension, normalizeTag, normalizeTags, rankOntologyTags, relationOf, compareTagSets } from "../app/lib/ontology/normalization.ts";
 
 test("normalizes Chinese and English aliases while retaining provenance", () => {
   const tag = normalizeTag({ label: "Revenge", evidence: ["asr-4"] }, "theme");
@@ -16,6 +16,31 @@ test("supports all fixed ontology dimensions and legacy strings", () => {
   // Unknown vocabulary remains lossless and does not break old payloads.
   assert.equal(tags[1].original, "strong conflict");
   assert.equal(tags[1].dimension, "acquisition");
+});
+
+test("maps legacy page dimensions to the shared cross-page vocabulary", () => {
+  assert.equal(normalizeDimension("character"), "role");
+  assert.equal(normalizeDimension("relationships"), "relation");
+  assert.equal(normalizeDimension("plot"), "storyBeat");
+  assert.equal(normalizeDimension("adUse"), "acquisition");
+  assert.equal(normalizeDimension("买量用途"), "acquisition");
+});
+
+test("normalizes expanded drama vocabulary without losing aliases", () => {
+  assert.equal(normalizeTag("身份逆转", "theme").code, "theme.身份反转");
+  assert.equal(normalizeTag("fight back", "storyBeat").code, "storyBeat.反击");
+});
+
+test("selects at most two evidence-backed primary tags and respects manual locks", () => {
+  const ranked=rankOntologyTags([
+    {...normalizeTag("复仇","theme",{confidence:.9,evidence:["e1","e2"]}),episodes:[1,2,3]},
+    {...normalizeTag("成长","theme",{confidence:.8,evidence:["e1"]}),episodes:[1,2]},
+    {...normalizeTag("救赎","theme",{confidence:.2}),episodes:[]},
+    {...normalizeTag("亲情","theme",{confidence:.1}),episodes:[],locked:true,manualStatus:"confirmed"},
+  ],10);
+  assert.equal(ranked.find(tag=>tag.label==="亲情").prominence,"primary");
+  assert.ok(ranked.filter(tag=>tag.prominence==="primary").length<=2);
+  assert.equal(ranked.find(tag=>tag.label==="救赎").prominence,"secondary");
 });
 
 test("relation API distinguishes known relations from unknown evidence", () => {
