@@ -46,6 +46,7 @@ next-env.d.ts
 /pb_data/data.db*
 /pb_data/auxiliary.db*
 /pb_data/backups/
+/pb_data/storage/
 /pb_data/types.d.ts
 .pocketbase.*.log
 .analysis-worker*.log
@@ -75,6 +76,14 @@ pb-hook-test.*.log
 /public/material-analysis/
 /public/material-covers/
 /public/material-previews/
+
+# local Golden-analysis derivatives; keep structured JSON/Markdown ledgers only
+/artifacts/**/module-cache/
+/artifacts/**/*.jpg
+/artifacts/**/*.wav
+/artifacts/**/*.pcm
+/release-evidence/**/pre-local-runtime-backup/
+/release-evidence/**/system-snapshot*.json
 
 # local video fixtures and processor outputs
 /test-fixtures/

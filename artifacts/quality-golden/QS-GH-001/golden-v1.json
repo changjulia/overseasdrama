@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "caseId": "QS-GH-001",
+  "goldenVersion": "v1",
+  "status": "frozen_with_prior",
+  "frozenAt": "2026-08-30T22:26:48+08:00",
+  "input": {
+    "path": "/Users/julia_chen/Downloads/1786532318_t7aTaPzDXJ_H264_720.mp4",
+    "sha256": "406ba710e25778f3f59b8881d058807e1aa266d97c40ee2c54eb0da3980c003b",
+    "durationSeconds": 1184.244
+  },
+  "blindness": {
+    "systemOutputSeenBeforeFreeze": false,
+    "allowedInputs": ["original media", "ffprobe fingerprint", "timestamped contact sheets", "user-provided business label", "legacy sample-packaging metadata (not a current tested-system output)"],
+    "knownBusinessPriors": ["User designates the complete asset as an external-hook positive."],
+    "limitations": ["No corresponding original-drama episodes or production-lineage records available.", "T1/T2 taxonomy definitions are absent.", "The boundary between newly produced hook and episode footage cannot be proven from this export alone.", "Legacy samples.json provisional visual triage was visible before freeze; it is disclosed as a packaging prior, and no current system answer was read."],
+    "reviewer": "independent_e2e_quality_supervisor"
+  },
+  "expertAnswer": {
+    "genre": ["豪门/隐藏身份", "婚恋", "家庭伦理"],
+    "sourceClassification": {
+      "businessLabel": "external_hook_positive",
+      "externalSubtype": "unknown_pending_review",
+      "sourceEvidenceStatus": "pending_source_comparison",
+      "reasoning": "The positive label is a supplied business truth, but whether shots are unrelated, reused assets, or mixed requires shot-level source matching and lineage evidence; character appearance is not used as a gate.",
+      "t1t2": {"value": null, "status": "not_evaluable_taxonomy_missing"}
+    },
+    "hook": {
+      "boundaryStatus": "candidate_only",
+      "candidateRanges": [
+        {"startSeconds": 0, "endSeconds": 42, "confidence": 0.73, "basis": "Complete setup arc from teenage pregnancy through eviction, rescue, introduction to wealthy father, and his hidden-identity decision."},
+        {"startSeconds": 0, "endSeconds": 90, "confidence": 0.58, "basis": "Extended hook including the blind date and mutual low-income claims; exact semantic exit requires dialogue-level review."}
+      ],
+      "events": [
+        {"statement": "At age 17, a woman becomes pregnant outside marriage and survives by collecting trash.", "evidence": [{"startSeconds": 0, "endSeconds": 9, "confidence": 0.96, "basis": "On-screen narration and pool/trash-truck/bar montage."}], "confidence": 0.96},
+        {"statement": "Twenty years later she gives her savings to support her son's marriage, is despised by her daughter-in-law, and is forced out.", "evidence": [{"startSeconds": 10, "endSeconds": 21, "confidence": 0.95, "basis": "On-screen narration and expulsion action."}], "confidence": 0.95},
+        {"statement": "While homeless, she helps a collapsed young woman who is the daughter of an extremely wealthy man.", "evidence": [{"startSeconds": 22, "endSeconds": 32, "confidence": 0.94, "basis": "Street collapse, rescue, and richest-man-daughter caption."}], "confidence": 0.94},
+        {"statement": "The daughter arranges a blind date with her father, who hides his wealth and presents himself as a repairman/plumber.", "evidence": [{"startSeconds": 32, "endSeconds": 48, "confidence": 0.95, "basis": "Phone portrait, wealthy father, disguise montage, café meeting."}], "confidence": 0.95}
+      ]
+    },
+    "entities": [
+      {"statement": "Older blonde woman: single mother, recently expelled by her son's household; central underdog protagonist.", "evidence": [{"startSeconds": 10, "endSeconds": 22, "confidence": 0.93, "basis": "Twenty-years-later and eviction sequence."}], "confidence": 0.93},
+      {"statement": "Young blonde woman: rescued stranger and daughter of the wealthy man; matchmaker between the leads.", "evidence": [{"startSeconds": 24, "endSeconds": 36, "confidence": 0.94, "basis": "Collapse/rescue and introduction montage."}], "confidence": 0.94},
+      {"statement": "Dark-haired older man: wealthy father who deliberately conceals his status during the blind date.", "evidence": [{"startSeconds": 36, "endSeconds": 50, "confidence": 0.96, "basis": "Rich-man narration, disguise, café identity claim."}], "confidence": 0.96}
+    ],
+    "conflict": [
+      {"statement": "Class humiliation and family rejection leave the mother homeless despite her sacrifice.", "evidence": [{"startSeconds": 10, "endSeconds": 22, "confidence": 0.95, "basis": "Savings, contempt, expulsion, street wandering."}], "confidence": 0.95},
+      {"statement": "Both blind-date participants conceal or minimize their circumstances, creating identity-based dramatic irony.", "evidence": [{"startSeconds": 40, "endSeconds": 78, "confidence": 0.88, "basis": "Repairman disguise and mutual statements about unstable/simple lives."}], "confidence": 0.88}
+    ],
+    "emotion": [
+      {"statement": "The arc moves from injustice and sympathy to hope, warmth, and identity-reveal anticipation.", "evidence": [{"startSeconds": 10, "endSeconds": 60, "confidence": 0.91, "basis": "Expulsion, rescue, matchmaking, blind date."}], "confidence": 0.91}
+    ],
+    "suspense": [
+      {"statement": "Will the protagonist discover the man's hidden wealth and will the relationship survive the deception?", "evidence": [{"startSeconds": 36, "endSeconds": 78, "confidence": 0.93, "basis": "Explicit hidden-identity setup and earnest blind-date conversation."}], "confidence": 0.93}
+    ],
+    "narrativePromise": [
+      {"statement": "A selfless, rejected mother will receive emotional and status reversal through a relationship with a hidden wealthy man.", "evidence": [{"startSeconds": 0, "endSeconds": 48, "confidence": 0.94, "basis": "Title, sacrifice/eviction setup, richest-man reveal and disguise."}], "confidence": 0.94}
+    ],
+    "retention": {
+      "score": 87,
+      "reasoning": ["Immediate high-stakes underdog premise", "Frequent causal escalation within the first 30 seconds", "Clear hidden-identity dramatic irony", "Some exposition is compressed and melodramatic but still highly legible"]
+    },
+    "highlightCandidates": [
+      {"id": "H1", "range": {"startSeconds": 10, "endSeconds": 32, "confidence": 0.84, "basis": "Sacrifice → expulsion → rescue → wealthy-daughter reveal."}, "description": "Fast injustice-to-opportunity reversal.", "boundarySafety": "needs_frame_review", "confidence": 0.84},
+      {"id": "H2", "range": {"startSeconds": 36, "endSeconds": 58, "confidence": 0.82, "basis": "Hidden wealthy identity → disguise → blind-date low-income claim."}, "description": "Hidden-identity promise and dramatic irony.", "boundarySafety": "needs_frame_review", "confidence": 0.82}
+    ],
+    "matching": {
+      "status": "pending_original_drama_first10",
+      "mustBeCarriedByMainContent": ["older rejected mother remains the focal beneficiary", "hidden-wealth identity or equivalent promise is materially resolved", "romantic relationship proceeds without contradicting the setup"],
+      "incompatibleExamples": ["A generic rich-family conflict with no relationship to the selfless mother", "A reveal that the man is not wealthy", "A different protagonist introduced without a causal bridge"],
+      "sourceTypeIsHardGate": false
+    },
+    "transitionRecommendations": {
+      "directCut": {"decision": "degrade_pending_match", "reason": "No paired episode and no verified boundary."},
+      "modeA": {"decision": "preferred_if_episode_continues_same_people", "gapDiagnosis": ["causal", "time"], "copyCandidates": [], "constraint": "Do not add a time phrase until episode evidence establishes elapsed time."},
+      "modeB": {"decision": "preferred_if_episode_requires_background", "targetSeconds": [60, 100], "requiredFacts": ["mother's sacrifice and eviction", "rescue of wealthy daughter", "father's concealed identity", "relationship promise"], "prohibited": ["invented names", "invented marriage outcome", "unsupported elapsed time"]}
+    },
+    "rejectOrDegradeConditions": ["Reject source subtype claim until original-source/lineage comparison exists.", "Reject a match that does not deliver the hidden-fortune relationship promise.", "Degrade to manual review if the hook cut truncates narration or dialogue.", "Reject any fabricated time-jump copy."]
+  },
+  "evaluationReadiness": {
+    "systemComparison": "pending_system_output",
+    "episodeMatch": "pending_corresponding_original_drama_first10",
+    "renderModes": "pending_three_real_renders",
+    "engineeringChain": "pending_real_record_ids_and_logs"
+  },
+  "freeze": {"canonicalSha256": null, "hashMethod": "sha256 of final file bytes recorded after schema validation"}
+}

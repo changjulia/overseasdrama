@@ -24,6 +24,13 @@ export type PipelineTask = {
   backendId?: string;
   stage?: "coarse" | "detail" | "precision" | "hook_match" | "supplemental_highlight" | "entry_precision";
   episodeNumber?: number;
+  currentStage?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  errorKind?: string;
+  nextAttemptAt?: string;
   error?: string;
   logs?: unknown;
+  backendStatus?: "queued" | "running" | "paused" | "succeeded" | "failed";
+  updatedAt?: string;
 };

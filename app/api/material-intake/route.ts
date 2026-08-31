@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { downloadRemoteMedia, RemoteMediaDownloadError } from "@/app/lib/remote-media-download";
 
 const PB_URL=(process.env.NEXT_PUBLIC_POCKETBASE_URL||"http://127.0.0.1:8090").replace(/\/$/,"");
 
@@ -19,7 +20,6 @@ export async function POST(request:NextRequest){
   try{
     const input=await request.json() as Record<string,unknown>;
     const sourceUrl=String(input.sourceUrl||"");
-    if(!/^https?:\/\//i.test(sourceUrl))return NextResponse.json({message:"远程素材地址无效"},{status:400});
     const sourceIdentityHash=String(input.sourceIdentityHash||"");
     if(!/^[a-f0-9]{64}$/i.test(sourceIdentityHash))return NextResponse.json({message:"入库来源去重键无效"},{status:400});
     // content_hash held the ADX identity hash in older records. Keep checking it
@@ -27,9 +27,8 @@ export async function POST(request:NextRequest){
     const sourceFilter=`source_identity_hash="${sourceIdentityHash}" || content_hash="${sourceIdentityHash}" || source_url="${escapeFilter(sourceUrl)}"`;
     const sourceDuplicate=await findExisting(sourceFilter);
     if(sourceDuplicate)return NextResponse.json({record:sourceDuplicate,created:false,analysisQueued:false});
-    const mediaResponse=await fetch(sourceUrl,{cache:"no-store",signal:AbortSignal.timeout(120_000)});
-    if(!mediaResponse.ok||!mediaResponse.body)return NextResponse.json({message:`远程视频下载失败（HTTP ${mediaResponse.status}）`},{status:502});
-    const blob=await mediaResponse.blob();
+    const media=await downloadRemoteMedia(sourceUrl);
+    const blob=new Blob([media.bytes],{type:media.contentType});
     if(!blob.size)return NextResponse.json({message:"远程视频为空"},{status:422});
     const contentHash=await sha256(blob);
     const contentDuplicate=await findExisting(`content_hash="${contentHash}"`);
@@ -48,5 +47,5 @@ export async function POST(request:NextRequest){
       return NextResponse.json(record,{status:savedResponse.status});
     }
     return NextResponse.json({record,created:true,analysisQueued:input.autoAnalyze===true});
-  }catch(reason){return NextResponse.json({message:reason instanceof Error?reason.message:"远程素材入库失败"},{status:500})}
+  }catch(reason){return NextResponse.json({message:reason instanceof Error?reason.message:"远程素材入库失败"},{status:reason instanceof RemoteMediaDownloadError?reason.status:500})}
 }

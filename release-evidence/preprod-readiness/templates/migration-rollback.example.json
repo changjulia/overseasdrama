@@ -1,0 +1,24 @@
+{
+  "schemaVersion": "preprod-attestation-v1",
+  "control": "migration-rollback",
+  "environment": "REPLACE_WITH_ISOLATED_PREPROD_CLONE",
+  "executedAt": "2000-01-01T00:00:00Z",
+  "releaseCommit": "0000000000000000000000000000000000000000",
+  "result": "failed",
+  "operator": "REPLACE",
+  "reviewer": "REPLACE_WITH_INDEPENDENT_REVIEWER",
+  "secretRedactionVerified": true,
+  "signedUrlRedactionVerified": true,
+  "evidence": [
+    {
+      "beforeMigration": "REPLACE",
+      "afterMigration": "REPLACE",
+      "schemaHashBefore": "REPLACE",
+      "schemaHashAfter": "REPLACE",
+      "recordCountsMatched": false,
+      "uniqueIndexPreflightPassed": false,
+      "forwardFixDrillPassed": false,
+      "wholeSnapshotRollbackPassed": false
+    }
+  ]
+}

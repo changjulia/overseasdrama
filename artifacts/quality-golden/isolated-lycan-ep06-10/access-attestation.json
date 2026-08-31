@@ -1,0 +1,57 @@
+{
+  "attestation_version": "1.0",
+  "task": "strictly isolated blind evaluation of EP6-EP10",
+  "attested": true,
+  "statement": "No database, analysis_jobs, episodes table, analysis_result, existing golden artifact, supervision report, progress document, implementation code, project prompt, or application source file was opened or queried. Content analysis used only the five explicitly authorized MP4 files and temporary derivatives generated from them during this task.",
+  "authorized_source_paths_read": [
+    "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/wnvskzk29x5eurx/ep006_ammnatkeak.mp4",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/4omljqhgogzyr82/ep007_4xcyofmz51.mp4",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/ws2h0xo3vz0ant9/ep008_9j8suol2fv.mp4",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/k92mgyb9cbd625b/ep009_3zmfcsldm9.mp4",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/0bsoznq4udd7aer/ep010_vt7evquljn.mp4"
+  ],
+  "temporary_root": "/tmp/isolated-lycan-ep06-10.lwwVsQ",
+  "generated_temporary_content_paths_read": [
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep06_frames/frame_*.jpg", "count": 184, "purpose": "0.5-second visual sampling, OCR and contact-sheet generation"},
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep07_frames/frame_*.jpg", "count": 278, "purpose": "0.5-second visual sampling, OCR and contact-sheet generation"},
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep08_frames/frame_*.jpg", "count": 162, "purpose": "0.5-second visual sampling, OCR and contact-sheet generation"},
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep09_frames/frame_*.jpg", "count": 185, "purpose": "0.5-second visual sampling, OCR and contact-sheet generation"},
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep10_frames/frame_*.jpg", "count": 259, "purpose": "0.5-second visual sampling, OCR and contact-sheet generation"},
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep06_contact_*.jpg", "count": 3, "purpose": "visual review"},
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep07_contact_*.jpg", "count": 4, "purpose": "visual review"},
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep08_contact_*.jpg", "count": 3, "purpose": "visual review"},
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep09_contact_*.jpg", "count": 3, "purpose": "visual review"},
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep10_contact_*.jpg", "count": 4, "purpose": "visual review"},
+    {"path": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep06_frames/frame_000040_t_0020.000.jpg", "purpose": "targeted original-resolution frame inspection; also included in EP6 frame pattern"},
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep0[6-9]_ocr_full.json and ep10_ocr_full.json", "count": 5, "purpose": "generated OCR transcription review"},
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep0[6-9]_audio.m4a and ep10_audio.m4a", "count": 5, "purpose": "generated isolated audio for ASR"},
+    {"path": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep06_audio.wav", "purpose": "temporary PCM conversion test"},
+    {"path": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep06_audio_f32.wav", "purpose": "temporary PCM conversion test"},
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/ep0[6-9]_transcript.json and ep10_transcript.json", "count": 5, "purpose": "generated ASR transcript review"}
+  ],
+  "non_content_instruction_or_runtime_resources_accessed": [
+    {"path": "/Users/julia_chen/.codex/skills/video-use/SKILL.md", "purpose": "system-mandated skill instructions; not used as story/content evidence"},
+    {"path": "/Users/julia_chen/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3", "purpose": "bundled runtime executable"},
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/asr_runtime/**", "purpose": "temporary faster-whisper runtime; not story/content evidence"},
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/model_cache/**", "purpose": "temporary ASR model cache; not story/content evidence"},
+    {"path_pattern": "/tmp/isolated-lycan-ep06-10.lwwVsQ/hf_home/**", "purpose": "temporary model-download cache; not story/content evidence"},
+    {"path": "/usr/bin/swift", "purpose": "media decode, metadata and OCR runtime"},
+    {"path": "/usr/bin/afconvert", "purpose": "temporary audio format conversion test"}
+  ],
+  "forbidden_areas_not_accessed": [
+    "any database or database file",
+    "analysis_jobs",
+    "episodes tables or records",
+    "analysis_result",
+    "existing golden artifacts",
+    "existing supervision or quality reports",
+    "progress or rollout documents",
+    "application implementation source code",
+    "application prompts or prompt templates"
+  ],
+  "workspace_files_written": [
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep06-10/draft.json",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep06-10/access-attestation.json"
+  ],
+  "other_workspace_files_modified": false
+}

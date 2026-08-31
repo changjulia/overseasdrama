@@ -1,0 +1,107 @@
+{
+  "schemaVersion": "preprod-readiness-v1",
+  "observedAt": "2026-08-31T10:40:00+08:00",
+  "scope": "local repository and local PocketBase runtime",
+  "releaseCandidate": {
+    "commit": "3944d05dc0da8b36376a9040fd7e409a25ea4116",
+    "branch": "main",
+    "worktreeFrozen": false,
+    "modifiedPaths": 41,
+    "untrackedPaths": 77
+  },
+  "decision": "NO-GO",
+  "automatedChecks": [
+    {
+      "id": "local-runtime-full",
+      "command": "bash scripts/runtime-check.sh --profile full",
+      "exitCode": 0,
+      "result": "pass_with_2_warnings",
+      "diagnosis": "Local dependencies are ready; external API key/base URL were not present in the process environment."
+    },
+    {
+      "id": "hosted-gateway-preflight",
+      "command": "LUMINA_HOSTED_GATEWAY_CHECK=1 bash scripts/runtime-check.sh --profile full",
+      "exitCode": 3,
+      "result": "fail",
+      "diagnosis": "POCKETBASE_URL, UI gateway token, and PocketBase server credentials were not injected into the inspected process. Values were not read or printed."
+    },
+    {
+      "id": "queue-snapshot",
+      "command": "bash scripts/check-worker-queues.sh --json",
+      "exitCode": 0,
+      "result": "healthy_snapshot",
+      "diagnosis": "No expired lease, due retry, or exhausted attempt; one analysis job was active, so the release freeze/drain gate was not met."
+    },
+    {
+      "id": "node-security-contracts",
+      "command": "node --test <10 targeted security and operations contract files>",
+      "exitCode": 0,
+      "result": "50_passed_0_failed"
+    },
+    {
+      "id": "python-media-failure-contracts",
+      "command": "python3 -m unittest tests.test_safe_media_download tests.failure_injection.test_release_failure_injection",
+      "exitCode": 0,
+      "result": "11_passed_0_failed"
+    },
+    {
+      "id": "production-dependency-audit",
+      "command": "npm audit --omit=dev --audit-level=high",
+      "exitCode": 0,
+      "result": "0_vulnerabilities"
+    },
+    {
+      "id": "preprod-fail-closed-gate",
+      "command": "bash scripts/preprod-readiness-check.sh",
+      "exitCode": 20,
+      "result": "20_failures_1_warning",
+      "diagnosis": "Expected NO-GO: target environment secrets/URLs/render storage were not injected, worktree was dirty, disk was below threshold, database mode was too broad, and five operational attestations were absent."
+    }
+  ],
+  "runtimeInventory": {
+    "node": "24.15.0",
+    "npm": "11.12.1",
+    "shellPython": "3.14.3",
+    "analysisPython": "3.12.13",
+    "pocketBase": "0.39.9",
+    "migrationFileCount": 37,
+    "latestAppliedMigration": "1787571100_add_detail_episode_shards.js",
+    "sqliteQuickCheck": "ok",
+    "pocketBaseDatabaseMode": "0644",
+    "pocketBaseDatabaseBytes": 3690496,
+    "pocketBaseDirectoryKiB": 191080,
+    "pocketBaseStorageKiB": 146332,
+    "storedMediaFilesExcludingAttrs": 16,
+    "storedAttrsFiles": 16,
+    "renderedOutputFiles": 0,
+    "availableDiskKiB": 5396316,
+    "filesystemCapacityUsedPercent": 98
+  },
+  "businessDataCounts": {
+    "dramas": 1,
+    "dramaEpisodes": 10,
+    "adMaterials": 4,
+    "factoryProjects": 0,
+    "factoryRenders": 0,
+    "narrationAudioAssets": 0
+  },
+  "repositoryControls": {
+    "runtimeSecretsIgnored": true,
+    "runtimeDatabaseIgnored": true,
+    "analysisCacheIgnored": true,
+    "renderOutputIgnored": true,
+    "trackedRuntimeSensitivePaths": 0,
+    "githubWorkflowFiles": 0,
+    "sitesProjectLinked": true,
+    "sitesD1Binding": null,
+    "sitesR2Binding": null,
+    "automaticDeploymentStatus": "not_verifiable_locally"
+  },
+  "limitations": [
+    "No target pre-production host or cloud control plane was inspected.",
+    "No backup or restore was created or executed.",
+    "No real alert delivery or capacity test was executed.",
+    "No secret value or signed media URL was read or emitted.",
+    "No deployment, migration, push, credential operation, or queue mutation was performed."
+  ]
+}

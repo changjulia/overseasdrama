@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "frozenAt": "2026-08-30T00:00:00+08:00",
+  "scope": "golden external-hook positive samples",
+  "classificationRule": "External attribution is based on shot provenance, source-episode matching and production lineage. Reuse of original-drama characters is not a disqualifier.",
+  "samples": [
+    {
+      "sampleId": "GH-001",
+      "path": "/Users/julia_chen/Downloads/1786532318_t7aTaPzDXJ_H264_720.mp4",
+      "sha256": "406ba710e25778f3f59b8881d058807e1aa266d97c40ee2c54eb0da3980c003b",
+      "byteSize": 217425769,
+      "durationSeconds": 1184.244,
+      "container": "mov,mp4,m4a,3gp,3g2,mj2",
+      "video": { "codec": "h264", "width": 720, "height": 1280, "fps": "25/1" },
+      "audio": { "codec": "aac", "sampleRate": 44100, "channels": 2 },
+      "humanLabel": "external_hook_positive",
+      "externalSubtype": "pending_human_review",
+      "hookBoundaryStatus": "unverified",
+      "sourceEpisodeComparisonStatus": "not_started"
+    },
+    {
+      "sampleId": "GH-002",
+      "path": "/Users/julia_chen/Downloads/1784805656_QTi3ycwhxA_H264_720.mp4",
+      "sha256": "eddfbf807420e9995222c3e65dad9a4c8db8c6eca69774305e75113bdcc186c1",
+      "byteSize": 256917994,
+      "durationSeconds": 1223.927,
+      "container": "mov,mp4,m4a,3gp,3g2,mj2",
+      "video": { "codec": "h264", "width": 720, "height": 1280, "fps": "25/1" },
+      "audio": { "codec": "aac", "sampleRate": 44100, "channels": 2 },
+      "humanLabel": "external_hook_positive",
+      "externalSubtype": "original_cast_asset_reuse_newly_produced_shots",
+      "difficulty": "hard_positive_visual_and_character_continuity",
+      "hookBoundaryStatus": "unverified",
+      "sourceEpisodeComparisonStatus": "not_started"
+    },
+    {
+      "sampleId": "GH-003",
+      "path": "/Users/julia_chen/Downloads/1785148210_3shFMGB3nT_H264_720.mp4",
+      "sha256": "0b82e9fc0bceab6b5883496c7861e78808a09c4327f0b2301a9f68deab4a9e32",
+      "byteSize": 209089942,
+      "durationSeconds": 1003.29,
+      "container": "mov,mp4,m4a,3gp,3g2,mj2",
+      "video": { "codec": "h264", "width": 720, "height": 1280, "fps": "25/1" },
+      "audio": { "codec": "aac", "sampleRate": 44100, "channels": 2 },
+      "humanLabel": "external_hook_positive",
+      "externalSubtype": "pending_human_review",
+      "hookBoundaryStatus": "unverified",
+      "sourceEpisodeComparisonStatus": "not_started"
+    }
+  ]
+}

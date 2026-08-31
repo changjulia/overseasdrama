@@ -80,6 +80,66 @@ export type TransitionCandidate = {
   status: IntegrationState;
 };
 
+export type TransitionProductionObject = {
+  type: "transition_copy" | "continuous_narration" | "direct_cut";
+  gapDiagnosis: Array<"time" | "space" | "character" | "causal" | "emotion">;
+  start: number;
+  end: number;
+  copy: string;
+  script: string;
+  language: string;
+  voice: {
+    mode: "none" | "tts" | "manual_audio";
+    voiceId?: string;
+    audioUrl?: string;
+    assetId?: string;
+    fileName?: string;
+    byteSize?: number;
+    mimeType?: string;
+    sha256?: string;
+    durationSeconds?: number;
+    uploadedAt?: string;
+    speakingRate: number;
+  };
+  evidence: string[];
+  renderConfig: {
+    transitionStyle: "hard_cut" | "fade" | "black" | "flash_avoidance" | "match_cut";
+    transitionTemplateId?: string;
+    subtitleTemplateId?: string;
+    subtitleStyle?: {
+      fontFamily: string;
+      fontSize: number;
+      primaryColor: string;
+      outlineColor: string;
+      outlineWidth: number;
+      shadowDepth: number;
+      bold: boolean;
+      alignment: "bottom-center" | "center" | "top-center";
+      marginHorizontalPercent: number;
+      marginVerticalPercent: number;
+      maxLines: 2 | 3;
+    };
+    subtitleEnabled: boolean;
+    voiceoverEnabled: boolean;
+    durationSeconds: number;
+    originalAudioDuckDb: number;
+    preserveKeyDialogue: boolean;
+    keyOriginalAudioWindows?: Array<{ start: number; end: number }>;
+    safeAreaPreview: boolean;
+  };
+  reviewStatus: "draft" | "pending" | "approved" | "rejected";
+  reviewerNote: string;
+  version: number;
+  /** Real backend-rendered review clip only: hook tail 10s + transition + body head 20s. */
+  reviewPreviewUrl?: string;
+  reviewPreviewVersion?: number;
+  reviewPreviewHash?: string;
+  reviewPreviewTransitionVersion?: number;
+  reviewRenderStatus?: "idle" | "queued" | "rendering" | "succeeded" | "failed";
+  reviewRenderId?: string;
+  reviewRenderError?: string;
+};
+
 export type CombinationVariant = {
   id: string;
   name: string;
@@ -201,7 +261,12 @@ export type FactorySourceContext = {
   freeEpisodes?: number;
   availableEpisodes?: number[];
   hookAssetId?: string;
-  hookSourceClass?: "episode_highlight" | "narration_opening" | "external_material";
+  hookSourceClass?:
+    | "episode_highlight"
+    | "narration_opening"
+    | "external_material"
+    | "ai_generated"
+    | "mixed_material";
   hookMaterialId?: string;
   hookMaterialPlatform?: string;
   hookMaterialExposure?: number;

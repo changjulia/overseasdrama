@@ -1,0 +1,114 @@
+{
+  "durationSeconds" : 1003.2885487528345,
+  "frames" : [
+    {
+      "file" : "frame-0000.000.jpg",
+      "height" : 1280,
+      "time" : 0,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0001.000.jpg",
+      "height" : 1280,
+      "time" : 1,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0002.000.jpg",
+      "height" : 1280,
+      "time" : 2,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0003.000.jpg",
+      "height" : 1280,
+      "time" : 3,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0005.000.jpg",
+      "height" : 1280,
+      "time" : 5,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0008.000.jpg",
+      "height" : 1280,
+      "time" : 8,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0012.000.jpg",
+      "height" : 1280,
+      "time" : 12,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0018.000.jpg",
+      "height" : 1280,
+      "time" : 18,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0025.000.jpg",
+      "height" : 1280,
+      "time" : 25,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0035.000.jpg",
+      "height" : 1280,
+      "time" : 35,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0050.000.jpg",
+      "height" : 1280,
+      "time" : 50,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0070.000.jpg",
+      "height" : 1280,
+      "time" : 70,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0090.000.jpg",
+      "height" : 1280,
+      "time" : 90,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0120.000.jpg",
+      "height" : 1280,
+      "time" : 120,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0250.822.jpg",
+      "height" : 1280,
+      "time" : 250.82213718820861,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0501.644.jpg",
+      "height" : 1280,
+      "time" : 501.64427437641723,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0752.466.jpg",
+      "height" : 1280,
+      "time" : 752.46641156462579,
+      "width" : 720
+    },
+    {
+      "file" : "frame-0953.124.jpg",
+      "height" : 1280,
+      "time" : 953.12412131519272,
+      "width" : 720
+    }
+  ],
+  "input" : "\/Users\/julia_chen\/Downloads\/1785148210_3shFMGB3nT_H264_720.mp4"
+}

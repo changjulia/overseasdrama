@@ -1,0 +1,184 @@
+{
+  "caseId": "QS-DRAMA-LYCAN-DW-EP01-10",
+  "comparisonVersion": "v1",
+  "golden": {
+    "version": "v1",
+    "status": "frozen_blind",
+    "sha256": "4f36c1df4593442974ac25ee9a3cec64ac10cff537894035eee1633389c96872",
+    "unchanged": true
+  },
+  "system": {
+    "dramaId": "s2mhnmm4t9q9yud",
+    "detailJobId": "vlpc5yoodbf1d43",
+    "snapshotSha256": "015e34fd51e1635176370063a0738d9f27a15a9d705115627dad366609272634",
+    "coarseSucceeded": 10,
+    "coarseTotal": 10,
+    "detailStatus": "succeeded",
+    "detailAttempt": 3,
+    "semanticModel": "qwen-vl-max",
+    "characters": 34,
+    "relationships": 6,
+    "episodePlots": 10,
+    "contentTags": 62,
+    "highlightCandidates": 16,
+    "precisionEligible": 0,
+    "precisionJobsCreated": 0,
+    "dramaProductionGate": null
+  },
+  "verdict": {
+    "engineeringExecution": "PASS",
+    "precisionSafetyBehavior": "PASS_NO_INELIGIBLE_JOB_CREATED",
+    "contentQuality": "FAIL",
+    "hardGate": "NO-GO",
+    "reason": "The pipeline completed and safely refused precision work, but critical relationship and causal facts are wrong, EP2 frame-only evidence is overinterpreted despite no audio, cross-episode entities are fragmented, and no highlight is production eligible."
+  },
+  "scores": {
+    "factAndEvidenceAccuracy": 50,
+    "highlightLocalization": 25,
+    "storyCompleteness": 55,
+    "engineeringReliability": 85,
+    "scopeNormalizedScore": 48,
+    "scopeNormalizedDenominatorWeight": 60,
+    "hookRetention": null,
+    "hookMainMatch": null,
+    "transitionNarration": null,
+    "fullWeightedTotal": null
+  },
+  "ep2NoAudioAudit": {
+    "sourceAudioTracks": 0,
+    "coarseAsrStatus": "no_audio",
+    "transcriptEvidenceCountInEpisode2Detail": 0,
+    "literalDialogueHallucinated": false,
+    "frameSemanticOverreach": true,
+    "unsafeClaims": [
+      "episode summary says Amelia reveals a mysterious prophecy without dialogue evidence",
+      "Amelia-to-infant relationship is asserted as mother-child from an ambiguous holding frame",
+      "the man is labeled guardian/protector and the wolf/man are assigned threat/guardian roles from posture",
+      "the final scene is summarized as reunion and joint protection despite only static frame evidence",
+      "fear, growling and protective intent are inferred from single frames"
+    ],
+    "result": "FAIL_CONTENT_HARD_GATE"
+  },
+  "criticalFactAndRelationshipErrors": [
+    {
+      "severity": "P0",
+      "episode": 2,
+      "systemClaim": "Amelia and infant are mother-child; Amelia reveals a prophecy; man and woman reunite to protect the infant.",
+      "golden": "Only Amelia/High Priestess title card and visible grouping are supported; kinship, prophecy dialogue and protective intent are not verifiable because the source has no audio.",
+      "rootCause": "single-frame semantic role/intent inference promoted into verified summary and relationship"
+    },
+    {
+      "severity": "P0",
+      "episode": 3,
+      "systemClaim": "Elena is Cora's mother.",
+      "evidence": "The cited line says 'My handmaid's carrying my husband's bastard,' which describes Cora as handmaid and pregnancy, not Elena's daughter.",
+      "rootCause": "relationship extraction contradicts its own evidence"
+    },
+    {
+      "severity": "P0",
+      "episode": 9,
+      "systemClaim": "Alpha suspects Tiffany caused the crack; trust in Tiffany wavers.",
+      "evidence": "The cited line is 'No. Not Tiffany.', which explicitly rules Tiffany out.",
+      "rootCause": "negation polarity reversed"
+    },
+    {
+      "severity": "P0",
+      "episode": 4,
+      "systemClaim": "Killen is Arya's son and strongest warrior.",
+      "evidence": "The cited ASR fragment is malformed and does not establish that Arya is Killen's mother; golden visual review contains no such relationship evidence.",
+      "rootCause": "malformed ASR converted to verified kinship"
+    },
+    {
+      "severity": "P1",
+      "episode": 5,
+      "systemClaim": "A character named Orph has extraordinary bloodline and identity confusion.",
+      "evidence": "The ASR source 'Orph's even mine...' and 'Is my wolf?' is malformed; golden identifies only visual training, spectral wolves, object handoff and pendant evidence.",
+      "rootCause": "low-semantic-quality ASR promoted to named entity and plot"
+    }
+  ],
+  "entityAudit": {
+    "systemCharacterCount": 34,
+    "result": "FAIL_FRAGMENTED_AND_MIXED_TYPES",
+    "issues": [
+      "The same or potentially continuous protagonist is fragmented into Arya, Orph, Rogue, girl and other generic labels without identity-resolution evidence.",
+      "Organizations/objects such as Iron Fang Pact and Moonstone are stored as characters.",
+      "Generic roles Father, mother, princess and Alpha are reused across episodes without stable entity provenance.",
+      "EP2 static-frame roles such as guardian, threat and mother are marked verified despite no audio or action sequence."
+    ]
+  },
+  "episodeComparison": [
+    {"episode": 1, "result": "partial", "notes": "Visual ritual/birth/infant sequence aligns, but detail relies on unverified transcript for kinship, authority and killing motive not available in blind visual golden."},
+    {"episode": 2, "result": "fail", "notes": "Visual forest/wolf/injury/Amelia title sequence aligns; no literal dialogue invented, but prophecy, kinship, protection, emotion and role intent are hallucinated from frames."},
+    {"episode": 3, "result": "fail", "notes": "Cliff/snow/infant conflict aligns visually; Elena–Cora mother-daughter relationship is a direct factual error."},
+    {"episode": 4, "result": "partial_fail", "notes": "System misses golden serpent/infant rescue as a main plot/highlight and asserts unsupported Arya–Killen kinship."},
+    {"episode": 5, "result": "partial_fail", "notes": "Pendant/origin quest is plausible, but malformed ASR creates Orph identity and bloodline claims; visual spectral-wolf event is underrepresented."},
+    {"episode": 6, "result": "partial", "notes": "Forest confrontation and kill order align; identities/relations remain vulnerable to non-diarized ASR."},
+    {"episode": 7, "result": "partial", "notes": "Forest-to-crystal continuity aligns, but 'sole heirless' is mistranslated and actual whip fight 41.7–57.2 is not selected as highlight."},
+    {"episode": 8, "result": "partial", "notes": "Crystal interaction and later dialogue are present, but mother claim remains speaker-unresolved; golden closing cracked-crystal high point is only partially covered by a broad candidate."},
+    {"episode": 9, "result": "fail", "notes": "Cracked stone and war alert align; Tiffany negation is reversed, changing causal interpretation."},
+    {"episode": 10, "result": "partial", "notes": "Assembly, hut exchange, bundle and parents quest align; speaker/kinship assignments remain non-diarized and some causal statements exceed evidence."}
+  ],
+  "highlightAudit": {
+    "systemCandidateCount": 16,
+    "precisionEligibleCount": 0,
+    "precisionJobsCreated": 0,
+    "productionUsableCount": 0,
+    "goldenTop3": [
+      {"episode": 4, "start": 27.0, "end": 54.0, "systemMatch": "none"},
+      {"episode": 7, "start": 41.7, "end": 57.2, "systemMatch": "none; system candidate 0–41.54 ends before the action"},
+      {"episode": 8, "start": 75.5, "end": 80.784, "systemMatch": "partial overlap only; broad 17.62–77.62 candidate cuts the closing crack reveal and is precision-ineligible"}
+    ],
+    "top3DirectlyUsableRate": 0,
+    "threshold": 0.9,
+    "result": "FAIL"
+  },
+  "hardGates": {
+    "result": "NO-GO",
+    "triggered": [
+      "critical_relationship_fact_wrong",
+      "negation_reversed_in_causal_graph",
+      "frame_only_ep2_overinterpreted_despite_no_audio",
+      "no_precision_eligible_or_production_usable_highlight"
+    ],
+    "notTriggered": [
+      "ineligible_highlight_precision_job_created"
+    ]
+  },
+  "developmentItems": [
+    {
+      "id": "QS-DRAMA-LYCAN-V1-P0-001",
+      "severity": "P0",
+      "module": "detail semantic relationship/causal validation",
+      "task": "Require each kinship/relationship and causal polarity to be entailed by its cited evidence; add explicit negation handling and contradiction checks.",
+      "regression": "EP3 cannot produce Elena→Cora mother-daughter from the handmaid/bastard line; EP9 'No. Not Tiffany.' must mean Tiffany is ruled out, not suspected."
+    },
+    {
+      "id": "QS-DRAMA-LYCAN-V1-P0-002",
+      "severity": "P0",
+      "module": "no-audio episode semantic policy",
+      "task": "When ASR status=no_audio, allow only observable frame/OCR facts; prohibit prophecy, kinship, intent, emotion, protection/threat roles and reunion causality unless positive visual sequences prove them.",
+      "regression": "EP2 contains no dialogue/prophecy claim and no verified mother-child/guardian relationship; all such claims are pending or rejected."
+    },
+    {
+      "id": "QS-DRAMA-LYCAN-V1-P0-003",
+      "severity": "P0",
+      "module": "highlight candidate generation and boundary evidence",
+      "task": "Generate action-aware candidates around the golden visual events and attach verified shot/action/audio boundaries so at least one Top3 candidate can enter precision review.",
+      "regression": "EP4 27–54, EP7 41.7–57.2 and EP8 75.5–80.784 are evaluated; candidates without safe boundaries remain review-only and are never called usable."
+    },
+    {
+      "id": "QS-DRAMA-LYCAN-V1-P1-001",
+      "severity": "P1",
+      "module": "ASR quality and entity resolver",
+      "task": "Gate malformed ASR before semantic extraction and resolve stable cross-episode entities without merging generic roles or treating objects/organizations as characters.",
+      "regression": "Orph/heiress/Killen fragments do not create verified entities or kinship; Moonstone and Iron Fang Pact use object/organization types."
+    },
+    {
+      "id": "QS-DRAMA-LYCAN-V1-P1-002",
+      "severity": "P1",
+      "module": "drama precision lifecycle and production gate",
+      "task": "Represent zero eligible candidates as needs_review/no_eligible_candidates rather than precision succeeded, and persist a drama-level production gate.",
+      "regression": "With 16/16 precisionEligible=false and zero jobs, precision status cannot imply completed usable precision output; production_gate is non-null and blocked."
+    }
+  ]
+}

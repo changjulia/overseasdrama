@@ -1,0 +1,134 @@
+{
+  "caseId": "QS-MAT-LYCAN-13",
+  "comparisonVersion": "v1",
+  "golden": {
+    "version": "v1",
+    "status": "frozen_blind",
+    "sha256": "ca2c502069a14088d018beddc959555d9cd080f75f184933be2efe18da1e1c7d"
+  },
+  "system": {
+    "materialId": "zmzrljhnwl4uxw5",
+    "jobId": "30wqqaz0u3vav09",
+    "snapshotSha256": "5679ced8887e2161b28d4762c7eff93ad45dc74828c18c5572b1bf5486cb8c09",
+    "gitHead": "3944d05dc0da8b36376a9040fd7e409a25ea4116",
+    "relevantWorktree": "dirty",
+    "model": "not_persisted_in_job_or_result; qwen-vl-max is an external claim only",
+    "promptVersion": "not_persisted",
+    "terminalStatus": "failed",
+    "terminalStage": "review",
+    "progress": 92,
+    "attempt": 1,
+    "maxAttempts": 1,
+    "errorKind": "permanent",
+    "error": "千问素材分析返回字段不完整（收到：content, creative, review, value）",
+    "finalResultPresent": false,
+    "partialAnalysisPresent": true
+  },
+  "scores": {
+    "factAndEvidenceAccuracy": 30,
+    "highlightLocalization": 0,
+    "hookRetention": 45,
+    "storyCompleteness": 15,
+    "hookMainMatch": null,
+    "transitionNarration": null,
+    "engineeringReliability": 0,
+    "fullWeightedTotal": null,
+    "scopeNormalizedScore": 22,
+    "scopeNormalizedDenominatorWeight": 75,
+    "note": "Match and transition are outside this material-only output and remain not_evaluable. Scope-normalized score covers facts, highlights, retention, completeness and reliability only; hard gates override the score."
+  },
+  "hardGates": {
+    "result": "NO-GO",
+    "triggered": [
+      "critical_character_identity_and_relationship_error",
+      "unsupported_source_lineage_marked_verified",
+      "dangling_or_invalid_evidence",
+      "false_story_completeness",
+      "terminal_job_failure_without_final_result",
+      "failed_partial_output_projected_into_material_business_fields"
+    ]
+  },
+  "gaps": [
+    {
+      "id": "QS-L13-P0-001",
+      "severity": "P0",
+      "category": "engineering_reliability",
+      "expected": "The real job reaches succeeded, persists a final result, and keeps material and job terminal states consistent.",
+      "actual": "Job and material ended failed at 92% review with permanent schema-repair error; job.result is null.",
+      "modules": ["processor/semantic_analysis.py::_material_output_contract_valid", "processor/semantic_analysis.py::_ensure_material_output_contract", "processor/job_worker.py", "pb_hooks/material_analysis.pb.js"],
+      "regression": "Run this exact media through the real API/worker path; assert succeeded/100/completed, non-null final result, matching schema version and no stale failure fields."
+    },
+    {
+      "id": "QS-L13-P0-002",
+      "severity": "P0",
+      "category": "state_persistence",
+      "expected": "A failed attempt must not project unverified or partial conclusions into production-facing material fields.",
+      "actual": "While terminal status is failed, material retains a 39 KB partial analysis and projects creative_tier=T1, material_format/type=正片剧集拼接, prototype=高能开场.",
+      "modules": ["processor/job_worker.py", "pb_hooks/material_analysis.pb.js", "pb_hooks/material_analysis_helpers.js", "app/lib/inspiration-material-store.ts"],
+      "regression": "Inject provider contract failure after partial analysis; assert prior approved result is preserved atomically or all new projections stay invisible, and UI cannot present failed partial data as completed analysis."
+    },
+    {
+      "id": "QS-L13-P0-003",
+      "severity": "P0",
+      "category": "source_lineage_hallucination",
+      "expected": "Without source-episode comparison or lineage, source subtype remains unknown_pending_review.",
+      "actual": "System marks hookSourceStatus=同剧外搭, confidence 0.75, verification=verified using only an opening transcript line; sourceAttribution simultaneously says not_required.",
+      "modules": ["processor/semantic_analysis.py::_normalize_material_format", "processor/semantic_analysis.py::_apply_material_evidence_gate", "processor/semantic_analysis.py material provider prompt"],
+      "regression": "For this case with no lineage matches, assert hook source is 来源未知/待复核, never verified; transcript/frame similarity cannot prove same-drama origin."
+    },
+    {
+      "id": "QS-L13-P0-004",
+      "severity": "P0",
+      "category": "critical_fact_error",
+      "expected": "Treat the masked fighter as Killian the Juggernaut and preserve the command chain: threat, naming, champion identity, kneeling obedience and observers' shock.",
+      "actual": "ASR corrupts reckless as Wreckus and Killian as Killed in; content creates separate Juggernaut and Killian character entries, calls Juggernaut the antagonist, and omits the purple caller and other principal observers.",
+      "modules": ["processor/semantic_analysis.py ASR evidence normalization", "processor/semantic_analysis.py entity/coreference synthesis", "processor/semantic_analysis.py::_apply_material_evidence_gate"],
+      "regression": "Same-media assertion: one masked entity named Killian the Juggernaut; no unsupported antagonist role; purple caller and kneeling response are represented with 16.1–23.5s evidence."
+    },
+    {
+      "id": "QS-L13-P0-005",
+      "severity": "P0",
+      "category": "false_completeness_and_missing_hook",
+      "expected": "Mark the story incomplete because CTA interrupts the unresolved action; localize the strongest 15.1–23.5s summon/obedience reversal and exclude CTA/end card.",
+      "actual": "System claims completeness=complete/0.95/verified over 0–34.504, yet returns hooks=[], hookCount=0 and does not model the unresolved action or 29–34.504 app card as a boundary.",
+      "modules": ["processor/semantic_analysis.py::_enrich_material_hooks", "processor/semantic_analysis.py completeness synthesis", "processor/semantic_analysis.py::_apply_material_evidence_gate"],
+      "regression": "Assert incomplete/cliffhanger, at least one reviewable hook covering the 15.1–23.5s causal unit, and a safe boundary before CTA; never certify completeness from full-duration transcript evidence alone."
+    },
+    {
+      "id": "QS-L13-P1-001",
+      "severity": "P1",
+      "category": "evidence_integrity",
+      "expected": "Every basedOnFactId resolves to an observation/fact; time evidence has positive duration or is explicitly a point-frame type.",
+      "actual": "fact-004/fact-005 are referenced without corresponding observations; transition evidence uses start=end=1.2 and is still emitted as a claim.",
+      "modules": ["processor/semantic_analysis.py::_validate_semantic_claims", "processor/semantic_analysis.py::_material_output_contract_valid"],
+      "regression": "Contract test rejects dangling fact IDs and zero-duration transcript/shot ranges unless schema explicitly models point frames."
+    },
+    {
+      "id": "QS-L13-P1-002",
+      "severity": "P1",
+      "category": "tier_and_format_evidence",
+      "expected": "T1/T2 remains not assessable without the formal definition/performance evidence; format/source claims use relevant evidence.",
+      "actual": "System assigns T1 confidence 0.85 from the opening threat transcript and projects it to material.creative_tier despite verification=unverified; it verifies 正片剧集拼接 from generic dialogue/action.",
+      "modules": ["processor/semantic_analysis.py creative classification", "pb_hooks/material_analysis_helpers.js projection"],
+      "regression": "Absent ADX/manual tier evidence, persist TX/待复核; unverified tier and format claims must not be promoted to top-level business fields."
+    },
+    {
+      "id": "QS-L13-P1-003",
+      "severity": "P1",
+      "category": "traceability",
+      "expected": "Persist exact model, prompt version, analysis ID and attempt lineage for reproducible evaluation.",
+      "actual": "Neither job nor partial result persists model or prompt version; attempt=1/maxAttempts=1 contains no evidence of the stated prior launcher failure and retry lineage.",
+      "modules": ["processor/job_worker.py", "pb_hooks/material_analysis.pb.js", "material_analysis_jobs schema"],
+      "regression": "A real retry records predecessor/attempt lineage plus immutable model and prompt versions; supervision can reconstruct both failed and successful attempts without external statements."
+    },
+    {
+      "id": "QS-L13-P2-001",
+      "severity": "P2",
+      "category": "review_reason_semantics",
+      "expected": "Failure/review reasons identify actionable deficiencies.",
+      "actual": "One production-gate/review reason says all observations and inferences are evidence-supported, which is a positive assertion rather than a reason for failure and is contradicted by dangling facts.",
+      "modules": ["processor/semantic_analysis.py quality gate", "app/lib/inspiration-material-store.ts review projection"],
+      "regression": "Review reasons must describe a failing condition and map to a field; positive audit statements cannot appear as failure reasons."
+    }
+  ]
+}

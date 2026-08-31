@@ -1,0 +1,139 @@
+{
+  "caseId": "QS-MAT-LYCAN-13",
+  "comparisonVersion": "v9",
+  "golden": {
+    "version": "v1",
+    "status": "frozen_blind",
+    "sha256": "ca2c502069a14088d018beddc959555d9cd080f75f184933be2efe18da1e1c7d",
+    "unchanged": true
+  },
+  "system": {
+    "materialId": "zmzrljhnwl4uxw5",
+    "jobId": "30wqqaz0u3vav09",
+    "snapshotSha256": "2eef808360f9f1f71327e61a2289de183c8872aa0483539ce98b3750772fa958",
+    "terminalStatus": "succeeded",
+    "progress": 100,
+    "terminalStage": "completed",
+    "materialReviewStatus": "needs_review",
+    "materialConfidence": 49,
+    "productionStatus": "blocked",
+    "qualityGatePassed": false
+  },
+  "verdict": {
+    "engineeringExecution": "PASS",
+    "speakerInferenceIsolation": "PASS",
+    "contentQuality": "BELOW_GATE",
+    "productionSafety": "PASS_BLOCKING_BEHAVIOR",
+    "hardGate": "NO-GO",
+    "reason": "The v8 speaker/entity P1 is fixed with no new leakage. Content remains NO-GO because no visual event is accepted, leaving the golden kneeling/obedience and observer-reaction payoff outside the verified story chain."
+  },
+  "scores": {
+    "factAndEvidenceAccuracy": 76,
+    "highlightLocalization": 84,
+    "hookRetention": 79,
+    "storyCompleteness": 72,
+    "hookMainMatch": null,
+    "transitionNarration": null,
+    "engineeringReliability": 97,
+    "fullWeightedTotal": null,
+    "scopeNormalizedScore": 79,
+    "scopeNormalizedDenominatorWeight": 75,
+    "priorScopeNormalizedScores": {"v1": 22, "v2": 28, "v3": 66, "v4": 70, "v5": 69, "v6": 77, "v7": 77, "v8": 77}
+  },
+  "requestedChecks": [
+    {
+      "check": "dialogue facts remain verified without verified speaker identity",
+      "result": "pass",
+      "evidence": "fact-002, local-dialogue-title and local-dialogue-response remain verified as content/time facts; visual speakerVerified count remains zero."
+    },
+    {
+      "check": "characters downgraded",
+      "result": "pass",
+      "evidence": "character-title-speaker and character-command-recipient are unverified in content and semantic projections; no verified character path exists."
+    },
+    {
+      "check": "mention_response relationship downgraded",
+      "result": "pass",
+      "evidence": "The sole adjacent-dialogue mention_response is unverified; no verified relationship path exists."
+    },
+    {
+      "check": "no new evidence or visual leakage",
+      "result": "pass",
+      "evidence": "Full published invalid fact refs=[], rejected visual leak IDs=[], accepted=0, rejected=4, rejected bad-status count=0."
+    },
+    {
+      "check": "boundary and production safety regression",
+      "result": "pass",
+      "evidence": "Boundary recommendation remains 15.1–23.9; action/semantic unverified, shot/dialogue verified, reviewRequired=true. Published hook is unverified/review-required; qualityGate=false and confidence=49."
+    }
+  ],
+  "speakerEntityAudit": {
+    "verifiedDialogueFactIds": ["fact-002", "local-dialogue-title", "local-dialogue-response"],
+    "speakerVerifiedCount": 0,
+    "verifiedCharacterPaths": [],
+    "verifiedRelationshipPaths": [],
+    "characterStates": [
+      {"id": "character-title-speaker", "verification": "unverified"},
+      {"id": "character-command-recipient", "verification": "unverified"}
+    ],
+    "relationshipState": {"type": "mention_response", "verification": "unverified"},
+    "result": "pass"
+  },
+  "goldenTimecodeComparison": [
+    {"golden": "16.1–20.4 purple-clad caller names Killian", "system": "title dialogue/OCR fact verified; caller entity unverified", "result": "safe_event_match_identity_pending"},
+    {"golden": "20.9–21.5 Killian responds and kneels", "system": "response dialogue fact verified; recipient entity and relation unverified; visual action rejected", "result": "dialogue_match_identity_and_action_pending"},
+    {"golden": "21.5–25.2 observer shock", "system": "visual candidates rejected/unverified", "result": "safe_omission_story_missing"},
+    {"golden": "15.1–23.5 strongest highlight", "system": "15.1–23.9, unverified and review-required", "result": "high_match_safe"}
+  ],
+  "priorGapRetest": [
+    {
+      "id": "QS-L13-V8-P1-002",
+      "status": "fixed",
+      "evidence": "With speakerVerified=0, both characters and mention_response are unverified; dialogue facts remain independently usable."
+    },
+    {
+      "id": "QS-L13-V8-P1-001",
+      "status": "not_fixed_but_safely_isolated",
+      "evidence": "No visual event is accepted; kneeling and observer reactions remain missing rather than hallucinated."
+    },
+    {
+      "id": "QS-L13-V8-P2-001",
+      "status": "not_fixed",
+      "evidence": "Conflicting ASR title text and the 'Wreckus brat' risk remain."
+    }
+  ],
+  "hardGates": {
+    "result": "NO-GO",
+    "triggered": ["central_reversal_story_chain_materially_incomplete"],
+    "clearedSinceV8": ["adjacency_only_dialogue_promoted_to_verified_entities_or_relationship"],
+    "notTriggered": [
+      "speaker_identity_promoted",
+      "rejected_visual_inference_leaked",
+      "unsafe_boundary_auto_approved",
+      "unapproved_asset_entered_production"
+    ]
+  },
+  "developmentItems": [
+    {
+      "id": "QS-L13-V9-P1-001",
+      "severity": "P1",
+      "module": "multi-frame visual event extraction",
+      "task": "Acquire temporally sufficient frame pairs or short clips to verify kneeling/obedience and observer reactions using only observable motion/state.",
+      "regression": "Golden 20.9–25.2 visual actions become replayable accepted facts or remain pending; no emotion, causality, speaker or identity inference from posture alone."
+    },
+    {
+      "id": "QS-L13-V9-P2-001",
+      "severity": "P2",
+      "module": "review-state schema consistency",
+      "task": "Add explicit reviewRequired=true to unverified character and relationship projections, or document unverified as sufficient and make consumers consistent.",
+      "regression": "Unverified entities/relationships cannot be treated as review-complete because reviewRequired is absent."
+    },
+    {
+      "id": "QS-L13-V9-P2-002",
+      "severity": "P2",
+      "module": "ASR/OCR reconciliation and risk synthesis",
+      "task": "Prefer confirmed point OCR for the title and remove unsupported verified controversy risk derived from mistranscribed 'Wreckus brat'.",
+      "regression": "Correct OCR is authoritative over conflicting ASR title text; content-risk claims require reliable evidence."
+    }
+  ]
+}

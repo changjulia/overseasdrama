@@ -1,0 +1,22 @@
+{
+  "schemaVersion": "preprod-attestation-v1",
+  "control": "deployment-policy",
+  "environment": "REPLACE_WITH_PRODUCTION_CONTROL_PLANE",
+  "executedAt": "2000-01-01T00:00:00Z",
+  "releaseCommit": "0000000000000000000000000000000000000000",
+  "result": "failed",
+  "operator": "REPLACE",
+  "reviewer": "REPLACE_WITH_INDEPENDENT_REVIEWER",
+  "secretRedactionVerified": true,
+  "signedUrlRedactionVerified": true,
+  "evidence": [
+    {
+      "mainBranchProtected": false,
+      "productionAutoDeployDisabled": false,
+      "manualApprovalRequired": false,
+      "requiredApproverCount": null,
+      "nonProductionRollbackDrillId": "REPLACE",
+      "targetEnvironmentVisibleBeforeApproval": false
+    }
+  ]
+}

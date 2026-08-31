@@ -1,0 +1,192 @@
+{
+  "caseId": "QS-DRAMA-LYCAN-DW-EP01-10",
+  "comparisonVersion": "v2",
+  "golden": {
+    "version": "v1",
+    "status": "frozen_blind",
+    "sha256": "4f36c1df4593442974ac25ee9a3cec64ac10cff537894035eee1633389c96872",
+    "unchanged": true
+  },
+  "system": {
+    "dramaId": "s2mhnmm4t9q9yud",
+    "detailJobId": "vlpc5yoodbf1d43",
+    "analysisId": "00c90a48-adea-481f-a16f-647411ed373d",
+    "snapshotSha256": "ba9e7cfb25ab1bcf2e3f7a48358d93e83ff84a033ca7f1c711b91b2073bce7ac",
+    "detailStatus": "succeeded",
+    "detailAttempt": 3,
+    "semanticModel": "qwen-vl-max",
+    "characters": 24,
+    "characterCandidates": 5,
+    "relationships": 0,
+    "relationshipCandidates": 6,
+    "episodePlots": 10,
+    "highlightCandidates": 16,
+    "precisionCandidates": 16,
+    "precisionEligible": 16,
+    "precisionStatus": "queued",
+    "precisionProgress": 2,
+    "supplementalPrecisionJobsObserved": 0,
+    "dramaProductionGate": null
+  },
+  "verdict": {
+    "engineeringExecution": "PASS_DETAIL_V2_PERSISTED",
+    "contentQuality": "IMPROVED_BUT_FAIL",
+    "precisionUsability": "FAIL_ALL_PRODUCTION_GATES_UNVERIFIED",
+    "hardGate": "NO-GO",
+    "reason": "EP2 and relationship publication are safer, but EP9 still contains a false Tiffany trust conclusion and EP10 evidence pollution; only one Golden Top3 event is temporally covered, and every precision candidate has unverified action/dialogue/semantic/shot gates."
+  },
+  "scores": {
+    "factAndEvidenceAccuracy": 63,
+    "highlightLocalization": 45,
+    "storyCompleteness": 60,
+    "engineeringReliability": 88,
+    "scopeNormalizedScore": 60,
+    "scopeNormalizedDenominatorWeight": 60,
+    "priorScopeNormalizedScores": {"v1": 48},
+    "hookRetention": null,
+    "hookMainMatch": null,
+    "transitionNarration": null,
+    "fullWeightedTotal": null
+  },
+  "requestedChecks": [
+    {
+      "check": "EP2 no-audio downgrade",
+      "result": "mostly_fixed_with_highlight_residual",
+      "evidence": "episodePlot is unverified, coreFacts=[], explicitly says no audio and rejects relationships/prophecy/intent/emotion/causality; EP2 has no published character. However a 0–12s precisionEligible candidate still calls the 0s woman Amelia and describes threatening posture from point frames while all boundary gates are unverified."
+    },
+    {
+      "check": "EP3 fact and relationship",
+      "result": "fixed_for_prior_mother_daughter_error",
+      "evidence": "Published relationships=[]; Elena–Cora is only an unverified relationshipCandidate and no longer claims mother-daughter. EP3 plot describes handmaid pregnancy and Elena–Alpha bond termination."
+    },
+    {
+      "check": "EP9 negation and causality",
+      "result": "not_fixed",
+      "evidence": "The prior Tiffany core fact is removed, but relationshipChange still says Alpha's trust in Tiffany wavers, despite 'No. Not Tiffany.' ruling her out."
+    },
+    {
+      "check": "cross-episode evidence pollution",
+      "result": "fail",
+      "evidence": "EP9 coreFacts imports two episode-10 facts: Ironfork speculation at 0–3.94 and gather warriors at 13.38–18.62; EP9 action/result/carryOut therefore cross the episode boundary without explicit continuity typing."
+    },
+    {
+      "check": "characters and relationships candidate downgrade",
+      "result": "partial_pass",
+      "evidence": "Five uncertain EP2 entities and six relationships are unverified/reviewRequired candidates; published relationships are zero. Yet all 24 published characters remain verified, including fragmented/generic entities, and Alpha episodes [1,9] has evidence only from episode 1."
+    },
+    {
+      "check": "Golden Top3 temporal coverage",
+      "result": "one_of_three_partial_success",
+      "evidence": "EP7 31.04–64.32 / production 34.08–62.22 covers Golden whip fight 41.7–57.2. EP4 27–54 serpent rescue remains absent. EP8 75.5–80.784 is only partly inside narrative 17.62–77.62 and absent from production 32.53–62.71."
+    },
+    {
+      "check": "16 precision candidate boundary usability",
+      "result": "fail",
+      "evidence": "All 16 have narrativeInterval and productionInterval and are marked precisionEligible=true/reviewRequired=true, but every productionGate has action/dialogue/semantic/shot/status=unverified; safeStart/safeEnd are absent. Production-usable count remains zero."
+    }
+  ],
+  "ep2Audit": {
+    "literalDialogueHallucinated": false,
+    "episodePlotSafelyDowngraded": true,
+    "publishedCharactersForEpisode2": 0,
+    "candidateCharactersForEpisode2": 5,
+    "remainingUnsafePrecisionCandidate": {
+      "start": 0,
+      "end": 12,
+      "precisionEligible": true,
+      "reviewRequired": true,
+      "issues": [
+        "0s subject is named Amelia although the Amelia title card appears at 80s and golden describes a different woman with the infant",
+        "threatening posture is inferred from isolated frame points",
+        "production gate is fully unverified and there is no audio"
+      ]
+    }
+  },
+  "factAndContinuityResiduals": [
+    {
+      "severity": "P0",
+      "episode": 9,
+      "issue": "relationshipChange preserves false Tiffany suspicion/trust loss after the supporting fact was removed",
+      "goldenComparison": "Golden only supports cracked crystal, inspection and uncertainty; the cited negation rules Tiffany out."
+    },
+    {
+      "severity": "P0",
+      "episode": 9,
+      "issue": "two EP10 evidence items are embedded as EP9 coreFacts and drive EP9 result/carryOut",
+      "goldenComparison": "EP9→EP10 continuity exists, but facts must retain their actual episode and be modeled as carry-out/carry-in rather than rewritten into EP9."
+    },
+    {
+      "severity": "P1",
+      "issue": "published characters remain fully verified despite unresolved cross-episode identity and generic-role fragmentation",
+      "examples": ["Alpha episodes 1/9 with evidence only in 1", "Arya/Orph/Rogue/girl fragmentation", "Father/mother/princess generic labels"]
+    }
+  ],
+  "highlightAudit": {
+    "candidateCount": 16,
+    "precisionEligibleCount": 16,
+    "reviewRequiredCount": 16,
+    "withNarrativeInterval": 16,
+    "withProductionInterval": 16,
+    "withFullyVerifiedProductionGate": 0,
+    "productionUsableCount": 0,
+    "goldenTop3": [
+      {"episode": 4, "golden": [27.0,54.0], "coverage": "none", "result": "miss"},
+      {"episode": 7, "golden": [41.7,57.2], "systemNarrative": [31.04,64.32], "systemProduction": [34.08,62.22], "result": "covered_but_gate_unverified"},
+      {"episode": 8, "golden": [75.5,80.784], "systemNarrative": [17.62,77.62], "systemProduction": [32.53,62.71], "result": "partial_context_overlap_event_not_covered"}
+    ],
+    "top3TemporalCoverageRate": 0.3333,
+    "top3ProductionUsableRate": 0,
+    "result": "FAIL"
+  },
+  "hardGates": {
+    "result": "NO-GO",
+    "triggered": [
+      "critical_negation_relationship_conclusion_still_wrong",
+      "cross_episode_evidence_used_as_same_episode_fact",
+      "precision_eligible_candidates_have_fully_unverified_production_gates",
+      "golden_top3_production_usable_rate_zero"
+    ],
+    "clearedSinceV1": [
+      "EP2_plot_and_published_relationship_overclaim",
+      "Elena_Cora_mother_daughter_published_relationship",
+      "all_highlights_ineligible_for_precision_review"
+    ]
+  },
+  "developmentItems": [
+    {
+      "id": "QS-DRAMA-LYCAN-V2-P0-001",
+      "severity": "P0",
+      "module": "detail plot reconciliation and negation validator",
+      "task": "Recompute action/result/relationshipChange after rejected facts are removed and enforce negation polarity across every derived field.",
+      "regression": "EP9 contains no claim that Tiffany is suspected or loses trust when the evidence says 'No. Not Tiffany.'."
+    },
+    {
+      "id": "QS-DRAMA-LYCAN-V2-P0-002",
+      "severity": "P0",
+      "module": "episode-scoped evidence graph",
+      "task": "Disallow coreFacts whose evidence episode differs from episodePlot. Represent EP9→EP10 only through typed carryOut/carryIn edges.",
+      "regression": "EP9 coreFacts contain only episode=9 evidence; Ironfork speculation and warrior gathering remain EP10 facts."
+    },
+    {
+      "id": "QS-DRAMA-LYCAN-V2-P0-003",
+      "severity": "P0",
+      "module": "precision eligibility and boundary gate",
+      "task": "Separate eligible-for-precision-analysis from production-eligible. A candidate with unverified action/dialogue/semantic/shot gate cannot be advertised as production precision eligible.",
+      "regression": "All 16 current candidates remain review/analysis candidates only until safeStart/safeEnd and gate dimensions are verified; EP2 no-audio candidate cannot pass dialogue or identity requirements."
+    },
+    {
+      "id": "QS-DRAMA-LYCAN-V2-P0-004",
+      "severity": "P0",
+      "module": "visual action highlight recall",
+      "task": "Add candidates for Golden EP4 serpent rescue and EP8 closing crack reveal, and retain the improved EP7 whip coverage.",
+      "regression": "Golden Top3 all receive event intervals covering the full action, with separate context and production intervals and reviewable boundary evidence."
+    },
+    {
+      "id": "QS-DRAMA-LYCAN-V2-P1-001",
+      "severity": "P1",
+      "module": "character resolver",
+      "task": "Apply unverified candidate status to cross-episode/generic entities until each episode membership is evidenced; resolve protagonist aliases without guessing.",
+      "regression": "No verified character lists an episode absent from its evidence, and generic labels do not silently merge distinct people."
+    }
+  ]
+}

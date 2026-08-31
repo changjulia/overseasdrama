@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "preprod-attestation-v1",
+  "control": "backup-restore",
+  "environment": "REPLACE_WITH_PREPROD_ENVIRONMENT",
+  "executedAt": "2000-01-01T00:00:00Z",
+  "releaseCommit": "0000000000000000000000000000000000000000",
+  "result": "failed",
+  "operator": "REPLACE",
+  "reviewer": "REPLACE_WITH_INDEPENDENT_REVIEWER",
+  "secretRedactionVerified": true,
+  "signedUrlRedactionVerified": true,
+  "evidence": [
+    {
+      "snapshotId": "REPLACE",
+      "databaseSha256": "REPLACE",
+      "storageManifestSha256": "REPLACE",
+      "renderManifestSha256": "REPLACE",
+      "isolatedRestoreId": "REPLACE",
+      "sqliteIntegrity": "not_run",
+      "mediaSamplePassed": false,
+      "measuredRpoSeconds": null,
+      "measuredRtoSeconds": null
+    }
+  ],
+  "notes": "Example only; never rename to a passing attestation until the drill is complete."
+}

@@ -1,0 +1,405 @@
+{
+  "schemaVersion": 1,
+  "caseId": "QS-MAT-LYCAN-13",
+  "goldenVersion": "v1",
+  "status": "frozen_blind",
+  "frozenAt": "2026-08-30T23:26:13+08:00",
+  "input": {
+    "path": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumadmat001/zmzrljhnwl4uxw5/the_rise_of_the_lycan_queen_20260827_13_djgw44tovz.mp4",
+    "sha256": "f8e60a25347848d3d7f07e9badcd0d289fd47753858134e8ba18af21da4b1b43",
+    "durationSeconds": 34.504
+  },
+  "blindness": {
+    "systemOutputSeenBeforeFreeze": false,
+    "allowedInputs": [
+      "the specified MP4 media file",
+      "/Users/julia_chen/Documents/ChatGPT/短剧/release-evidence/quality-supervision/protocol.schema.json"
+    ],
+    "knownBusinessPriors": [
+      "title: The Rise of the Lycan Queen-20260827-13",
+      "caseId: QS-MAT-LYCAN-13",
+      "goldenVersion: v1"
+    ],
+    "limitations": [
+      "No source-lineage or blood-relation reference asset was provided; source classification remains pending.",
+      "No definitions for T1/T2 were supplied in the allowed protocol schema; T1/T2 is not assessable.",
+      "Character roles beyond visible action and on-screen English subtitles are not inferred.",
+      "Timing was assessed from the 34.504-second input; cut points are candidate boundaries and should be frame-reviewed before production use."
+    ]
+  },
+  "expertAnswer": {
+    "genre": [
+      "奇幻",
+      "狼人/兽族题材（标题与片内 pack 称谓共同支持）",
+      "竞技场对决",
+      "身份反转/强者召唤"
+    ],
+    "sourceClassification": {
+      "businessLabel": "外部素材来源待比对；当前仅确认其为带 DramaWave 品牌尾卡的竖屏奇幻剧情广告片段",
+      "externalSubtype": "unknown_pending_review",
+      "sourceEvidenceStatus": "pending_source_comparison",
+      "t1t2": {
+        "value": null,
+        "status": "not_assessable_definition_missing",
+        "evidence": [
+          {
+            "startSeconds": 29,
+            "endSeconds": 34.504,
+            "confidence": 0.99,
+            "basis": "片内出现 DramaWave 品牌与下载应用尾卡；该证据只能确认当前成片品牌呈现，不能证明素材血缘或 T1/T2 分类。"
+          }
+        ]
+      }
+    },
+    "hook": {
+      "boundaryStatus": "candidate_only",
+      "candidateRanges": [
+        {
+          "startSeconds": 0,
+          "endSeconds": 6.7,
+          "confidence": 0.94,
+          "basis": "开场即展示蒙面男子与女战士近距离对峙，壮汉命令 Juggernaut 终结对方，随后紫衣女子轻蔑预告对方必死。"
+        },
+        {
+          "startSeconds": 15.1,
+          "endSeconds": 23.4,
+          "confidence": 0.97,
+          "basis": "女战士特写后，紫衣女子点名 Killian the Juggernaut；蒙面战士被字幕称为 Shadow Pack 冠军并跪地回应 At your command，引发壮汉震惊。"
+        }
+      ],
+      "events": [
+        {
+          "statement": "开场的公开处刑式命令把女战士置于即时危险中。",
+          "evidence": [
+            {
+              "startSeconds": 0,
+              "endSeconds": 3.4,
+              "confidence": 0.98,
+              "basis": "画面为双方对峙，壮汉字幕为 Juggernaut! End this reckless brat!"
+            }
+          ],
+          "confidence": 0.98
+        },
+        {
+          "statement": "紫衣女子以轻蔑微笑说 You're so dead, idiot，强化死亡威胁与阵营对抗。",
+          "evidence": [
+            {
+              "startSeconds": 3.4,
+              "endSeconds": 6.7,
+              "confidence": 0.99,
+              "basis": "可见紫衣女子面部特写及对应英文字幕。"
+            }
+          ],
+          "confidence": 0.99
+        },
+        {
+          "statement": "点名、冠军身份揭示和跪地应命构成强反转：被期待执行攻击的强者转而服从召唤者。",
+          "evidence": [
+            {
+              "startSeconds": 16.1,
+              "endSeconds": 21.5,
+              "confidence": 0.96,
+              "basis": "字幕依次出现 Killian the Juggernaut、Champion Warrior of the Shadow Pack、At your command；蒙面男子跪地回应。"
+            }
+          ],
+          "confidence": 0.96
+        }
+      ]
+    },
+    "entities": [
+      {
+        "statement": "一名黑发女战士与一名蒙面披风男子在遗迹竞技场中央近距离对峙。",
+        "evidence": [
+          {
+            "startSeconds": 0,
+            "endSeconds": 0.8,
+            "confidence": 0.99,
+            "basis": "全景直接可见二人面对面，周围有围观人群。"
+          }
+        ],
+        "confidence": 0.99
+      },
+      {
+        "statement": "蒙面男子被称作 Killian the Juggernaut，并被称为 Shadow Pack 的冠军战士。",
+        "evidence": [
+          {
+            "startSeconds": 16.1,
+            "endSeconds": 20.4,
+            "confidence": 0.99,
+            "basis": "片内英文字幕明确给出称谓与身份描述。"
+          }
+        ],
+        "confidence": 0.99
+      },
+      {
+        "statement": "一名穿华服的紫衣年轻女子公开点名 Killian；她与 Killian 的可证关系仅为发令者与应命者。",
+        "evidence": [
+          {
+            "startSeconds": 16.1,
+            "endSeconds": 21.5,
+            "confidence": 0.97,
+            "basis": "紫衣女子说出名字，随后 Killian 跪地并说 At your command。"
+          }
+        ],
+        "confidence": 0.97
+      },
+      {
+        "statement": "一名穿兽纹重甲的壮汉先命令 Juggernaut 终结女战士，随后对其跪地应命表现震惊。",
+        "evidence": [
+          {
+            "startSeconds": 0.8,
+            "endSeconds": 3.4,
+            "confidence": 0.98,
+            "basis": "壮汉发令特写及字幕。"
+          },
+          {
+            "startSeconds": 21.5,
+            "endSeconds": 23.5,
+            "confidence": 0.96,
+            "basis": "壮汉张口震惊特写。"
+          }
+        ],
+        "confidence": 0.97
+      },
+      {
+        "statement": "一名衣着华贵的成年男子与一名华服成年女子在场旁观，并在反转后震惊。",
+        "evidence": [
+          {
+            "startSeconds": 11.3,
+            "endSeconds": 13.5,
+            "confidence": 0.94,
+            "basis": "华贵男子被单独切出观察。"
+          },
+          {
+            "startSeconds": 23.5,
+            "endSeconds": 25.2,
+            "confidence": 0.95,
+            "basis": "华贵男子和成年女子先后出现震惊表情。"
+          }
+        ],
+        "confidence": 0.94
+      }
+    ],
+    "conflict": [
+      {
+        "statement": "表层冲突是女战士与被要求出手的 Juggernaut 之间的生死对决。",
+        "evidence": [
+          {
+            "startSeconds": 0,
+            "endSeconds": 3.4,
+            "confidence": 0.97,
+            "basis": "对峙画面加 End this reckless brat 命令。"
+          }
+        ],
+        "confidence": 0.97
+      },
+      {
+        "statement": "更深一层冲突是发令阵营对 Juggernaut 控制权的判断被推翻：Killian 向另一方跪地应命。",
+        "evidence": [
+          {
+            "startSeconds": 16.1,
+            "endSeconds": 24,
+            "confidence": 0.95,
+            "basis": "点名、身份字幕、跪地回应及多名旁观者震惊连续呈现。"
+          }
+        ],
+        "confidence": 0.95
+      }
+    ],
+    "emotion": [
+      {
+        "statement": "前段情绪由威胁、轻蔑和紧张对峙主导。",
+        "evidence": [
+          {
+            "startSeconds": 0,
+            "endSeconds": 8.4,
+            "confidence": 0.95,
+            "basis": "处决命令、紫衣女子冷笑和两名战士对峙。"
+          }
+        ],
+        "confidence": 0.95
+      },
+      {
+        "statement": "中后段转为权力反转带来的震惊与爽感。",
+        "evidence": [
+          {
+            "startSeconds": 18,
+            "endSeconds": 25.2,
+            "confidence": 0.96,
+            "basis": "冠军身份揭示、跪地应命、壮汉与华服旁观者连续震惊特写。"
+          }
+        ],
+        "confidence": 0.96
+      }
+    ],
+    "suspense": [
+      {
+        "statement": "Killian 最终会攻击谁，以及他为何服从紫衣女子，片段未解答。",
+        "evidence": [
+          {
+            "startSeconds": 16.1,
+            "endSeconds": 28.9,
+            "confidence": 0.94,
+            "basis": "他仅被点名、跪地应命；未展示后续攻击或关系解释，随后转入导流。"
+          }
+        ],
+        "confidence": 0.94
+      },
+      {
+        "statement": "黑发女战士、紫衣女子与 Killian 的真实阵营和既往关系未被交代。",
+        "evidence": [
+          {
+            "startSeconds": 0,
+            "endSeconds": 28.9,
+            "confidence": 0.91,
+            "basis": "片段展示行动与反应，但无关系背景说明。"
+          }
+        ],
+        "confidence": 0.91
+      }
+    ],
+    "narrativePromise": [
+      {
+        "statement": "后续应兑现 Killian 的下一步行动及其服从对象。",
+        "evidence": [
+          {
+            "startSeconds": 18,
+            "endSeconds": 21.5,
+            "confidence": 0.97,
+            "basis": "冠军战士跪地说 At your command，形成明确未完成动作链。"
+          }
+        ],
+        "confidence": 0.97
+      },
+      {
+        "statement": "后续应解释紫衣女子为何能召唤或命令 Shadow Pack 冠军，并交代围观者震惊的原因。",
+        "evidence": [
+          {
+            "startSeconds": 16.1,
+            "endSeconds": 25.2,
+            "confidence": 0.94,
+            "basis": "点名后即服从，旁观者连续震惊，但原因未说明。"
+          }
+        ],
+        "confidence": 0.94
+      }
+    ],
+    "retention": {
+      "score": 87,
+      "reasoning": [
+        "0 秒进入面对面对峙，约 1 秒出现处决命令，信息启动快。",
+        "约 16 秒点名关键人物，18-21 秒完成冠军身份揭示与跪地应命，反转清晰。",
+        "21-25 秒用多名人物震惊反应放大爽点。",
+        "主要扣分点是 25 秒左右已出现观看全集导流，29 秒后完全进入应用广告；若作为正片钩子，商业尾卡会打断沉浸。",
+        "人物关系和谁在发令的语义需要依赖后续剧情，孤立观看仍有一定歧义。"
+      ]
+    },
+    "highlightCandidates": [
+      {
+        "id": "H1-threat-setup",
+        "range": {
+          "startSeconds": 0,
+          "endSeconds": 6.7,
+          "confidence": 0.94,
+          "basis": "完整覆盖对峙、处决命令和轻蔑死亡预告；0 秒是镜头起点，6.7 秒附近进入下一轮对峙镜头。"
+        },
+        "description": "快速建立生死威胁的开场设局。",
+        "boundarySafety": "needs_frame_review",
+        "confidence": 0.94
+      },
+      {
+        "id": "H2-summon-reversal",
+        "range": {
+          "startSeconds": 15.1,
+          "endSeconds": 23.5,
+          "confidence": 0.97,
+          "basis": "从女战士强势特写开始，完整覆盖点名、冠军身份、跪地应命与壮汉震惊。"
+        },
+        "description": "Killian 身份揭示与服从反转，是全片最强高光。",
+        "boundarySafety": "needs_frame_review",
+        "confidence": 0.97
+      },
+      {
+        "id": "H3-reaction-payoff",
+        "range": {
+          "startSeconds": 21.5,
+          "endSeconds": 25.2,
+          "confidence": 0.95,
+          "basis": "连续覆盖壮汉、华贵男子和成年女子震惊反应；25 秒后开始叠加导流文字。"
+        },
+        "description": "多角色震惊反应，适合作为反转后的情绪放大。",
+        "boundarySafety": "safe",
+        "confidence": 0.95
+      }
+    ],
+    "matching": {
+      "correspondingMainContentConditions": [
+        "正片承接应在开头数秒内继续 Killian 跪地应命后的同一场景、同一组主要人物或直接解释该命令。",
+        "正片应兑现 Killian 的行动方向，至少说明他准备保护、攻击或服从谁；不能跳过核心反转。",
+        "若承接改为背景解释，应能明确回答紫衣女子与 Killian/Shadow Pack 的关系或她为何拥有命令权。",
+        "人物造型、场地与阵营称谓应保持可辨识连续性；若时空跳转，需有清晰因果桥接。"
+      ],
+      "nonMatchExamples": [
+        "转入无共同人物、无共同地点、无 Killian/Shadow Pack 线索的现代都市恋爱场景。",
+        "正片把 Killian 设为完全无关人物，且不解释片头跪地应命行为。",
+        "只复述女战士将被处决，却不继续或解释已经发生的服从反转。",
+        "用泛化狼人打斗承接，但没有同一命令链、人物或冲突因果。"
+      ],
+      "confidence": 0.94,
+      "evidence": [
+        {
+          "startSeconds": 16.1,
+          "endSeconds": 28.9,
+          "confidence": 0.94,
+          "basis": "核心未完成因果链是点名 Killian—冠军身份—跪地应命—众人震惊—导流中断。"
+        }
+      ]
+    },
+    "transitionRecommendations": {
+      "direct": {
+        "recommended": true,
+        "cutRangeSeconds": [
+          23.5,
+          25
+        ],
+        "guidance": "在最后一个清晰震惊反应后、黄色导流字出现前直接切正片；正片第一镜应立即回应 Killian 的下一步动作。",
+        "confidence": 0.95
+      },
+      "A": {
+        "recommended": true,
+        "guidance": "A 段用 0.0-3.4 秒建立处决命令，随后直接跳至 15.1-21.5 秒完成身份反转；用硬切或短促冲击音连接，保留因果主干。",
+        "safety": "跳剪需避免让观众误以为紫衣女子就是中央女战士；至少保留紫衣女子点名镜头。",
+        "confidence": 0.93
+      },
+      "B": {
+        "recommended": true,
+        "guidance": "B 段以 18.0-21.5 秒的冠军身份与跪地应命作为冷开，再回接 0.0-6.7 秒解释威胁，随后进入正片兑现。",
+        "safety": "倒叙版必须用字幕或画面标记保持时序可读；不得把原片 At your command 改写成未经证实的亲属或恋爱关系。",
+        "confidence": 0.88
+      },
+      "globalSafetyBoundary": "排除 25.0 秒后黄色 Click the link below to watch the full series 导流叠字，以及 29.0-34.504 秒 DramaWave 应用尾卡；除非投放规范明确要求保留品牌 CTA。"
+    },
+    "rejectOrDegradeConditions": [
+      "若无法在 25.0 秒前干净截断黄色导流叠字，降级为仅取 15.1-23.5 秒并做逐帧边界复核。",
+      "若正片不承接 Killian 的服从反转、不解释其命令链，也无同一人物/场景/阵营因果，则拒绝匹配。",
+      "若要声称该素材与正片同源、复用资产、混剪或无关，必须先取得血缘/源片对比证据；当前不得据此下结论。",
+      "若 T1/T2 是交付必填项，必须先提供正式定义；定义缺失时拒绝硬判。",
+      "若自动裁剪切断 Killian 跪地或 At your command 字幕，使反转语义不完整，则降级或拒绝该裁剪。",
+      "若使用片段暗示紫衣女子、黑发女战士或 Killian 之间存在亲属、伴侣或主仆之外的具体关系，因片内无证据应拒绝。",
+      "若需未成年人安全判定、演员身份或真实族群判断，当前视觉证据不足，应拒绝推断并转人工审核。"
+    ]
+  },
+  "evaluationReadiness": {
+    "systemComparison": "ready_after_blind_draft_is_frozen",
+    "episodeMatch": "pending_main_episode_or_reference_input",
+    "renderModes": [
+      "direct",
+      "A",
+      "B"
+    ],
+    "notes": "Blind draft is complete; lineage classification and T1/T2 remain intentionally unresolved."
+  },
+  "freeze": {
+    "canonicalSha256": null
+  }
+}

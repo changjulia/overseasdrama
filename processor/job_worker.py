@@ -18,9 +18,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageFilter, ImageStat
+from PIL import Image, ImageChops, ImageFilter, ImageStat
 
-from processor.semantic_analysis import AnalysisEnvelope, analyze_coarse, analyze_detail, analyze_hook_entry_points, analyze_hook_story_match, analyze_material, analyze_precision, extract_frames
+from processor.semantic_analysis import AnalysisEnvelope, analyze_coarse, analyze_detail, analyze_detail_reconcile, analyze_hook_entry_points, analyze_hook_story_match, analyze_material, analyze_precision, extract_frames
 from processor.factory_render import render_factory_project
 
 
@@ -33,9 +33,9 @@ class ApiRequestError(RuntimeError):
 def classify_failure(exc: Exception) -> tuple[str, bool, int]:
     """Return error kind, retryability and exponential backoff seconds."""
     message = str(exc).lower()
-    permanent_markers = ("non full-range yuv", "invalid argument", "missing required executable", "missing material", "validation_invalid_value")
+    permanent_markers = ("non full-range yuv", "invalid argument", "missing required executable", "missing material", "validation_invalid_value", "content hash does not match")
     if any(marker in message for marker in permanent_markers):
-        return "media" if "yuv" in message or "ffmpeg" in message else "validation", False, 0
+        return "media" if "yuv" in message or "ffmpeg" in message or "content hash" in message else "validation", False, 0
     if any(marker in message for marker in ("timeout", "timed out", "connection", "temporarily", "429", "503", "ssl", "unexpected_eof", "eof occurred", "write operation", "read operation", "mkl_malloc", "failed to allocate memory", "out of memory")):
         return "transient", True, 30
     if any(marker in message for marker in ("provider", "dashscope", "arrearage", "quota")):
@@ -44,14 +44,99 @@ def classify_failure(exc: Exception) -> tuple[str, bool, int]:
 
 
 def _detail_frame_payload(path: Path) -> str:
-    """Bound visual tokens while retaining enough detail for scene/action evidence."""
+    """Create a compact evidence thumbnail for bounded VL requests.
+
+    Detail sends several frames together with transcript/OCR.  Large 640px
+    JPEGs made a single real episode exceed Qwen's complete request limit.
+    Precision analysis still re-samples shortlisted intervals densely.
+    """
     with Image.open(path) as image:
         image = image.convert("RGB")
-        image.thumbnail((640, 640), Image.Resampling.LANCZOS)
+        image.thumbnail((256, 256), Image.Resampling.LANCZOS)
         from io import BytesIO
         buffer = BytesIO()
-        image.save(buffer, format="JPEG", quality=82, optimize=True)
+        image.save(buffer, format="JPEG", quality=55, optimize=True)
         return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def _select_detail_evidence_frames(extracted: list[dict[str, Any]], limit: int = 8) -> list[dict[str, Any]]:
+    """Preserve endpoints and short motion bursts within the detail budget."""
+    if not extracted or limit <= 0:
+        return []
+    if len(extracted) <= limit:
+        return [{**frame, "selectionReason": "endpoint" if index in (0, len(extracted) - 1) else "complete_coverage"} for index, frame in enumerate(extracted)]
+
+    thumbnails: list[Image.Image] = []
+    for frame in extracted:
+        with Image.open(frame["path"]) as image:
+            thumbnail = image.convert("L")
+            thumbnail.thumbnail((32, 32), Image.Resampling.BILINEAR)
+            thumbnails.append(thumbnail.copy())
+    differences = [0.0]
+    for prior, current in zip(thumbnails, thumbnails[1:]):
+        differences.append(float(ImageStat.Stat(ImageChops.difference(prior, current)).mean[0]))
+    peaks = sorted(range(1, len(extracted) - 1), key=lambda index: differences[index] + differences[index + 1], reverse=True)
+    endpoint_context = {index for index in (0, 1, len(extracted) - 3, len(extracted) - 2, len(extracted) - 1) if 0 <= index < len(extracted)}
+    selected = set(endpoint_context)
+    reasons = {index: "endpoint" if index in (0, len(extracted) - 1) else "endpoint_context" for index in endpoint_context}
+    peak_centers: list[int] = []
+    for peak in peaks:
+        if len(peak_centers) >= 2 or any(abs(peak - existing) <= 2 for existing in peak_centers):
+            continue
+        group = [index for index in (peak - 1, peak, peak + 1) if 0 <= index < len(extracted)]
+        available = [index for index in group if index not in selected]
+        if len(selected) + len(available) > limit:
+            continue
+        peak_centers.append(peak)
+        for index in available:
+            selected.add(index)
+            reasons[index] = "motion_burst"
+    while len(selected) < limit:
+        remaining = [index for index in range(len(extracted)) if index not in selected]
+        if not remaining:
+            break
+        next_index = max(remaining, key=lambda index: min(abs(index - chosen) for chosen in selected))
+        selected.add(next_index)
+        reasons[next_index] = "coverage_fill"
+    ordered = sorted(selected)
+    burst_number = 0
+    previous_burst_index = -10
+    result: list[dict[str, Any]] = []
+    for index in ordered:
+        reason = reasons[index]
+        payload = {**extracted[index], "selectionReason": reason}
+        if reason == "motion_burst":
+            if index > previous_burst_index + 1:
+                burst_number += 1
+            payload["sequenceId"] = f"motion-{burst_number}"
+            previous_burst_index = index
+        result.append(payload)
+    return result
+
+
+def _detail_motion_recall_intervals(extracted: list[dict[str, Any]], episode: int) -> list[dict[str, Any]]:
+    """Find one sustained-motion probe per timeline quartile before frame capping."""
+    if len(extracted) < 4:
+        return []
+    thumbnails = []
+    for frame in extracted:
+        with Image.open(frame["path"]) as image:
+            thumbnails.append(image.convert("L").resize((32, 32), Image.Resampling.BILINEAR))
+    differences = [0.0] + [float(ImageStat.Stat(ImageChops.difference(prior, current)).mean[0]) for prior, current in zip(thumbnails, thumbnails[1:])]
+    timestamps = [float((frame.get("timecode") or {}).get("start", 0)) if isinstance(frame.get("timecode"), dict) else float(frame.get("timecode") or 0) for frame in extracted]
+    duration = max(timestamps[-1], timestamps[-1] + (timestamps[-1] - timestamps[-2] if len(timestamps) > 1 else 3.0))
+    intervals = []
+    for quartile in range(4):
+        left = max(1, round(quartile * len(extracted) / 4))
+        right = min(len(extracted) - 1, round((quartile + 1) * len(extracted) / 4))
+        indexes = list(range(left, max(left + 1, right)))
+        if not indexes:
+            continue
+        center_index = max(indexes, key=lambda index: sum(differences[max(1, index - 2):min(len(differences), index + 3)]) / max(1, len(differences[max(1, index - 2):min(len(differences), index + 3)])))
+        center = timestamps[center_index]
+        start, end = max(0.0, center - 12.0), min(duration, center + 15.0)
+        intervals.append({"episode": episode, "kind": "motion_quartile_probe", "quartile": quartile + 1, "eventInterval": {"start": round(start, 3), "end": round(end, 3)}, "evidence": [{"episode": episode, "source": "measured_frame_motion", "timecode": {"start": center, "end": center}, "confidence": 1.0}], "motionScore": round(differences[center_index], 3)})
+    return intervals
 
 
 def api_request(base_url: str, token: str, path: str, method: str = "GET", payload: dict[str, Any] | None = None) -> tuple[int, dict[str, Any] | None]:
@@ -87,6 +172,40 @@ def envelope_from_dict(value: dict[str, Any]) -> AnalysisEnvelope:
 
 def execute_semantic_job(job: dict[str, Any], base_url: str, workspace: Path, on_progress=None) -> dict[str, Any]:
     stage = str(job["stage"])
+    parameters = dict(job.get("parameters") or {})
+    if stage == "detail" and (parameters.get("checkpoint_only") is True or parameters.get("job_kind") == "detail_reconcile"):
+        # Hard separation: the fan-in parent has no media path and must never
+        # call download/extract_frames. PocketBase supplies successful child
+        # outputs only after every shard reaches a terminal success state.
+        checkpoints = job.get("episode_checkpoints") or job.get("episodeCheckpoints") or []
+        return analyze_detail_reconcile(checkpoints, on_progress).to_dict()
+    if stage == "detail_episode":
+        coarse_payload = dict(job.get("coarse_result") or job.get("coarseResult") or {})
+        coarse = envelope_from_dict(coarse_payload)
+        video_name = str(job.get("video") or "")
+        if not video_name or not job.get("episode"):
+            raise RuntimeError("detail_episode job is missing its PocketBase episode video")
+        episode_number = int(job["episode_number"])
+        suffix = Path(video_name).suffix or ".video"
+        source = workspace / f"detail-episode-{episode_number}{suffix}"
+        if on_progress:
+            on_progress(8, f"下载第 {episode_number} 集分片")
+        asset_url = f"{base_url.rstrip('/')}/api/files/{job['collection_id']}/{job['episode']}/{urllib.parse.quote(video_name)}"
+        download(asset_url, source)
+        frame_interval = float(os.getenv("LUMINA_DETAIL_FRAME_INTERVAL", "3"))
+        max_frames = max(1, int(os.getenv("LUMINA_DETAIL_MAX_FRAMES_PER_EPISODE", "8")))
+        extracted = extract_frames(source, workspace / f"detail-frames-{episode_number}", frame_interval)
+        recall_intervals = _detail_motion_recall_intervals(extracted, episode_number)
+        extracted = _select_detail_evidence_frames(extracted, max_frames)
+        frames = [{"episode": episode_number, "timecode": frame["timecode"], "mimeType": "image/jpeg", "base64": _detail_frame_payload(Path(frame["path"])), "selectionReason": frame.get("selectionReason"), "sequenceId": frame.get("sequenceId")} for frame in extracted]
+        default_cache_dir = Path(__file__).resolve().parent.parent / ".runtime" / "analysis-cache"
+        cache_dir = Path(os.getenv("LUMINA_ANALYSIS_CACHE_DIR", str(default_cache_dir)))
+        if on_progress:
+            on_progress(38, f"分析第 {episode_number} 集 checkpoint")
+        envelope = analyze_detail([coarse], frames, on_progress, recall_intervals, cache_dir)
+        payload = envelope.to_dict()
+        payload["checkpoint"] = {"episode": episode_number, "durationSeconds": float(coarse.source.get("durationSeconds") or (coarse.result or {}).get("durationSeconds") or 0), "version": "detail-episode-v1", "diagnostics": (envelope.result or {}).get("diagnostics", {}).get("detailCheckpoints", {})}
+        return payload
     if stage == "detail":
         raw_coarse = job.get("coarse_results") or job.get("coarseResults") or []
         if isinstance(raw_coarse, dict):
@@ -106,12 +225,13 @@ def execute_semantic_job(job: dict[str, Any], base_url: str, workspace: Path, on
                 raw_coarse.append({"schema_version": "legacy-1.0", "analysis_id": f"legacy-{episode}", "tier": "coarse", "status": "succeeded", "source": {"episode": episode, "durationSeconds": item.get("duration_seconds", item.get("durationSeconds", (result or {}).get("durationSeconds", 0)))}, "engine": {"legacy": "true"}, "result": result})
         coarse = [envelope_from_dict(item) for item in raw_coarse if isinstance(item, dict)]
         visual_frames: list[dict[str, Any]] = []
+        recall_intervals: list[dict[str, Any]] = []
         frame_interval = float(os.getenv("LUMINA_DETAIL_FRAME_INTERVAL", "3"))
-        # 12 resized frames per short episode keep a four-episode request below
-        # Qwen VL's multimodal input ceiling.  Precision analysis later samples
+        # Eight compact frames per short episode keep each episode-local request
+        # below Qwen VL's complete input ceiling. Precision analysis later samples
         # the shortlisted event interval densely, so detail recall need not send
         # every extracted source frame at full resolution.
-        max_frames_per_episode = max(1, int(os.getenv("LUMINA_DETAIL_MAX_FRAMES_PER_EPISODE", "12")))
+        max_frames_per_episode = max(1, int(os.getenv("LUMINA_DETAIL_MAX_FRAMES_PER_EPISODE", "8")))
         episode_assets = job.get("episode_assets") or job.get("episodeAssets") or []
         asset_total = max(1, len(episode_assets))
         for asset_index, asset in enumerate(episode_assets):
@@ -127,13 +247,14 @@ def execute_semantic_job(job: dict[str, Any], base_url: str, workspace: Path, on
             asset_url = f"{base_url.rstrip('/')}/api/files/{asset.get('collection_id')}/{asset['id']}/{urllib.parse.quote(str(asset['video']))}"
             download(asset_url, source)
             extracted = extract_frames(source, workspace / f"detail-frames-{episode_number}", frame_interval)
-            if len(extracted) > max_frames_per_episode:
-                step = len(extracted) / max_frames_per_episode
-                extracted = [extracted[min(len(extracted) - 1, int(index * step))] for index in range(max_frames_per_episode)]
-            visual_frames.extend({"episode": episode_number, "timecode": frame["timecode"], "mimeType": "image/jpeg", "base64": _detail_frame_payload(Path(frame["path"]))} for frame in extracted)
+            recall_intervals.extend(_detail_motion_recall_intervals(extracted, episode_number))
+            extracted = _select_detail_evidence_frames(extracted, max_frames_per_episode)
+            visual_frames.extend({"episode": episode_number, "timecode": frame["timecode"], "mimeType": "image/jpeg", "base64": _detail_frame_payload(Path(frame["path"])), "selectionReason": frame.get("selectionReason"), "sequenceId": frame.get("sequenceId")} for frame in extracted)
         if on_progress:
             on_progress(38, "融合对白、OCR 与画面证据")
-        return analyze_detail(coarse, visual_frames, on_progress).to_dict()
+        default_cache_dir = Path(__file__).resolve().parent.parent / ".runtime" / "analysis-cache"
+        analysis_cache_dir = Path(os.getenv("LUMINA_ANALYSIS_CACHE_DIR", str(default_cache_dir)))
+        return analyze_detail(coarse, visual_frames, on_progress, recall_intervals, analysis_cache_dir).to_dict()
     video_name = str(job.get("video") or "")
     if not video_name or not job.get("episode"):
         raise RuntimeError(f"{stage} job is missing its PocketBase episode video")
@@ -195,11 +316,15 @@ def execute_material_job(response: dict[str, Any], base_url: str, workspace: Pat
     with source.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
+    actual_content_hash = digest.hexdigest()
+    expected_content_hash = str(material.get("content_hash") or material.get("contentHash") or "").strip().lower()
+    if expected_content_hash and expected_content_hash != actual_content_hash:
+        raise RuntimeError("material content hash does not match the recorded intake identity")
     cache_root = Path(os.getenv("LUMINA_ANALYSIS_CACHE_DIR", str(Path.cwd() / "analysis_cache")))
     # Technical evidence is a pure function of the video bytes and engine
     # configuration. Key it by content hash so re-ingesting the same file does
     # not repeat ASR/OCR/frame extraction under a new PocketBase record id.
-    cache_dir = cache_root / "materials" / "by-content-hash" / digest.hexdigest()
+    cache_dir = cache_root / "materials" / "by-content-hash" / actual_content_hash
     parameters = dict(job.get("parameters") or {})
     if parameters.get("force_semantic_refresh") is True:
         # A manual story retry keeps deterministic media evidence but must not
@@ -207,6 +332,9 @@ def execute_material_job(response: dict[str, Any], base_url: str, workspace: Pat
         semantic_cache = cache_dir / "semantic-segments-v6.json"
         if semantic_cache.exists():
             semantic_cache.unlink()
+        short_semantic_cache = cache_dir / "semantic-short-v1.json"
+        if short_semantic_cache.exists():
+            short_semantic_cache.unlink()
         if on_progress:
             on_progress(74, "保留抽帧/ASR/OCR，刷新剧情语义")
     try:
@@ -490,6 +618,12 @@ def process_one_endpoint(base_url: str, token: str, worker_id: str, api_prefix: 
     job_id = job["id"]
     raw_parameters = job.get("parameters")
     claimed_parameters = dict(raw_parameters) if isinstance(raw_parameters, dict) else {}
+    execution_metadata = {
+        "semantic_model": os.getenv("LUMINA_SEMANTIC_MODEL", ""),
+        "semantic_provider": os.getenv("LUMINA_SEMANTIC_PROVIDER", ""),
+        "semantic_prompt_version": "material-v2-20260830.1" if kind == "material" else "",
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+    }
     print(f"[{kind}:{job_id}] claimed stage={job.get('stage')} attempt={job.get('attempt')}", file=sys.stderr, flush=True)
     heartbeat_stop = threading.Event()
     progress_state: dict[str, Any] = {"value": 5, "stage": "领取任务"}
@@ -529,7 +663,7 @@ def process_one_endpoint(base_url: str, token: str, worker_id: str, api_prefix: 
         payload = {
             "worker_id": worker_id, "lease_token": job["lease_token"], "status": "rendering" if kind == "factory_render" else "running",
             "progress": progress_state["value"], "lease_seconds": 1800,
-            "logs": {**claimed_parameters, "stage": stage, "kind": kind},
+            "logs": {**claimed_parameters, **execution_metadata, "stage": stage, "kind": kind},
         }
         if kind == "hook_match":
             value = progress_state["value"]
@@ -567,7 +701,7 @@ def process_one_endpoint(base_url: str, token: str, worker_id: str, api_prefix: 
                 result = execute_semantic_job(job, base_url, Path(tmp), report_progress)
         if kind == "drama" and job.get("stage") == "precision" and claimed_parameters.get("generation"):
             result["asset_generation"] = claimed_parameters["generation"]
-        final_payload = {"worker_id": worker_id, "lease_token": job["lease_token"], "status": "succeeded", "result": result, "logs": {**claimed_parameters, "processor": "processor.semantic_analysis", "analysisVersion": result.get("schema_version", kind), "stage": job["stage"], "kind": kind}}
+        final_payload = {"worker_id": worker_id, "lease_token": job["lease_token"], "status": "succeeded", "result": result, "logs": {**claimed_parameters, **execution_metadata, "processor": "processor.semantic_analysis", "analysisVersion": result.get("schema_version", kind), "stage": job["stage"], "kind": kind}}
         if kind == "factory_render":
             final_payload.update(result)
         api_request(base_url, token, f"{api_prefix}/jobs/{job_id}", "PATCH", final_payload)
@@ -576,7 +710,7 @@ def process_one_endpoint(base_url: str, token: str, worker_id: str, api_prefix: 
         attempt = max(1, int(job.get("attempt") or 1))
         retry_after = min(1800, base_delay * (2 ** (attempt - 1))) if retryable else 0
         try:
-            api_request(base_url, token, f"{api_prefix}/jobs/{job_id}", "PATCH", {"worker_id": worker_id, "lease_token": job["lease_token"], "status": "failed", "error": str(exc)[:2000], "error_kind": error_kind, "retryable": retryable, "retry_after_seconds": retry_after})
+            api_request(base_url, token, f"{api_prefix}/jobs/{job_id}", "PATCH", {"worker_id": worker_id, "lease_token": job["lease_token"], "status": "failed", "error": str(exc)[:2000], "error_kind": error_kind, "retryable": retryable, "retry_after_seconds": retry_after, "logs": {**claimed_parameters, **execution_metadata, "processor": "processor.semantic_analysis", "stage": progress_state["stage"], "kind": kind}})
         except Exception as patch_exc:
             print(f"[{kind}:{job_id}] task failed: {exc}; status update failed: {patch_exc}", file=sys.stderr, flush=True)
         else:

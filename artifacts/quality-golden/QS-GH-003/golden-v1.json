@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "caseId": "QS-GH-003",
+  "goldenVersion": "v1",
+  "status": "frozen_with_prior",
+  "frozenAt": "2026-08-30T22:26:48+08:00",
+  "input": {
+    "path": "/Users/julia_chen/Downloads/1785148210_3shFMGB3nT_H264_720.mp4",
+    "sha256": "0b82e9fc0bceab6b5883496c7861e78808a09c4327f0b2301a9f68deab4a9e32",
+    "durationSeconds": 1003.29
+  },
+  "blindness": {
+    "systemOutputSeenBeforeFreeze": false,
+    "allowedInputs": ["original media", "ffprobe fingerprint", "timestamped contact sheets", "user-provided business label", "legacy sample-packaging metadata (not a current tested-system output)"],
+    "knownBusinessPriors": ["User designates the complete asset as an external-hook positive."],
+    "limitations": ["No corresponding original-drama episodes or production-lineage records available.", "T1/T2 taxonomy definitions are absent.", "The media uses stylized/AI-like imagery, but that visual property alone cannot establish production lineage or external subtype.", "Legacy samples.json provisional visual triage was visible before freeze; it is disclosed as a packaging prior, and no current system answer was read."],
+    "reviewer": "independent_e2e_quality_supervisor"
+  },
+  "expertAnswer": {
+    "genre": ["穿越/重生", "豪门/契约婚姻", "奇幻"],
+    "sourceClassification": {
+      "businessLabel": "external_hook_positive",
+      "externalSubtype": "unknown_pending_review",
+      "sourceEvidenceStatus": "pending_source_comparison",
+      "reasoning": "The supplied positive label is preserved. Stylized visuals suggest new production but cannot distinguish unrelated, reused-asset, or mixed lineage without source matching.",
+      "t1t2": {"value": null, "status": "not_evaluable_taxonomy_missing"}
+    },
+    "hook": {
+      "boundaryStatus": "candidate_only",
+      "candidateRanges": [
+        {"startSeconds": 0, "endSeconds": 34, "confidence": 0.75, "basis": "Ancient queen is attacked, survives, and awakens 2,000 years later as a wealthy man's wife."},
+        {"startSeconds": 0, "endSeconds": 70, "confidence": 0.68, "basis": "Extended identity-confusion arc through confrontation and explicit modern date."}
+      ],
+      "events": [
+        {"statement": "An ancient king becomes enraged and stabs/throws the queen into water; she does not die.", "evidence": [{"startSeconds": 0, "endSeconds": 13, "confidence": 0.93, "basis": "Bed/king/attack/water sequence and captions."}], "confidence": 0.93},
+        {"statement": "The queen is transported roughly 2,000 years into the future and awakens in the body/life of a wealthy man's wife.", "evidence": [{"startSeconds": 12, "endSeconds": 20, "confidence": 0.94, "basis": "Explicit transport and future-wife captions."}], "confidence": 0.94},
+        {"statement": "She misreads modern surroundings through an ancient worldview and insists she is a queen.", "evidence": [{"startSeconds": 20, "endSeconds": 34, "confidence": 0.94, "basis": "Chandelier-as-treasure line, doctor, queen claim."}], "confidence": 0.94},
+        {"statement": "Austin Clarke, her modern husband, confronts her over an alleged incident involving Caroline while she cannot understand the modern people/context.", "evidence": [{"startSeconds": 34, "endSeconds": 62, "confidence": 0.9, "basis": "Austin introduction, Caroline accusation, confrontation."}], "confidence": 0.9},
+        {"statement": "A doctor states the exact modern date, confirming the temporal displacement to the protagonist.", "evidence": [{"startSeconds": 64, "endSeconds": 74, "confidence": 0.92, "basis": "Doctor/date captions."}], "confidence": 0.92}
+      ]
+    },
+    "entities": [
+      {"statement": "Ancient queen / modern wife: displaced protagonist retaining an ancient identity and worldview.", "evidence": [{"startSeconds": 8, "endSeconds": 34, "confidence": 0.95, "basis": "Survival, transport and queen claim."}], "confidence": 0.95},
+      {"statement": "Austin Clarke: wealthy modern husband who initially interprets her behavior as manipulation or instability.", "evidence": [{"startSeconds": 34, "endSeconds": 62, "confidence": 0.91, "basis": "Title card and confrontation."}], "confidence": 0.91},
+      {"statement": "Caroline: woman allegedly pushed into water; the accusation drives the initial marital conflict.", "evidence": [{"startSeconds": 40, "endSeconds": 48, "confidence": 0.88, "basis": "Accusation captions and blonde woman imagery."}], "confidence": 0.88},
+      {"statement": "Doctor: modern-context interpreter who gives the date and challenges the protagonist's period assumptions.", "evidence": [{"startSeconds": 24, "endSeconds": 32, "confidence": 0.84, "basis": "Medical examination."}, {"startSeconds": 64, "endSeconds": 74, "confidence": 0.93, "basis": "Date explanation."}], "confidence": 0.9}
+    ],
+    "conflict": [
+      {"statement": "The protagonist must survive a hostile modern marriage while proving/understanding an identity that others interpret as madness or deception.", "evidence": [{"startSeconds": 30, "endSeconds": 78, "confidence": 0.92, "basis": "Queen claim, husband's accusation, date revelation, psychiatrist reference."}], "confidence": 0.92}
+    ],
+    "emotion": [
+      {"statement": "Shock and absurdist wonder quickly shift to hostility, confusion, and adaptation curiosity.", "evidence": [{"startSeconds": 12, "endSeconds": 78, "confidence": 0.9, "basis": "Awakening, chandelier wonder, confrontation and date reveal."}], "confidence": 0.9}
+    ],
+    "suspense": [
+      {"statement": "Can the queen adapt, establish what happened to the modern wife, and transform the hostile marriage/power balance?", "evidence": [{"startSeconds": 14, "endSeconds": 78, "confidence": 0.9, "basis": "Future-wife premise, Caroline accusation and modern-date confirmation."}], "confidence": 0.9}
+    ],
+    "narrativePromise": [
+      {"statement": "An ancient queen will use her identity/competence to reverse the status of a distrusted modern wife and reshape a wealthy marriage.", "evidence": [{"startSeconds": 8, "endSeconds": 62, "confidence": 0.91, "basis": "Queen survival/transport, wealthy-wife premise, hostile husband."}], "confidence": 0.91}
+    ],
+    "retention": {
+      "score": 89,
+      "reasoning": ["Unusual and explicit high-concept premise in the first 15 seconds", "Rapid time-travel reveal", "Comedic fish-out-of-water detail plus marital accusation", "Very dense captions and stylized imagery may reduce trust/readability for some viewers"]
+    },
+    "highlightCandidates": [
+      {"id": "H1", "range": {"startSeconds": 0, "endSeconds": 20, "confidence": 0.87, "basis": "Attack → survival → 2,000-year transport → wealthy-wife reveal."}, "description": "Complete high-concept premise compression.", "boundarySafety": "needs_frame_review", "confidence": 0.87},
+      {"id": "H2", "range": {"startSeconds": 20, "endSeconds": 34, "confidence": 0.8, "basis": "Chandelier confusion and queen declaration."}, "description": "Fish-out-of-water comic identity beat.", "boundarySafety": "needs_frame_review", "confidence": 0.8},
+      {"id": "H3", "range": {"startSeconds": 34, "endSeconds": 74, "confidence": 0.81, "basis": "Husband confrontation through explicit date confirmation."}, "description": "Marital conflict and temporal proof.", "boundarySafety": "needs_frame_review", "confidence": 0.81}
+    ],
+    "matching": {
+      "status": "pending_original_drama_first10",
+      "mustBeCarriedByMainContent": ["protagonist is an ancient queen displaced into a modern wife's life", "Austin/wealthy-husband conflict or an evidence-backed equivalent", "adaptation/status-reversal arc", "Caroline accusation is addressed if retained in the hook cut"],
+      "incompatibleExamples": ["Generic rebirth story without the ancient-queen identity", "Modern marriage story that contradicts time displacement", "A match based only on wealthy-husband labels"],
+      "sourceTypeIsHardGate": false
+    },
+    "transitionRecommendations": {
+      "directCut": {"decision": "manual_only_if_same_scene_continues", "reason": "A direct cut requires verified character/event continuity."},
+      "modeA": {"decision": "preferred_when_entering_modern_episode", "gapDiagnosis": ["time", "space", "character", "causal"], "copyCandidates": ["两千年后"], "constraint": "Use only if the destination episode independently confirms the displacement interval; otherwise omit the number."},
+      "modeB": {"decision": "preferred_if_destination_skips_awakening", "targetSeconds": [60, 100], "requiredFacts": ["queen attacked but survived", "transport to modern era", "modern wealthy-wife identity", "Austin/Caroline conflict", "date confirmation"], "prohibited": ["inventing a reincarnation mechanism", "inventing Caroline's guilt", "inventing a completed romance"]}
+    },
+    "rejectOrDegradeConditions": ["Reject any transition that says rebirth rather than transport unless destination evidence proves it.", "Reject a match that drops the ancient-queen identity or contradicts temporal displacement.", "Reject unsupported claims about Caroline.", "Manual review required for dense caption readability and stylized continuity."]
+  },
+  "evaluationReadiness": {
+    "systemComparison": "pending_system_output",
+    "episodeMatch": "pending_corresponding_original_drama_first10",
+    "renderModes": "pending_three_real_renders",
+    "engineeringChain": "pending_real_record_ids_and_logs"
+  },
+  "freeze": {"canonicalSha256": null, "hashMethod": "sha256 of final file bytes recorded after schema validation"}
+}

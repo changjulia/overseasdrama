@@ -139,13 +139,12 @@ type PBRecord = Record<string, unknown> & {
   created?: string;
 };
 
-const configuredUrl = typeof process !== "undefined" ? process.env.NEXT_PUBLIC_POCKETBASE_URL : undefined;
-const PB_URL = (configuredUrl || (typeof window !== "undefined" ? "/pb" : "http://127.0.0.1:8090")).replace(/\/$/, "");
+import { POCKETBASE_URL as PB_URL, pocketBaseUiHeaders } from "./pocketbase-url";
 
 async function pbFetch(path: string, init?: RequestInit) {
   let response: Response;
   try {
-    response = await fetch(`${PB_URL}${path}`, { cache: "no-store", ...init });
+    response = await fetch(`${PB_URL}${path}`, { cache: "no-store", ...init, headers: { ...pocketBaseUiHeaders(), ...(init?.headers || {}) } });
   } catch {
     throw new Error(`无法连接 PocketBase（${PB_URL}），请先启动本项目的 PocketBase 服务`);
   }
@@ -539,7 +538,7 @@ export async function saveInspirationMaterial(input: InspirationMaterialInput | 
   form.set("review_status", "待复核");
   form.set("video", video, video.name);
   const savedRecord = await new Promise<PBRecord>((resolve,reject)=>{
-    const request=new XMLHttpRequest();request.open("POST",`${PB_URL}/api/collections/ad_materials/records`);request.timeout=120_000;
+    const request=new XMLHttpRequest();request.open("POST",`${PB_URL}/api/collections/ad_materials/records`);Object.entries(pocketBaseUiHeaders()).forEach(([key,value])=>request.setRequestHeader(key,String(value)));request.timeout=120_000;
     request.upload.onprogress=event=>{if(event.lengthComputable)onProgress?.(Math.max(1,Math.min(99,Math.round(event.loaded/event.total*100))))};
     request.onerror=()=>reject(new Error(`上传连接中断（${PB_URL}）`));request.ontimeout=()=>reject(new Error("上传 PocketBase 超时（120 秒）"));request.onabort=()=>reject(new DOMException("上传已取消","AbortError"));
     request.onload=()=>{let payload:unknown;try{payload=JSON.parse(request.responseText)}catch{payload=null}if(request.status<200||request.status>=300){const body=object(payload);const data=object(body.data);const fieldMessage=Object.values(data).map(value=>text(object(value).message)).find(Boolean);reject(new Error(fieldMessage||text(body.message,`PocketBase 上传失败（HTTP ${request.status}）`)));return}onProgress?.(100);resolve(payload as PBRecord)};

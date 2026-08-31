@@ -4,12 +4,27 @@ function authorize(e) {
   if (!expected || supplied !== expected) throw new UnauthorizedError("Invalid analysis worker token");
 }
 
+function constantTimeTextEqual(left, right) {
+  const a = String(left || ""), b = String(right || "");
+  let difference = a.length ^ b.length;
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) difference |= (a.charCodeAt(index) || 0) ^ (b.charCodeAt(index) || 0);
+  return difference === 0;
+}
+
 function authorizeLocalUi(e) {
-  const origin = String(e.requestInfo().headers.origin || "");
   const headers = e.requestInfo().headers;
-  const localUiHeader = String(headers["x-lumina-ui"] || headers["X-Lumina-Ui"] || "");
+  const rawHeader = e.request && e.request.header;
+  const header = (name) => String(headers[name] || headers[name.toLowerCase()] || (rawHeader ? rawHeader.get(name) : "") || "");
+  const gatewayToken = $os.getenv("LUMINA_UI_GATEWAY_TOKEN");
+  const bearer = header("authorization").replace(/^Bearer\s+/i, "");
+  if (gatewayToken && constantTimeTextEqual(bearer, gatewayToken)) return;
+  const origin = header("origin");
+  // Go promotes Host out of the Header map for inbound requests.
+  const host = String((e.request && e.request.host) || header("host") || "");
+  const localUiHeader = header("x-lumina-ui");
   const browserOriginAllowed = /^https?:\/\/(localhost|127\.0\.0\.1):(3000|3001|8090)$/i.test(origin);
-  if (!browserOriginAllowed && origin && localUiHeader !== "local") {
+  const localHostAllowed = /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(host);
+  if ($os.getenv("LUMINA_UI_MODE") !== "local-loopback" || !localHostAllowed || localUiHeader !== "local" || (origin && !browserOriginAllowed)) {
     throw new ForbiddenError("Material retry is only available to the local Lumina UI");
   }
 }
@@ -54,6 +69,14 @@ function claimText(value) {
   return String(value || "");
 }
 
+function verifiedClaimText(value) {
+  return objectValue(value).verification === "verified" ? claimText(value) : "";
+}
+
+function claimEvidenceSources(value) {
+  return arrayValue(objectValue(value).evidence).map((item) => String(objectValue(item).source || "").toLowerCase());
+}
+
 function normalizeStage(value, fallback) {
   const stage = String(value || "").toLowerCase();
   if (["queued", "download", "scan", "evidence", "content", "creative", "value", "review", "completed"].includes(stage)) return stage;
@@ -74,12 +97,14 @@ function projectMaterialResult(result, fallbackReviewStatus) {
   const value = objectValue(root.value);
   const hooks = arrayValue(creative.hooks);
   const segments = arrayValue(content.segments).length ? arrayValue(content.segments) : arrayValue(creative.timeline);
-  const rawTier = claimText(creative.tier || root.tier);
-  const tier = ["T0", "T1", "T2", "T3", "TX"].includes(rawTier) ? rawTier : "TX";
-  const bodyFormat = claimText(creative.bodyFormat);
+  const tierClaim = objectValue(creative.tier || root.tier);
+  const rawTier = verifiedClaimText(tierClaim);
+  const tierHasBusinessEvidence = claimEvidenceSources(tierClaim).some((source) => ["adx", "performance", "metrics", "manual_review"].includes(source));
+  const tier = tierHasBusinessEvidence && ["T0", "T1", "T2", "T3"].includes(rawTier) ? rawTier : "TX";
+  const bodyFormat = verifiedClaimText(creative.bodyFormat);
   const narrationCoverage = Number(objectValue(creative.narrationCoverage).value);
-  const hookSourceStatus = claimText(creative.hookSourceStatus);
-  const hookAssemblyType = claimText(creative.hookAssemblyType);
+  const hookSourceStatus = verifiedClaimText(creative.hookSourceStatus);
+  const hookAssemblyType = verifiedClaimText(creative.hookAssemblyType);
   let format = claimText(creative.format || root.material_format || root.materialFormat);
   if (["同剧外搭", "跨剧外搭", "外搭来源待确认"].includes(hookAssemblyType) || ["疑似外搭", "已确认外搭"].includes(hookSourceStatus)) format = "外搭钩子＋本剧正片";
   else if (bodyFormat === "解说主导") format = "正片剧集解说";
@@ -140,6 +165,39 @@ function numberValue(value, fallback) {
   return Number.isFinite(parsed) ? parsed : (fallback || 0);
 }
 
+function resetMaterialPublishedAnalysis(material) {
+  // A new attempt has no published result until its terminal success write.
+  // Remove the prior projection so a failed retry cannot expose stale tier,
+  // format or prototype values as if they came from the failed attempt.
+  material.set("analysis_result", null);
+  material.set("analysis_schema_version", "");
+  material.set("segment_count", 0);
+  material.set("hook_count", 0);
+  material.set("creative_tier", "TX");
+  material.set("material_format", "未确定");
+  material.set("type", "未确定");
+  material.set("prototype", "");
+  material.set("review_flags", [{ id: "analysis-retry-pending", severity: "blocking", reason: "new analysis attempt has no published result" }]);
+  material.set("prototype_inputs", null);
+  material.set("source_attribution", { status: "pending", matches: [] });
+  material.set("ontology_tags", null);
+  material.set("production_gate", { status: "blocked", reasons: ["analysis_retry_pending"] });
+  material.set("review_status", "pending");
+}
+
+function appendRetryLineage(logs, job, mode, forceSemanticRefresh) {
+  const base = objectValue(logs);
+  const history = arrayValue(base.retry_lineage).slice(-19);
+  history.push({
+    at: new Date().toISOString(),
+    mode: String(mode || "retry"),
+    from_status: job.getString("status"),
+    from_attempt: job.getInt("attempt"),
+    force_semantic_refresh: forceSemanticRefresh === true,
+  });
+  return { ...base, retry_lineage: history, force_semantic_refresh: forceSemanticRefresh === true };
+}
+
 function syncMaterialHookAssets(app, material, result, projection) {
   const collection = app.findCollectionByNameOrId("hook_assets");
   const existing = app.findRecordsByFilter(collection, "material = {:material}", "id", 500, 0, { material: material.id }).filter(Boolean);
@@ -182,7 +240,10 @@ function syncMaterialHookAssets(app, material, result, projection) {
     const hookDuration = end - start;
     if (hookDuration < 5 || hookDuration > 60) return;
     if (sourceDuration > 8 && start <= .5 && end >= sourceDuration - .5) return;
-    if (sourceClass === "external_material" && start > 5) return;
+    // A paid-ad material may contain a usable hook after an opening slate or
+    // another lead-in.  Source lineage is a label/diagnostic, not a reason to
+    // discard an otherwise localized interval.  Boundary review below remains
+    // mandatory, so persisting this candidate does not make it renderable.
     if (sourceClass === "narration_opening" && (start >= 60 || end > Math.min(60, sourceDuration || 60) + .5)) return;
     if (created.some((item) => Math.min(end, item.end) - Math.max(start, item.start) >= .8 * Math.min(hookDuration, item.end - item.start))) return;
     const startBoundary = objectValue(hook.safeStart || hook.safe_start || hook.startBoundary);
@@ -249,4 +310,4 @@ function syncMaterialHookAssets(app, material, result, projection) {
   return created.map((item) => item.id);
 }
 
-module.exports = { authorize, authorizeLocalUi, createJob, resultValue, projectMaterialResult, normalizeStage, syncMaterialHookAssets };
+module.exports = { appendRetryLineage, authorize, authorizeLocalUi, createJob, resultValue, projectMaterialResult, normalizeStage, resetMaterialPublishedAnalysis, syncMaterialHookAssets };

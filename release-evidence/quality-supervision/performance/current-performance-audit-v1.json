@@ -1,0 +1,37 @@
+{
+  "auditVersion": "v1",
+  "evidenceSnapshot": "release-evidence/quality-supervision/cases/QS-DRAMA-LYCAN-DW-EP01-10/system-snapshot-v2.json",
+  "caseId": "QS-DRAMA-LYCAN-DW-EP01-10",
+  "verdict": "NO-GO_NOT_AUDITABLE",
+  "observations": {
+    "coarseTasks": 10,
+    "coarseWorkersObserved": 2,
+    "coarseModel": "qwen-vl-max",
+    "coarseBatchCreatedToLastUpdatedSeconds": 686,
+    "coarsePerRecordCreatedToUpdatedSeconds": [164,112,224,321,325,474,487,565,583,686],
+    "detailCreatedToUpdatedSeconds": 2852,
+    "detailModel": "qwen-vl-max",
+    "precisionTasksObserved": 16,
+    "precisionTerminalStatus": "paused",
+    "promptVersionPresent": false,
+    "requestCountPresent": false,
+    "retryCountReliablyPresent": false,
+    "cacheEvidencePresent": false,
+    "tokenEvidencePresent": false,
+    "costEvidencePresent": false,
+    "actualWorkerStartEndPresent": false,
+    "chunkTimingPresent": false
+  },
+  "qualityDegradationRisk": {
+    "currentFlashUsedAsFinal": false,
+    "coarseUsesMaxInsteadOfFlash": true,
+    "riskIfOptimizedWithoutGate": "P0",
+    "reason": "The current run is slow/cost-opaque rather than low-quality because of Flash. Introducing Flash without the final-Max and original-evidence gates would create a direct quality regression."
+  },
+  "minimumClosure": {
+    "goldenHighlights": {"required": 3, "completed": 0},
+    "hooks": {"required": 3, "completed": 0},
+    "matches": {"required": 3, "completed": 0},
+    "transitionFinishedVideo": {"required": 1, "completed": 0}
+  }
+}

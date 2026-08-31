@@ -2,7 +2,12 @@
 
 import { normalizeTags, normalizeTag, type OntologyTag } from "./ontology/normalization";
 
-export type HookSourceClass = "episode_highlight" | "narration_opening" | "external_material";
+export type HookSourceClass =
+  | "episode_highlight"
+  | "narration_opening"
+  | "external_material"
+  | "ai_generated"
+  | "mixed_material";
 export type HookBoundaryStatus = "unverified" | "verified" | "rejected";
 export type HookSourceStatus = "无独立钩子" | "已确认同剧" | "疑似外搭" | "已确认外搭" | "来源未知" | "";
 export type HookAssemblyType = "无前置钩子" | "同剧外搭" | "跨剧外搭" | "外搭来源待确认" | "";
@@ -60,15 +65,19 @@ export type HookAsset = {
   reviewStatus: "pending" | "needs_review" | "approved" | "rejected";
 };
 
-export function isSelectableExternalHook(hook: HookAsset): boolean {
-  return hook.sourceClass === "external_material"
+/**
+ * Production selection is source-agnostic. Source class remains useful for
+ * ranking and diagnostics, but must not exclude an otherwise safe hook.
+ */
+export function isSelectableProductionHook(hook: HookAsset): boolean {
+  return Boolean(hook.materialVideoUrl)
+    && hook.end > hook.start
     && hook.boundaryStatus === "verified"
     && hook.reviewStatus === "approved";
 }
 
 type PBRecord = Record<string, unknown> & { id: string; collectionId: string; expand?: Record<string, Record<string, unknown>> };
-const configuredUrl = typeof process !== "undefined" ? process.env.NEXT_PUBLIC_POCKETBASE_URL : undefined;
-const PB_URL = (configuredUrl || (typeof window !== "undefined" ? "/pb" : "http://127.0.0.1:8090")).replace(/\/$/, "");
+import { POCKETBASE_URL as PB_URL, pocketBaseUiHeaders } from "./pocketbase-url";
 const object = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown, fallback = "") => typeof value === "string" && value.trim() ? value : fallback;
 const number = (value: unknown, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
@@ -76,7 +85,7 @@ const strings = (value: unknown) => Array.isArray(value) ? value.map((item) => t
 const claimText = (value: unknown) => typeof value === "string" ? text(value) : text(object(value).value, text(object(value).label));
 
 async function pbJson(path: string, init?: RequestInit) {
-  const response = await fetch(`${PB_URL}${path}`, { cache: "no-store", ...init });
+  const response = await fetch(`${PB_URL}${path}`, { cache: "no-store", ...init, headers: { ...pocketBaseUiHeaders(), ...(init?.headers || {}) } });
   if (!response.ok) throw new Error(`钩子资产请求失败（HTTP ${response.status}）`);
   return response.json();
 }
@@ -177,9 +186,9 @@ export async function listInspirationHookAssets(signal?: AbortSignal): Promise<H
   return normalizeHookTitles((payload.items ?? []).map(fromRecord).filter(validLocalizedHook));
 }
 
-/** Analysis picker query. Rights are displayed but intentionally do not block analysis. */
-export async function listSelectableExternalHooks(signal?: AbortSignal): Promise<HookAsset[]> {
-  return (await listHookAssets(signal, true)).filter(isSelectableExternalHook);
+/** Analysis picker query across every source class; provenance remains visible. */
+export async function listSelectableProductionHooks(signal?: AbortSignal): Promise<HookAsset[]> {
+  return (await listHookAssets(signal)).filter(isSelectableProductionHook);
 }
 
 export async function getHookAsset(id: string, signal?: AbortSignal): Promise<HookAsset> {

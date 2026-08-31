@@ -123,5 +123,87 @@ test("enforces sequential episode splice as highlight remainder plus 2-3 followi
   assert.match(hookRouteSource, /clips\.length < 3 \|\| clips\.length > 4/);
   assert.match(hookRouteSource, /episode splice timeline must use consecutive episodes/);
   assert.match(hookRouteSource, /sequential splice duration must be between 5 and 15 minutes/);
+  assert.match(hookRouteSource, /first splice segment must start at an approved verified highlight/);
+  assert.match(hookRouteSource, /source_class = 'episode_highlight'.*boundary_status = 'verified'.*review_status = 'approved'/s);
+  assert.match(hookRouteSource, /following splice segments must explicitly use the episode source start/);
+  assert.match(hookRouteSource, /splice segments must explicitly continue to the episode source end/);
+  assert.match(hookRouteSource, /project\.set\("timeline", normalizedClips\)/);
   assert.match(source, /generateStorylinePlans/);
+});
+
+test("factory render claim includes every sequential external-body episode", () => {
+  assert.match(hookRouteSource, /sequentialExternalBody/);
+  assert.match(hookRouteSource, /jsonArray\(project, "timeline"\)/);
+  assert.match(
+    hookRouteSource,
+    /sequentialExternalBody[\s\S]*jsonArray\(project, "timeline"\)[\s\S]*item && item\.episode/,
+  );
+});
+
+test("external production duration is derived from canonical timestamps", () => {
+  const durationBlock = hookRouteSource.slice(
+    hookRouteSource.indexOf("const timelineDurationSeconds"),
+    hookRouteSource.indexOf("const transitionInput"),
+  );
+  assert.match(durationBlock, /end - start/);
+  assert.doesNotMatch(durationBlock, /durationSeconds|duration_seconds|explicit/);
+});
+
+test("every interactive factory claim honors an explicit job id", () => {
+  for (const endpoint of [
+    "/api/lumina/entry-precision/claim",
+    "/api/lumina/supplemental-highlights/claim",
+    "/api/lumina/factory-render/claim",
+  ]) {
+    const start = hookRouteSource.indexOf(endpoint);
+    const nextRoute = hookRouteSource.indexOf("routerAdd(", start + endpoint.length);
+    const block = hookRouteSource.slice(start, nextRoute < 0 ? undefined : nextRoute);
+    assert.match(block, /requestedJobId = String\(body\.job_id \|\| ""\)/);
+    assert.match(block, /!requestedJobId \|\| (?:candidate|item)\.id === requestedJobId/);
+  }
+});
+
+test("hook matching eligibility is source-agnostic but keeps material safety gates", () => {
+  const recommendationStart = hookRouteSource.indexOf('/api/lumina/story-hook-recommendations');
+  const recommendationEnd = hookRouteSource.indexOf('routerAdd(', recommendationStart + 1);
+  const recommendationBlock = hookRouteSource.slice(recommendationStart, recommendationEnd);
+  assert.match(recommendationBlock, /boundary_status = 'verified' && review_status = 'approved' && material != ''/);
+  assert.doesNotMatch(recommendationBlock, /source_class = 'external_material'/);
+
+  const jobStart = hookRouteSource.indexOf('/api/lumina/hook-matching/jobs');
+  const jobEnd = hookRouteSource.indexOf('routerAdd(', jobStart + 1);
+  const jobBlock = hookRouteSource.slice(jobStart, jobEnd);
+  assert.match(jobBlock, /hook must belong to the material library/);
+  assert.match(jobBlock, /hook source media is not playable/);
+  assert.match(jobBlock, /hook must be approved before matching/);
+  assert.doesNotMatch(jobBlock, /source_class.*external_material/);
+
+  const projectStart = hookRouteSource.indexOf('/api/lumina/factory/projects');
+  const projectEnd = hookRouteSource.indexOf('routerAdd(', projectStart + 1);
+  const projectBlock = hookRouteSource.slice(projectStart, projectEnd);
+  assert.match(projectBlock, /approved verified hook from the material library/);
+  assert.match(projectBlock, /HOOK_SOURCE[\s\S]*sourceClass/);
+  assert.doesNotMatch(projectBlock, /HOOK_SOURCE[\s\S]{0,180}source_class.*external_material/);
+});
+
+test("external-hook production records the initial semantic thresholds and severe mismatch veto", () => {
+  const projectStart = hookRouteSource.indexOf('/api/lumina/factory/projects');
+  const projectEnd = hookRouteSource.indexOf('routerAdd(', projectStart + 1);
+  const block = hookRouteSource.slice(projectStart, projectEnd);
+  assert.match(block, /story_score"\) < 80/);
+  assert.match(block, /promise_fulfillment_score"\) < 75/);
+  assert.match(block, /HOOK_RETENTION[\s\S]*threshold: 80/);
+  assert.match(block, /CONNECTIVITY[\s\S]*threshold: 70/);
+  assert.match(block, /SEVERE_MISMATCH_VETO[\s\S]*severity: "hard"/);
+  assert.match(block, /HOOK_RIGHTS[\s\S]*severity: "hard"/);
+});
+
+test("factory transitions are formal production objects with an independent approval gate", () => {
+  assert.match(hookRouteSource, /transition\.type must be direct_cut, transition_copy or continuous_narration/);
+  assert.match(hookRouteSource, /projects\/\{id\}\/transition-review/);
+  assert.match(hookRouteSource, /transition review must be approved before rendering, including direct_cut/);
+  assert.match(hookRouteSource, /reviewStatus: "pending"/);
+  assert.match(hookRouteSource, /projects\/\{id\}\/transition-preview/);
+  assert.match(hookRouteSource, /transition approval must bind the latest preview hash and production version/);
+  assert.match(hookRouteSource, /purpose: "transition_review"/);
 });

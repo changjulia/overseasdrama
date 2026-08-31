@@ -95,12 +95,17 @@ test("keeps the documented frontend modules integrated", async () => {
   assert.match(creations, /我的草稿/);
   assert.match(operations, /字段与接口可用性/);
   assert.match(operations, /角色权限矩阵/);
+  assert.match(operations, /真实 current_stage/);
+  assert.match(operations, /失败原因：/);
+  assert.match(operations, /retryPocketBaseAnalysisTask/);
+  assert.doesNotMatch(operations, /Math\.ceil\(selectedTask\.progress \/ 18\)/);
 });
 
 test("keeps the external-hook production workflow explicit and evidence-backed", async () => {
-  const [factory, analysis] = await Promise.all([
+  const [factory, analysis, hookStore] = await Promise.all([
     readFile(new URL("../app/features/factory/FactoryWorkspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/features/factory/components/ExternalHookAnalysis.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/hook-asset-store.ts", import.meta.url), "utf8"),
   ]);
 
   for (const step of ["选择剧集", "生成并选择正片故事线", "按故事走向匹配外搭钩子", "设计过渡", "成片时间线", "质检", "预览和审核", "保存和导出"]) {
@@ -109,6 +114,12 @@ test("keeps the external-hook production workflow explicit and evidence-backed",
   assert.match(factory, /productionGate/);
   assert.match(factory, /真实数据驱动/);
   assert.match(factory, /高匹配分与结构证据不一致/);
+  assert.match(factory, /来源仅用于排序和诊断，不作为匹配硬门禁/);
+  assert.match(factory, /媒体可用、边界已验证、审核已通过/);
+  assert.doesNotMatch(factory, /hookSourceClass !== "external_material"/);
+  assert.match(hookStore, /listSelectableProductionHooks/);
+  assert.match(hookStore, /Boolean\(hook\.materialVideoUrl\)[\s\S]*hook\.boundaryStatus === "verified"[\s\S]*hook\.reviewStatus === "approved"/);
+  assert.doesNotMatch(hookStore, /listHookAssets\(signal, true\)\.filter/);
   assert.match(analysis, /slice\(0, 3\)/);
   assert.match(analysis, /为什么从这里起播/);
   assert.match(analysis, /只处理必要连接，不生成多套相似过渡文案/);
@@ -123,4 +134,47 @@ test("keeps the real-video preview switchable by connected episode", async () =>
   assert.match(factory, /onChange=\{\(event\) =>[\s\S]*?setPreviewEpisode\(Number\(event\.target\.value\)\)/);
   assert.match(factory, /connectedEpisodes\.map\(\(episode\) => \([\s\S]*?<button[\s\S]*?onClick=\{\(\) => setPreviewEpisode\(episode\)\}/);
   assert.match(factory, /<video[\s\S]*?key=\{previewMedia\.url\}[\s\S]*?src=\{previewMedia\.url\}[\s\S]*?controls[\s\S]*?preload="metadata"/);
+});
+
+test("keeps render delivery behind a real preview and explicit human review", async () => {
+  const [factory, delivery, store] = await Promise.all([
+    readFile(new URL("../app/features/factory/FactoryWorkspace.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/features/factory/components/ExternalHookDelivery.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/factory-production-store.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(delivery, /reviewStatus === "approved"/);
+  assert.match(delivery, /submitReview\("rejected"\)/);
+  assert.match(delivery, /submitReview\("approved"\)/);
+  assert.match(delivery, /请先完成人工审核并通过后再导出/);
+  assert.match(delivery, /const saved = await onSaveDraft\?\.\(\)/);
+  assert.match(factory, /onSaveDraft=\{\(\) => save\(false\)\}/);
+  assert.doesNotMatch(factory, /onSaveDraft=\{\(\) => \{[\s\S]{0,120}persistExternalProject/);
+  assert.match(factory, /setFactoryRenderPollAttempt\(\(attempt\) => attempt \+ 1\)/);
+  assert.match(factory, /setBatchRenderPollAttempt\(\(attempt\) => attempt \+ 1\)/);
+  assert.match(store, /ratio==="16:9"\?"1920x1080":ratio==="1:1"\?"1080x1080":"1080x1920"/);
+  assert.match(factory, /startFactoryRender\(project\.id, ratio\)/);
+});
+
+test("requires an approved production transition before final rendering", async () => {
+  const factory = await readFile("app/features/factory/FactoryWorkspace.tsx", "utf8");
+  const analysis = await readFile("app/features/factory/components/ExternalHookAnalysis.tsx", "utf8");
+  const types = await readFile("app/features/factory/types.ts", "utf8");
+  const store = await readFile("app/lib/factory-production-store.ts", "utf8");
+  assert.match(types, /type TransitionProductionObject[\s\S]*gapDiagnosis[\s\S]*reviewStatus[\s\S]*reviewPreviewUrl/);
+  assert.match(factory, /transitionProduction\.reviewStatus !== "approved"[\s\S]*不能进入最终渲染/);
+  assert.match(factory, /\.\.\.transitionProduction,[\s\S]*candidate: selectedTransition/);
+  assert.match(analysis, /A · 转场＋转场词/);
+  assert.match(analysis, /B · 开头连续解说/);
+  assert.match(analysis, /直接拼接（仍需审核）/);
+  assert.match(analysis, /审核片：钩子末 10 秒 ＋ 过渡 ＋ 正片前 20 秒/);
+  assert.match(analysis, /transitionProduction\.reviewPreviewUrl\?<video/);
+  assert.match(analysis, /后端尚未返回真实渲染 URL，不能播放占位预览，也不能批准/);
+  assert.match(analysis, /transitionProduction\?\.reviewStatus!=="approved"/);
+  assert.match(store, /projects\/\$\{encodeURIComponent\(projectId\)\}\/transition-preview/);
+  assert.match(store, /projects\/\$\{encodeURIComponent\(projectId\)\}\/transition-review/);
+  assert.match(store, /preview_version:previewVersion,preview_hash:previewHash/);
+  assert.match(factory, /getTransitionPreview\(factoryProjectId, controller\.signal\)/);
+  assert.match(factory, /reviewTransitionPreview\(factoryProjectId, decision, note, transitionProduction\.reviewPreviewVersion, transitionProduction\.reviewPreviewHash\)/);
+  assert.match(analysis, /!transitionProduction\.reviewPreviewVersion \|\| !transitionProduction\.reviewPreviewHash/);
 });

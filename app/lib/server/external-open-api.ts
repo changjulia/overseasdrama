@@ -1,4 +1,3 @@
-const DEFAULT_BASE_URL = "http://121.41.8.142:3000/api/open/v1";
 const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
 const RETRY_DELAYS_MS = [2000, 4000, 8000];
 
@@ -92,9 +91,35 @@ function configuration() {
       crypto.randomUUID(),
     );
   }
+  const configuredBaseUrl = process.env.EXTERNAL_OPEN_API_BASE_URL?.trim();
+  if (!configuredBaseUrl) {
+    throw new ExternalApiError(
+      "服务端未配置 EXTERNAL_OPEN_API_BASE_URL",
+      503,
+      5002,
+      null,
+      crypto.randomUUID(),
+    );
+  }
+  let parsedBaseUrl: URL;
+  try {
+    parsedBaseUrl = new URL(configuredBaseUrl);
+  } catch {
+    throw new ExternalApiError("EXTERNAL_OPEN_API_BASE_URL 无效", 503, 5002, null, crypto.randomUUID());
+  }
+  const trustedLoopback = parsedBaseUrl.protocol === "http:" && ["127.0.0.1", "localhost", "::1"].includes(parsedBaseUrl.hostname);
+  if (parsedBaseUrl.protocol !== "https:" && !trustedLoopback) {
+    throw new ExternalApiError(
+      "外部数据接口必须使用 HTTPS 或本机受信隧道；已拒绝通过明文远程 HTTP 发送 API Key",
+      503,
+      5002,
+      null,
+      crypto.randomUUID(),
+    );
+  }
   return {
     apiKey,
-    baseUrl: (process.env.EXTERNAL_OPEN_API_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/$/, ""),
+    baseUrl: parsedBaseUrl.toString().replace(/\/$/, ""),
   };
 }
 

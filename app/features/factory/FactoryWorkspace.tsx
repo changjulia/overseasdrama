@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatDurationZh } from "../../lib/time-format";
 import { createInitialFactoryWorkflow, factoryModes } from "./mock-data";
-import type { Draft, FactoryMode, FactoryWorkspaceProps } from "./types";
+import type { Draft, FactoryMode, FactoryWorkspaceProps, TransitionProductionObject } from "./types";
 import ExternalHookAnalysis, {
   type ExternalHookTimelineClip,
   type HookEpisodeMatch,
@@ -12,11 +12,12 @@ import ExternalHookAnalysis, {
   type HighlightRecommendation,
 } from "./components/ExternalHookAnalysis";
 import ExternalHookDelivery from "./components/ExternalHookDelivery";
+import type { DeliveryRenderTelemetry, DeliveryRenderValidation } from "./components/ExternalHookDelivery";
 import baseStyles from "./factory.module.css";
 import enhancementStyles from "./factory-enhancements.module.css";
 import { listPocketBaseDramas } from "../../lib/pocketbase-drama-store";
 import {
-  listSelectableExternalHooks,
+  listSelectableProductionHooks,
   type HookAsset,
 } from "../../lib/hook-asset-store";
 import {
@@ -29,6 +30,7 @@ import {
   listTemplateAdaptationPlans,
   listHookStoryMatches,
   requestMoreEntryPoints,
+  retryHookMatchJob,
   setHookMatchSoftOverride,
   startHookStoryMatch,
   type ExternalMatchStrategy,
@@ -45,12 +47,17 @@ import {
   exportFactoryRender,
   getFactoryRender,
   reviewFactoryRender,
+  requestTransitionPreview,
+  getTransitionPreview,
+  reviewTransitionPreview,
   saveEpisodeSpliceProject,
   saveFactoryProject,
   startFactoryRender,
+  retryFactoryRender,
   type FactoryRenderRecord,
 } from "../../lib/factory-production-store";
 import type { FactorySourceContext } from "./types";
+import { deleteNarrationAudio, inspectNarrationAudio, uploadNarrationAudio } from "./narration-audio-upload";
 import {
   compareTagSets,
   normalizeTag,
@@ -58,6 +65,13 @@ import {
 } from "../../lib/ontology";
 
 const styles = { ...baseStyles, ...enhancementStyles };
+const manualRetryDecision = (errorKind: string | undefined, label: string) => {
+  const reason = window.prompt(`请填写重试「${label}」的原因（将记入审计记录）：`, "已确认依赖或素材问题已修复");
+  if (!reason?.trim()) return null;
+  const nonRetryable = ["permanent", "media", "validation"].includes(errorKind ?? "");
+  if (nonRetryable && !window.confirm(`该任务被标记为 ${errorKind}，默认不可重试。\n\n确认已修复根因并使用人工 override 吗？`)) return null;
+  return { reason: reason.trim(), idempotencyKey: globalThis.crypto?.randomUUID?.() ?? `manual-retry-${Date.now()}-${Math.random().toString(36).slice(2)}`, overrideNonRetryable: nonRetryable, overrideReason: nonRetryable ? reason.trim() : undefined };
+};
 type StorylineMatchCacheEntry = {
   hookAssetId: string;
   matches: HookStoryMatch[];
@@ -69,6 +83,19 @@ const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+const optionalText = (value: unknown) => typeof value === "string" && value.trim() ? value : undefined;
+const deliveryRenderEvidence = (render: FactoryRenderRecord | null | undefined): { validation?: DeliveryRenderValidation; telemetry?: DeliveryRenderTelemetry } => {
+  if (!render) return {};
+  const validation = asRecord(render.validation) as DeliveryRenderValidation;
+  const timing = asRecord(validation.timing);
+  const telemetry: DeliveryRenderTelemetry = {
+    queuedAt: render.queuedAt ?? optionalText(timing.queuedAt ?? timing.queued_at ?? validation.queuedAt ?? validation.queued_at),
+    startedAt: render.startedAt ?? optionalText(timing.startedAt ?? timing.started_at ?? validation.startedAt ?? validation.started_at),
+    leaseUntil: render.leaseUntil ?? optionalText(timing.leaseUntil ?? timing.lease_until ?? validation.leaseUntil ?? validation.lease_until),
+    lastHeartbeatAt: render.lastHeartbeatAt ?? optionalText(timing.lastHeartbeatAt ?? timing.last_heartbeat_at ?? validation.lastHeartbeatAt ?? validation.last_heartbeat_at),
+  };
+  return { validation, telemetry };
+};
 // PRODUCTION WORKFLOW: 正片模式从钩子匹配开始；外搭模式使用独立的八步闭环。
 
 const padEpisode = (episode: number) =>
@@ -466,8 +493,29 @@ export function FactoryWorkspace({
     string | undefined
   >(editingDraft?.storyMatchId);
   const [selectedTransitionId, setSelectedTransitionId] = useState(
-    String(editingDraft?.factorySnapshot?.transition?.id || "bridge-narration"),
+    String(asRecord(editingDraft?.factorySnapshot?.transition?.candidate).id || editingDraft?.factorySnapshot?.transition?.id || "bridge-narration"),
   );
+  const [transitionProduction, setTransitionProduction] = useState<TransitionProductionObject>(() => {
+    const transitionSnapshot = editingDraft?.factorySnapshot?.transition;
+    const saved = transitionSnapshot?.production ?? (transitionSnapshot?.gapDiagnosis ? transitionSnapshot : undefined);
+    if (saved && typeof saved === "object") return saved as unknown as TransitionProductionObject;
+    return {
+      type: "transition_copy",
+      gapDiagnosis: ["causal"],
+      start: 0,
+      end: 1,
+      copy: "",
+      script: "",
+      language: editingDraft?.language ?? "English",
+      voice: { mode: "none", speakingRate: 1 },
+      evidence: [],
+      renderConfig: { transitionStyle: "fade", transitionTemplateId: "causal-bridge", subtitleTemplateId: "short-white", subtitleStyle: { fontFamily: "Noto Sans CJK SC", fontSize: 52, primaryColor: "#FFFFFF", outlineColor: "#111111", outlineWidth: 4, shadowDepth: 1, bold: true, alignment: "bottom-center", marginHorizontalPercent: 8, marginVerticalPercent: 12, maxLines: 2 }, subtitleEnabled: true, voiceoverEnabled: false, durationSeconds: 1, originalAudioDuckDb: -8, preserveKeyDialogue: true, safeAreaPreview: true },
+      reviewStatus: "draft",
+      reviewerNote: "",
+      version: 1,
+    };
+  });
+  const [transitionPreviewPollAttempt, setTransitionPreviewPollAttempt] = useState(0);
   const [timeline, setTimeline] = useState<ExternalHookTimelineClip[]>(() =>
     Array.isArray(editingDraft?.factorySnapshot?.timeline)
       ? (editingDraft.factorySnapshot.timeline as ExternalHookTimelineClip[])
@@ -546,12 +594,24 @@ export function FactoryWorkspace({
     Record<string, FactoryRenderRecord>
   >({});
   const [factoryRenderError, setFactoryRenderError] = useState("");
+  const [factoryRenderPollAttempt, setFactoryRenderPollAttempt] = useState(0);
+  const [batchRenderPollAttempt, setBatchRenderPollAttempt] = useState(0);
   const [selectedSpliceHighlightId, setSelectedSpliceHighlightId] = useState<
     string | undefined
   >();
   const [spliceReviewStatus, setSpliceReviewStatus] = useState<
     "pending" | "approved" | "rejected"
   >("pending");
+  const [renderReviewStatuses, setRenderReviewStatuses] = useState<
+    Record<string, "approved" | "rejected">
+  >(() => {
+    const review = editingDraft?.factorySnapshot?.review;
+    const renderId = typeof review?.renderId === "string" ? review.renderId : undefined;
+    const decision = review?.decision;
+    return renderId && (decision === "approved" || decision === "rejected")
+      ? { [renderId]: decision }
+      : {};
+  });
   const [draftId, setDraftId] = useState(
     () => editingDraft?.id ?? `draft-${Date.now()}`,
   );
@@ -1078,16 +1138,13 @@ export function FactoryWorkspace({
         title: "尚未选择外搭钩子",
         detail: "需要从收藏或灵感大屏带入钩子素材。",
       });
-    if (
-      hookSourceInput &&
-      hookSourceInput.hookSourceClass !== "external_material"
-    )
+    if (hookSourceInput)
       findings.push({
-        id: "hook-source",
-        severity: "阻断",
-        category: "货不对板",
-        title: "钩子不是外搭素材片段",
-        detail: "此模式只允许匹配从外搭素材中定位出的具体钩子。",
+        id: "hook-source-diagnostic",
+        severity: "通过",
+        category: "连续性",
+        title: "钩子来源已记录",
+        detail: `来源类型：${hookSourceInput.hookSourceClass ?? "unknown"}。来源仅用于排序和诊断，不作为匹配硬门禁。`,
       });
     if (hookSourceInput && hookSourceInput.hookBoundaryStatus !== "verified")
       findings.push({
@@ -1105,10 +1162,10 @@ export function FactoryWorkspace({
     )
       findings.push({
         id: "hook-rights",
-        severity: "建议",
+        severity: "阻断",
         category: "合规",
         title: "钩子授权状态待确认",
-        detail: "当前版本不把授权状态作为生产硬门，但正式投放前仍建议核对。",
+        detail: "进入生产前必须确认素材权限与付费集范围。",
       });
     if (dramaSource && hookSourceInput && !selectedRecommendation)
       findings.push({
@@ -1191,15 +1248,14 @@ export function FactoryWorkspace({
         suggestion: "保留高刺激短线，同时在预览中重点检查片段间语义跳跃",
       });
     if (
-      selectedTransition.id === "hard-cut" &&
-      hookSourceInput?.hookSourceClass === "external_material"
+      selectedTransition.id === "hard-cut" && hookSourceInput
     )
       findings.push({
         id: "transition-risk",
         severity: "建议",
         category: "连续性",
-        title: "外搭素材使用硬切",
-        detail: "外搭人物与正片人物、场景通常不同，硬切可能造成来源突变。",
+        title: "钩子与正片使用硬切",
+        detail: "人物是否属于原剧不能代替镜头级来源判定；请核对因果、空间和情绪过渡是否可理解。",
         suggestion: "优先比较短淡出淡入版本",
       });
     if (
@@ -1242,10 +1298,9 @@ export function FactoryWorkspace({
         detail:
           "匹配结果包含具体剧集区间、承接证据及双端安全边界；故事完整度单独作为创意建议。",
       });
-    const sourceScore =
-      dramaSource && hookSourceInput?.hookSourceClass === "external_material"
-        ? 20
-        : 0;
+    // Provenance is a diagnostic dimension, never a production eligibility
+    // score. Story continuity and promise fulfillment carry the ranking.
+    const sourceScore = dramaSource && hookSourceInput ? 20 : 0;
     const playableScore = selectedRecommendation?.videoUrl ? 20 : 0;
     const boundaryScore =
       hookSourceInput?.hookBoundaryStatus === "verified" ? 10 : 0;
@@ -1521,7 +1576,8 @@ export function FactoryWorkspace({
         storylineHookPairs,
         storylineMatchCache,
         transition: {
-          ...selectedTransition,
+          ...transitionProduction,
+          candidate: selectedTransition,
           matchStrategy,
           deliveryGoal: goal,
           matchingDimensions,
@@ -1536,15 +1592,15 @@ export function FactoryWorkspace({
   };
 
   const save = async (silent = false) => {
-    if (silent && !dirty) return;
+    if (silent && !dirty) return true;
     if (!source && !hookSourceInput) {
       if (!silent) onNotify?.("请先选择本剧正片或外搭钩子");
-      return;
+      return false;
     }
     if (editingDraft?.isHistorySnapshot && !historyForked && !dirty) {
       onDraftAutoSave?.(buildDraft(factoryProjectId));
       if (!silent) onNotify?.("历史版本未发生修改，已保留原成片与审核记录");
-      return;
+      return true;
     }
     let persistedProjectId = factoryProjectId;
     if (
@@ -1560,7 +1616,7 @@ export function FactoryWorkspace({
           onNotify?.(
             error instanceof Error ? error.message : "生产项目保存失败",
           );
-        return;
+        return false;
       }
     }
     const draft = buildDraft(persistedProjectId);
@@ -1570,6 +1626,7 @@ export function FactoryWorkspace({
     setAutoSaveCountdown(15);
     setDirty(false);
     if (!silent) onNotify?.("制作草稿已保存到「我的创作」");
+    return true;
   };
 
   const persistExternalProject = async () => {
@@ -1609,7 +1666,8 @@ export function FactoryWorkspace({
       selectedEpisodes: episodes,
       topics: hookSourceInput.themes ?? [],
       transition: {
-        ...selectedTransition,
+        ...transitionProduction,
+        candidate: selectedTransition,
         matchStrategy,
         deliveryGoal: goal,
         matchingDimensions,
@@ -1653,14 +1711,27 @@ export function FactoryWorkspace({
   };
 
   const requestExternalRender = async () => {
+    if (transitionProduction.reviewStatus !== "approved")
+      throw new Error("过渡制作对象尚未通过人工审核，不能进入最终渲染");
     setFactoryRenderError("");
+    if (factoryRender?.status === "failed") {
+      const decision = manualRetryDecision(factoryRender.errorKind, `渲染 v${factoryRender.version}`);
+      if (!decision) throw new Error("已取消人工重试");
+      const render = await retryFactoryRender(factoryRender, decision);
+      setFactoryRender(render);
+      setRenderReviewStatuses((current) => ({ ...current, [render.id]: "pending" }));
+      onNotify?.(`已从失败任务 ${render.retryOf} 创建新渲染版本 v${render.version}，旧审批不会复用`);
+      return;
+    }
     onNotify?.("正在保存项目并创建预览任务…");
     const project = await persistExternalProject();
-    const render = await startFactoryRender(project.id);
+    const render = await startFactoryRender(project.id, ratio);
     setFactoryRender(render);
   };
 
   const requestStorylineBatchRenders = async () => {
+    if (transitionProduction.reviewStatus !== "approved")
+      throw new Error("过渡制作对象尚未通过人工审核，不能批量渲染");
     if (!dramaSource?.id || !selectedStorylinePlans.length)
       throw new Error("请先选择需要生成的故事线版本");
     setFactoryRenderError("");
@@ -1725,7 +1796,8 @@ export function FactoryWorkspace({
         selectedEpisodes: [...new Set(plan.segments.map((item) => item.episode))],
         topics: pair.themes ?? [],
         transition: {
-          ...selectedTransition,
+          ...transitionProduction,
+          candidate: selectedTransition,
           matchStrategy: "story_to_hook",
           storylineId: plan.id,
           storylineTitle: plan.title,
@@ -1738,7 +1810,7 @@ export function FactoryWorkspace({
         language,
         paidScopeConfirmed,
       });
-      created[plan.id] = await startFactoryRender(project.id);
+      created[plan.id] = await startFactoryRender(project.id, ratio);
     }
     if (!Object.keys(created).length)
       throw new Error("已选故事线尚无完成的匹配结果，暂时无法生成预览");
@@ -1781,8 +1853,17 @@ export function FactoryWorkspace({
 
   const requestEpisodeSpliceRender = async () => {
     setFactoryRenderError("");
+    setSpliceReviewStatus("pending");
+    if (factoryRender?.status === "failed") {
+      const decision = manualRetryDecision(factoryRender.errorKind, `正片渲染 v${factoryRender.version}`);
+      if (!decision) throw new Error("已取消人工重试");
+      const render = await retryFactoryRender(factoryRender, decision);
+      setFactoryRender(render);
+      onNotify?.(`已新建 v${render.version}，retry_of ${render.retryOf}；旧审批已隔离`);
+      return;
+    }
     const project = await persistEpisodeSpliceProject();
-    const render = await startFactoryRender(project.id);
+    const render = await startFactoryRender(project.id, ratio);
     setFactoryRender(render);
   };
 
@@ -1883,13 +1964,47 @@ export function FactoryWorkspace({
         .catch((error) => {
           if (controller.signal.aborted) return;
           setFactoryRenderError(error instanceof Error ? `任务状态更新失败：${error.message}` : "任务状态更新失败，请检查服务连接");
+          setFactoryRenderPollAttempt((attempt) => attempt + 1);
         });
     }, 1500);
     return () => {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [factoryRender?.id, factoryRender?.status, factoryRender?.progress, onNotify]);
+  }, [factoryRender?.id, factoryRender?.status, factoryRender?.progress, factoryRenderPollAttempt, onNotify]);
+  useEffect(() => {
+    if (!factoryProjectId || !["queued", "rendering"].includes(transitionProduction.reviewRenderStatus ?? "")) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void getTransitionPreview(factoryProjectId, controller.signal)
+        .then((preview) => {
+          if (preview.transitionVersion && preview.transitionVersion !== transitionProduction.version) {
+            setTransitionProduction((current) => ({ ...current, reviewRenderStatus: "failed", reviewRenderError: "审核片对应的过渡版本已过期，请重新生成", reviewPreviewUrl: undefined, reviewPreviewHash: undefined, reviewPreviewVersion: undefined, reviewPreviewTransitionVersion: undefined }));
+            return;
+          }
+          setTransitionProduction((current) => ({
+            ...current,
+            reviewRenderStatus: preview.status,
+            reviewRenderId: preview.renderId,
+            reviewRenderError: preview.error ?? "",
+            reviewPreviewUrl: preview.status === "succeeded" ? preview.previewUrl : undefined,
+            reviewPreviewVersion: preview.status === "succeeded" ? preview.previewVersion : undefined,
+            reviewPreviewHash: preview.status === "succeeded" ? preview.previewHash : undefined,
+            reviewPreviewTransitionVersion: preview.status === "succeeded" ? preview.transitionVersion : undefined,
+            reviewStatus: preview.status === "succeeded" ? "pending" : current.reviewStatus,
+          }));
+          if (preview.status === "succeeded") onNotify?.("真实过渡审核片已生成，等待人工审核");
+          if (preview.status === "queued" || preview.status === "rendering")
+            setTransitionPreviewPollAttempt((value) => value + 1);
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) return;
+          setTransitionProduction((current) => ({ ...current, reviewRenderError: error instanceof Error ? error.message : "审核片状态刷新失败" }));
+          setTransitionPreviewPollAttempt((value) => value + 1);
+        });
+    }, 1500);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [factoryProjectId, transitionProduction.reviewRenderStatus, transitionProduction.version, transitionPreviewPollAttempt, onNotify]);
   useEffect(() => {
     const pending = Object.entries(factoryRendersByStoryline).filter(
       ([, render]) => render.status === "queued" || render.status === "rendering",
@@ -1904,6 +2019,7 @@ export function FactoryWorkspace({
         ] as const),
       ).then((updates) => {
         if (controller.signal.aborted) return;
+        setFactoryRenderError("");
         setFactoryRendersByStoryline((current) => ({
           ...current,
           ...Object.fromEntries(updates),
@@ -1912,13 +2028,17 @@ export function FactoryWorkspace({
           ([planId]) => planId === activeStorylineId,
         );
         if (activeUpdate) setFactoryRender(activeUpdate[1]);
-      }).catch(() => {});
+      }).catch((error) => {
+        if (controller.signal.aborted) return;
+        setFactoryRenderError(error instanceof Error ? `批量任务状态更新失败：${error.message}` : "批量任务状态更新失败，将自动重试");
+        setBatchRenderPollAttempt((attempt) => attempt + 1);
+      });
     }, 1500);
     return () => {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [activeStorylineId, factoryRendersByStoryline]);
+  }, [activeStorylineId, factoryRendersByStoryline, batchRenderPollAttempt]);
   useEffect(() => {
     if (
       mode !== "external-hook" ||
@@ -2098,7 +2218,7 @@ export function FactoryWorkspace({
     setBulkHookMatching(true);
     setPickerError("");
     try {
-      const assets = await listSelectableExternalHooks();
+      const assets = await listSelectableProductionHooks();
       const assetsById = new Map(assets.map((item) => [item.id, item]));
       const used = new Set<string>();
       const pairs: Record<string, FactorySourceContext> = {};
@@ -2215,7 +2335,7 @@ export function FactoryWorkspace({
             ),
           )
         : (async () => {
-            const items = await listSelectableExternalHooks(controller.signal);
+            const items = await listSelectableProductionHooks(controller.signal);
             let recommendations: StrategyHookRecommendation[] = [];
             if (
               dramaSource?.id &&
@@ -2839,6 +2959,10 @@ export function FactoryWorkspace({
           initialReviewStatus={spliceReviewStatus}
           initialProgress={factoryRender?.progress ?? 0}
           initialRenderError={factoryRenderError || factoryRender?.error || ""}
+          renderTaskId={factoryRender?.id}
+          retryOfTaskId={factoryRender?.retryOf}
+          renderValidation={deliveryRenderEvidence(factoryRender).validation}
+          renderTelemetry={deliveryRenderEvidence(factoryRender).telemetry}
           initialRenderStatus={factoryRender?.status === "succeeded" ? "ready" : factoryRender?.status === "failed" ? "failed" : factoryRender?.status === "rendering" ? "rendering" : factoryRender?.status === "queued" ? "queued" : "idle"}
           onRequestRender={requestEpisodeSpliceRender}
           onReview={async (decision, note) => {
@@ -3751,6 +3875,7 @@ export function FactoryWorkspace({
                 externalReady && selectedRecommendation ? transitionOptions : []
               }
               selectedTransitionId={selectedTransitionId}
+              transitionProduction={transitionProduction}
               timeline={visibleTimeline}
               quality={qualityReport}
               disabled={!externalReady}
@@ -3762,6 +3887,7 @@ export function FactoryWorkspace({
               onSelectRecommendation={(item) => {
                 setSelectedRecommendationId(item.id);
                 setTimeline([]);
+                setTransitionProduction((current) => ({ ...current, reviewStatus: "draft", reviewerNote: "", reviewPreviewUrl: undefined, version: current.version + 1 }));
                 touch();
               }}
               onOverrideRecommendation={(item) => {
@@ -3815,12 +3941,12 @@ export function FactoryWorkspace({
                   );
               }}
               onRetryMatch={() => {
-                setMatchJob(null);
-                setStoryMatches([]);
-                setMatchError("");
-                setMatchRetryToken((value) => value + 1);
-                setMatchRequestToken((value) => value + 1);
-                onNotify?.("正在补充高光分析并重新匹配");
+                if (!matchJob || matchJob.status !== "failed" || !matchJob.updated) { onNotify?.("请先刷新失败任务状态后再重试"); return; }
+                const decision = manualRetryDecision(matchJob.errorKind, "故事线匹配");
+                if (!decision) return;
+                void retryHookMatchJob(matchJob.id, { ...decision, expectedStatus: matchJob.status, expectedUpdated: matchJob.updated })
+                  .then((job) => { setStoryMatches([]); setMatchError(""); setMatchJob(job); onNotify?.("匹配任务已通过审计接口重新入队"); })
+                  .catch((error) => onNotify?.(error instanceof Error ? error.message : "匹配重试失败"));
               }}
               onChangeEpisodeScope={() => {
                 setMatchRequestToken(0);
@@ -3832,6 +3958,17 @@ export function FactoryWorkspace({
               }}
               onSelectTransition={(item) => {
                 setSelectedTransitionId(item.id);
+                setTransitionProduction((current) => ({
+                  ...current,
+                  reviewStatus: "draft",
+                  reviewerNote: "",
+                  version: current.version + 1,
+                  reviewPreviewUrl: undefined,
+                  reviewPreviewVersion: undefined,
+                  reviewPreviewHash: undefined,
+                  reviewPreviewTransitionVersion: undefined,
+                  reviewRenderStatus: "idle",
+                }));
                 setTimeline((current) =>
                   (current.length ? current : defaultTimeline).map((clip) =>
                     clip.kind === "transition"
@@ -3848,9 +3985,63 @@ export function FactoryWorkspace({
               onPreviewTransition={(item) =>
                 onNotify?.(`已选择预览方案：${item.title}`)
               }
-              onRegenerateTransitions={() =>
-                onNotify?.("已保存重新生成请求；等待过渡服务接入")
-              }
+              onUpdateTransitionProduction={(patch) => {
+                setTransitionProduction((current) => ({
+                  ...current,
+                  ...patch,
+                  voice: patch.voice ?? current.voice,
+                  renderConfig: patch.renderConfig ?? current.renderConfig,
+                  reviewStatus: "draft",
+                  reviewerNote: "",
+                  reviewPreviewUrl: undefined,
+                  reviewPreviewVersion: undefined,
+                  reviewPreviewHash: undefined,
+                  reviewPreviewTransitionVersion: undefined,
+                  reviewRenderStatus: "idle",
+                  version: current.version + 1,
+                }));
+                touch();
+              }}
+              onUploadNarrationAudio={async (file, onProgress, signal, replaceAssetId) => {
+                const inspected = await inspectNarrationAudio(file);
+                const projectId = factoryProjectId ?? (await persistExternalProject()).id;
+                const asset = await uploadNarrationAudio(projectId, file, inspected, onProgress, signal, replaceAssetId);
+                onNotify?.(`人工音轨已受控上传：${asset.fileName}`);
+                return asset;
+              }}
+              onDeleteNarrationAudio={async (assetId) => {
+                if (!factoryProjectId) throw new Error("项目尚未持久化，无法移除音轨");
+                const result = await deleteNarrationAudio(factoryProjectId, assetId);
+                onNotify?.(result.recoverable ? "音轨已停用；旧审核片与批准已失效，管理员仍可恢复原文件" : "音轨已移除；旧审核片与批准已失效");
+              }}
+              onReviewTransition={async (decision, note) => {
+                if (!factoryProjectId || !transitionProduction.reviewPreviewUrl || !transitionProduction.reviewPreviewVersion || !transitionProduction.reviewPreviewHash || transitionProduction.reviewPreviewTransitionVersion !== transitionProduction.version)
+                  throw new Error("缺少服务端真实审核片的版本或哈希，不能提交审核");
+                await reviewTransitionPreview(factoryProjectId, decision, note, transitionProduction.reviewPreviewVersion, transitionProduction.reviewPreviewHash);
+                setTransitionProduction((current) => ({ ...current, reviewStatus: decision, reviewerNote: note }));
+                setDirty(true);
+                onNotify?.(decision === "approved" ? "过渡审核已由服务端持久化，可进入最终渲染" : "过渡驳回已由服务端持久化");
+              }}
+              onRegenerateTransitions={async () => {
+                if (transitionProduction.reviewRenderStatus === "failed" && transitionProduction.reviewRenderId) {
+                  const failed = await getFactoryRender(transitionProduction.reviewRenderId);
+                  const decision = manualRetryDecision(failed.errorKind, `过渡审核片 v${failed.version}`);
+                  if (!decision) return;
+                  const retried = await retryFactoryRender(failed, decision);
+                  setTransitionProduction((current) => ({ ...current, reviewStatus: "pending", reviewerNote: "", reviewPreviewUrl: undefined, reviewPreviewHash: undefined, reviewPreviewTransitionVersion: undefined, reviewPreviewVersion: retried.version, reviewRenderId: retried.id, reviewRenderStatus: "queued", reviewRenderError: "" }));
+                  setTransitionPreviewPollAttempt((value) => value + 1);
+                  setDirty(true);
+                  onNotify?.(`已从失败审核片 ${retried.retryOf} 创建新版本 v${retried.version}，旧批准不复用`);
+                  return;
+                }
+                setTransitionProduction((current) => ({ ...current, reviewStatus: "pending", reviewerNote: "", reviewPreviewUrl: undefined, reviewPreviewVersion: undefined, reviewPreviewHash: undefined, reviewPreviewTransitionVersion: undefined, reviewRenderStatus: "queued", reviewRenderError: "" }));
+                const project = await persistExternalProject();
+                const preview = await requestTransitionPreview(project.id);
+                setTransitionProduction((current) => ({ ...current, reviewRenderStatus: preview.status, reviewRenderId: preview.renderId, reviewPreviewVersion: preview.previewVersion, reviewStatus: "pending" }));
+                setTransitionPreviewPollAttempt((value) => value + 1);
+                setDirty(true);
+                onNotify?.("已创建真实过渡审核片任务，正在等待渲染")
+              }}
               onMoveClip={moveTimelineClip}
               onUpdateClip={(id, patch) => {
                 setTimeline((current) =>
@@ -3871,7 +4062,7 @@ export function FactoryWorkspace({
               onRunQualityCheck={() => {
                 setQualityConfirmed(true);
                 onNotify?.(
-                  `质检完成：${qualityReport.findings.length} 项检查，结论为「${qualityReport.verdict}」`,
+                  `内容规则检查已记录：${qualityReport.findings.length} 项，结论为「${qualityReport.verdict}」；这不代表真实成片媒体 QC 已通过`,
                 );
               }}
               onApplyQualitySuggestion={() => onNotify?.("已记录优化建议")}
@@ -3907,6 +4098,10 @@ export function FactoryWorkspace({
               renderConnected={true}
               initialProgress={factoryRender?.progress ?? 0}
               initialRenderError={factoryRenderError || factoryRender?.error || ""}
+              renderTaskId={factoryRender?.id}
+              retryOfTaskId={factoryRender?.retryOf}
+              renderValidation={deliveryRenderEvidence(factoryRender).validation}
+              renderTelemetry={deliveryRenderEvidence(factoryRender).telemetry}
               initialRenderStatus={factoryRender?.status === "succeeded" ? "ready" : factoryRender?.status === "failed" ? "failed" : factoryRender?.status === "rendering" ? "rendering" : factoryRender?.status === "queued" ? "queued" : "idle"}
               renderCount={
                 matchStrategy === "story_to_hook"
@@ -3916,14 +4111,19 @@ export function FactoryWorkspace({
               exportableVersionCount={
                 matchStrategy === "story_to_hook"
                   ? Object.values(factoryRendersByStoryline).filter(
-                      (item) => item.status === "succeeded" && item.outputUrl,
+                      (item) =>
+                        item.status === "succeeded" &&
+                        item.outputUrl &&
+                        renderReviewStatuses[item.id] === "approved",
                     ).length
                   : factoryRender?.outputUrl
                     ? 1
                     : 0
               }
               initialReviewStatus={
-                !historyForked &&
+                factoryRender?.id && renderReviewStatuses[factoryRender.id]
+                  ? renderReviewStatuses[factoryRender.id]
+                  : !historyForked &&
                 editingDraft?.factorySnapshot?.review?.decision === "approved"
                   ? "approved"
                   : !historyForked &&
@@ -3949,7 +4149,11 @@ export function FactoryWorkspace({
                           ? `渲染 V${render.version}`
                           : "等待批量生成",
                         status: render?.outputUrl
-                          ? "approved" as const
+                          ? renderReviewStatuses[render.id] === "approved"
+                            ? "approved" as const
+                            : renderReviewStatuses[render.id] === "rejected"
+                              ? "rejected" as const
+                              : "reviewing" as const
                           : render?.status === "failed"
                             ? "rejected" as const
                             : render
@@ -3986,16 +4190,7 @@ export function FactoryWorkspace({
                 !externalReady ||
                 (containsPaidEpisodes && !paidScopeConfirmed)
               }
-              onSaveDraft={() => {
-                save(false);
-                void persistExternalProject()
-                  .then(() => onNotify?.("生产项目已持久保存"))
-                  .catch((error) =>
-                    onNotify?.(
-                      error instanceof Error ? error.message : "项目保存失败",
-                    ),
-                  );
-              }}
+              onSaveDraft={() => save(false)}
               onRequestRender={
                 matchStrategy === "story_to_hook"
                   ? requestStorylineBatchRenders
@@ -4010,14 +4205,21 @@ export function FactoryWorkspace({
                   decision,
                   note,
                 );
+                setRenderReviewStatuses((current) => ({
+                  ...current,
+                  [factoryRender.id]: decision,
+                }));
               }}
               onExport={async (config) => {
                 if (matchStrategy === "story_to_hook") {
                   const completed = Object.entries(factoryRendersByStoryline).filter(
-                    ([, render]) => render.status === "succeeded" && render.outputUrl,
+                    ([, render]) =>
+                      render.status === "succeeded" &&
+                      render.outputUrl &&
+                      renderReviewStatuses[render.id] === "approved",
                   );
                   if (!completed.length) {
-                    onNotify?.("请先批量生成至少一个真实成片版本");
+                    onNotify?.("请先对至少一个真实成片版本完成人工审核");
                     return;
                   }
                   for (const [planId, render] of completed) {
@@ -4222,7 +4424,7 @@ export function FactoryWorkspace({
                       ? `当前仅为「${activeStorylinePlan?.title ?? "所选故事线"}」进行一对一钩子召回，不会把多个故事强行合并。`
                 : matchStrategy === "template_reuse"
                   ? "模板携带历史表现证据、钩子结构、连接逻辑与版本快照；证据等级和缺口会如实展示，但不阻止人工选择。"
-                        : "这里只展示从外搭素材中定位出的片段级钩子，不再把整条素材作为匹配对象。"}
+                        : "这里展示已入库且媒体可用、边界已验证、审核已通过的片段级钩子；来源类型只作标签与诊断。"}
                 </p>
               </div>
               <button
@@ -4351,7 +4553,7 @@ export function FactoryWorkspace({
                         ? "剧库正片"
                         : matchStrategy === "template_reuse"
                           ? `历史模板 · ${option.templateEvidenceLevel ?? "unknown"}`
-                          : "外搭钩子资产"}
+                          : `钩子资产 · ${option.hookSourceClass ?? "来源未知"}`}
                       {sourcePicker === "hook" &&
                       option.hookMatchScore !== undefined
                         ? ` · 适配 ${option.hookMatchScore}%`

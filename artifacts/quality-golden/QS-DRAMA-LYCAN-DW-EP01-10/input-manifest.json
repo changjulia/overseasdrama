@@ -1,0 +1,83 @@
+{
+  "caseId": "QS-DRAMA-LYCAN-DW-EP01-10",
+  "drama": {
+    "id": "s2mhnmm4t9q9yud",
+    "title": "The Rise of the Lycan Queen",
+    "source": "dramawave"
+  },
+  "status": "inputs_locked_pre_golden",
+  "blindnessRule": "No analysis_jobs, episode analysis_result, implementation prompt, existing system answer or prior episode golden may be read before freeze.",
+  "episodes": [
+    {
+      "episode": 1,
+      "id": "ed6gkt0rs143m9i",
+      "path": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/ed6gkt0rs143m9i/ep001_l3c0uq7oty.mp4",
+      "sha256": "388276dacbc5c600df5597f2b08f820e1bc5319f5c17979b199ad9919c18268e",
+      "durationSeconds": 182.95
+    },
+    {
+      "episode": 2,
+      "id": "umuu90pueb51pcd",
+      "path": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/umuu90pueb51pcd/ep002_jsawtaxblt.mp4",
+      "sha256": "c26e8d94ab9e02f371a8028fd1a598f44013aaa8f479fd681cf65e76fb82fbf1",
+      "durationSeconds": 115.749
+    },
+    {
+      "episode": 3,
+      "id": "d1ioorgaznqg6a4",
+      "path": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/d1ioorgaznqg6a4/ep003_kpjbcfsc8m.mp4",
+      "sha256": "aeee2cd6dde6e0304d8142a13d7601b556a3efbfe8babdf6d65c4896a6e8701c",
+      "durationSeconds": 137.117
+    },
+    {
+      "episode": 4,
+      "id": "qwu7arhqdy76fut",
+      "path": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/qwu7arhqdy76fut/ep004_9cuqmt85eg.mp4",
+      "sha256": "a683338e9ad7533ffe7e7e75fc697e1e65d2ca5556a7fe8d4d7ec0849bde577f",
+      "durationSeconds": 205.075
+    },
+    {
+      "episode": 5,
+      "id": "d4hl19mhjzv393s",
+      "path": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/d4hl19mhjzv393s/ep005_d218wasmj6.mp4",
+      "sha256": "f5d2345d277887609b925b47b31c81d465f8fbd0a5ef6282d232b95d322480b6",
+      "durationSeconds": 84.575
+    },
+    {
+      "episode": 6,
+      "id": "wnvskzk29x5eurx",
+      "path": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/wnvskzk29x5eurx/ep006_ammnatkeak.mp4",
+      "sha256": "2a008160dab51f5ccf96e17047565ca435e4d796502f0de8f0d5b0b1c2153e4c",
+      "durationSeconds": 91.617
+    },
+    {
+      "episode": 7,
+      "id": "4omljqhgogzyr82",
+      "path": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/4omljqhgogzyr82/ep007_4xcyofmz51.mp4",
+      "sha256": "dc13b308381cf72d4018b248b0e54f0d61aa578625372627a9b7f088b14c4977",
+      "durationSeconds": 138.95
+    },
+    {
+      "episode": 8,
+      "id": "ws2h0xo3vz0ant9",
+      "path": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/ws2h0xo3vz0ant9/ep008_9j8suol2fv.mp4",
+      "sha256": "e80ebc52cef24460d3e92b0c2d2b656787a3918969d5a25ee058ae5d49937cde",
+      "durationSeconds": 80.784
+    },
+    {
+      "episode": 9,
+      "id": "k92mgyb9cbd625b",
+      "path": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/k92mgyb9cbd625b/ep009_3zmfcsldm9.mp4",
+      "sha256": "1c6463a7800430316e6a2a2cd67b3d903ffbaebcaf99cc1ada3a06bd74e4826a",
+      "durationSeconds": 92.534
+    },
+    {
+      "episode": 10,
+      "id": "0bsoznq4udd7aer",
+      "path": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/0bsoznq4udd7aer/ep010_vt7evquljn.mp4",
+      "sha256": "d7bfae702865ddf3fe0118e7e123c475f2b145347ff245eed39f4ee9bd1b748d",
+      "durationSeconds": 129.367
+    }
+  ],
+  "totalDurationSeconds": 1258.718
+}

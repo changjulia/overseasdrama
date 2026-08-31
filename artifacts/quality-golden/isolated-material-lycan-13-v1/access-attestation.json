@@ -1,0 +1,20 @@
+{
+  "caseId": "QS-MAT-LYCAN-13",
+  "goldenVersion": "v1",
+  "violation": false,
+  "attestation": "Only the explicitly allowed source media and protocol schema were read as external inputs. All other listed paths are evidence files generated inside the permitted isolated output directory during this blind review.",
+  "actualReadPaths": [
+    "/Users/julia_chen/Documents/ChatGPT/短剧/release-evidence/quality-supervision/protocol.schema.json",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumadmat001/zmzrljhnwl4uxw5/the_rise_of_the_lycan_queen_20260827_13_djgw44tovz.mp4",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-material-lycan-13-v1/audio.wav",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-material-lycan-13-v1/contact-sheet.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-material-lycan-13-v1/sheet-00-15.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-material-lycan-13-v1/sheet-15-30.jpg"
+  ],
+  "prohibitedContentRead": [],
+  "notes": [
+    "No PocketBase fields, attrs, APIs, or database records were queried.",
+    "No job fields, logs, status, analysis, or results were queried.",
+    "No existing golden samples, golden evidence, release evidence other than the schema, git state, history, or diffs were read."
+  ]
+}

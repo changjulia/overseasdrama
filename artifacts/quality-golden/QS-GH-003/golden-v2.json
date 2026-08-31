@@ -1,0 +1,255 @@
+{
+  "schemaVersion": 1,
+  "caseId": "QS-GH-003",
+  "goldenVersion": "v2",
+  "status": "frozen_blind",
+  "frozenAt": "2026-08-30T22:43:45+08:00",
+  "input": {
+    "path": "/Users/julia_chen/Downloads/1785148210_3shFMGB3nT_H264_720.mp4",
+    "sha256": "0b82e9fc0bceab6b5883496c7861e78808a09c4327f0b2301a9f68deab4a9e32",
+    "durationSeconds": 1003.2885487528345
+  },
+  "blindness": {
+    "systemOutputSeenBeforeFreeze": false,
+    "allowedInputs": [
+      "the named source video and independently generated frames",
+      "/Users/julia_chen/Documents/ChatGPT/短剧/release-evidence/quality-supervision/protocol.schema.json",
+      "business prior: external_hook_positive"
+    ],
+    "knownBusinessPriors": [
+      "external_hook_positive"
+    ],
+    "limitations": [
+      "No original-drama source video or lineage evidence was available.",
+      "The external subtype and exact hook boundary are pending source comparison.",
+      "Audio was not independently transcribed; visible action and embedded English captions are used."
+    ]
+  },
+  "expertAnswer": {
+    "genre": [
+      "time-travel romance",
+      "royal reincarnation fantasy",
+      "modern identity comedy-drama",
+      "stylized animation"
+    ],
+    "sourceClassification": {
+      "businessLabel": "external_hook_positive",
+      "externalSubtype": "unknown_pending_review",
+      "sourceEvidenceStatus": "pending_source_comparison",
+      "t1t2": {
+        "value": "candidate_external_hook",
+        "status": "pending"
+      }
+    },
+    "hook": {
+      "boundaryStatus": "candidate_only",
+      "candidateRanges": [
+        {
+          "startSeconds": 0,
+          "endSeconds": 24,
+          "confidence": 0.78,
+          "basis": "Historical death/reincarnation summary resolves into a modern bedside dialogue scene around 18-25s."
+        }
+      ],
+      "events": [
+        {
+          "statement": "A king and queen are introduced in bed; the king abruptly becomes enraged and attacks with a sword.",
+          "evidence": [
+            {
+              "startSeconds": 0,
+              "endSeconds": 9,
+              "confidence": 0.94,
+              "basis": "Royal bedroom, king, sword, and large narration captions."
+            }
+          ],
+          "confidence": 0.94
+        },
+        {
+          "statement": "The queen does not simply die; she is transported or reborn in a modern young woman's body.",
+          "evidence": [
+            {
+              "startSeconds": 10,
+              "endSeconds": 21,
+              "confidence": 0.93,
+              "basis": "Underwater/falling queen imagery followed by modern bed and caption about becoming a wealthy man's wife."
+            }
+          ],
+          "confidence": 0.93
+        },
+        {
+          "statement": "The modern scene confirms temporal dislocation when a doctor tells her the date is March 13, 2024.",
+          "evidence": [
+            {
+              "startSeconds": 24,
+              "endSeconds": 72,
+              "confidence": 0.9,
+              "basis": "Modern bedroom/doctor imagery and visible date caption at 70s."
+            }
+          ],
+          "confidence": 0.9
+        }
+      ]
+    },
+    "entities": [
+      {
+        "statement": "Ancient queen / modern brunette woman is the continuity anchor across eras.",
+        "evidence": [
+          {
+            "startSeconds": 0,
+            "endSeconds": 25,
+            "confidence": 0.9,
+            "basis": "Royal-bed setup, death/rebirth captions, and modern awakening."
+          }
+        ],
+        "confidence": 0.9
+      },
+      {
+        "statement": "Ancient king is the initiating threat; a modern wealthy husband and doctor define the new world.",
+        "evidence": [
+          {
+            "startSeconds": 3,
+            "endSeconds": 70,
+            "confidence": 0.82,
+            "basis": "Sword attack, modern suited man, doctor, and captions."
+          }
+        ],
+        "confidence": 0.82
+      }
+    ],
+    "conflict": [
+      {
+        "statement": "A murdered or displaced queen must survive inside an unfamiliar modern identity and marriage.",
+        "evidence": [
+          {
+            "startSeconds": 0,
+            "endSeconds": 70,
+            "confidence": 0.91,
+            "basis": "Royal attack followed by 2024 awakening."
+          }
+        ],
+        "confidence": 0.91
+      }
+    ],
+    "emotion": [
+      {
+        "statement": "Shock and danger flip into bewilderment and comic-surreal curiosity.",
+        "evidence": [
+          {
+            "startSeconds": 0,
+            "endSeconds": 70,
+            "confidence": 0.88,
+            "basis": "Sword threat, fantastical transition, modern date reveal."
+          }
+        ],
+        "confidence": 0.88
+      }
+    ],
+    "suspense": [
+      {
+        "statement": "The hook withholds why the king attacked, how the queen crossed time, and whether she can pass as the modern wife.",
+        "evidence": [
+          {
+            "startSeconds": 0,
+            "endSeconds": 70,
+            "confidence": 0.9,
+            "basis": "Attack and identity displacement without causal resolution."
+          }
+        ],
+        "confidence": 0.9
+      }
+    ],
+    "narrativePromise": [
+      {
+        "statement": "An ancient queen will use courtly instincts in a modern wealthy household while navigating romance, identity, and threats.",
+        "evidence": [
+          {
+            "startSeconds": 0,
+            "endSeconds": 70,
+            "confidence": 0.85,
+            "basis": "Title overlay, royal prologue, wealthy-marriage caption, and modern doctor scene."
+          }
+        ],
+        "confidence": 0.85
+      }
+    ],
+    "retention": {
+      "score": 93,
+      "reasoning": [
+        "Sexual/royal danger premise appears immediately.",
+        "A sword attack creates a sharp early peak.",
+        "The 2024 reincarnation reveal supplies a high-concept reversal.",
+        "Three unanswered questions—attack motive, time transfer, modern identity—remain active."
+      ]
+    },
+    "highlightCandidates": [
+      {
+        "id": "GH003-H1",
+        "range": {
+          "startSeconds": 0,
+          "endSeconds": 9,
+          "confidence": 0.92,
+          "basis": "Royal bed and sword attack."
+        },
+        "description": "Immediate taboo/violence hook.",
+        "boundarySafety": "needs_frame_review",
+        "confidence": 0.92
+      },
+      {
+        "id": "GH003-H2",
+        "range": {
+          "startSeconds": 10,
+          "endSeconds": 21,
+          "confidence": 0.91,
+          "basis": "Death-to-modern-body transition."
+        },
+        "description": "Core reincarnation reversal.",
+        "boundarySafety": "needs_frame_review",
+        "confidence": 0.91
+      },
+      {
+        "id": "GH003-H3",
+        "range": {
+          "startSeconds": 24,
+          "endSeconds": 72,
+          "confidence": 0.84,
+          "basis": "Modern identity/date confirmation."
+        },
+        "description": "World-change payoff and new identity setup.",
+        "boundarySafety": "needs_frame_review",
+        "confidence": 0.84
+      }
+    ],
+    "matching": {
+      "recommended": "Match to the episode where the brunette awakens in 2024 as a wealthy man's wife; use the queen-to-modern-woman identity and date-reveal causality as primary anchors.",
+      "confidence": 0.77,
+      "requiredChecks": [
+        "Compare the royal prologue and modern awakening against original source footage.",
+        "Verify whether the target episode begins before or after the doctor/date exchange."
+      ]
+    },
+    "transitionRecommendations": {
+      "direct": "Preferred if the episode continues the modern bedside dialogue; cut after the reincarnation montage and on a stable exchange around 21-25s, subject to frame/audio review.",
+      "A": "If the episode begins with the royal attack, preserve the sword beat and transition on the fall/rebirth image.",
+      "B": "If the episode begins later in the modern household, retain the date reveal as a recap bridge, then dissolve/cut into the first matching modern scene.",
+      "avoid": "Do not label the stylized prologue as unrelated or reused without source evidence."
+    },
+    "rejectOrDegradeConditions": [
+      "Reject a proposed episode match if it lacks the same queen-to-2024-wife identity transfer.",
+      "Degrade boundary confidence if frame-accurate review places the montage-to-dialogue change outside 21-25s.",
+      "Keep the external subtype unknown_pending_review until source comparison establishes reused, unrelated, or mixed provenance.",
+      "Do not reject external-hook status merely because the same stylized characters or art direction continue into the episode."
+    ]
+  },
+  "evaluationReadiness": {
+    "systemComparison": "ready_after_draft_review",
+    "episodeMatch": "pending_original_source",
+    "renderModes": [
+      "direct",
+      "A",
+      "B"
+    ]
+  },
+  "freeze": {
+    "canonicalSha256": null
+  }
+}

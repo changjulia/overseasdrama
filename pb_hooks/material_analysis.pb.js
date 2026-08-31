@@ -164,6 +164,7 @@ routerAdd("POST", "/api/lumina/material-analysis/jobs/{id}/retry", (e) => {
   const leaseUntil = Date.parse(job.getString("lease_until"));
   const staleRunning = status === "running" && (!leaseUntil || leaseUntil <= Date.now());
   if (status !== "failed" && !staleRunning) throw new BadRequestError("only failed or lease-expired running jobs can be retried");
+  job.set("logs", helpers.appendRetryLineage(job.get("logs"), job, "worker_job_retry", true));
   job.set("status", "queued");
   job.set("progress", 0);
   job.set("attempt", 0);
@@ -175,6 +176,7 @@ routerAdd("POST", "/api/lumina/material-analysis/jobs/{id}/retry", (e) => {
   job.set("current_stage", "queued");
   e.app.save(job);
   const material = e.app.findRecordById("ad_materials", job.getString("material"));
+  helpers.resetMaterialPublishedAnalysis(material);
   material.set("analysis_status", "queued");
   material.set("analysis_progress", 0);
   material.set("analysis_error", "");
@@ -278,6 +280,7 @@ routerAdd("POST", "/api/lumina/material-analysis/jobs/{id}/reset", (e) => {
   helpers.authorize(e);
   const job = e.app.findRecordById("material_analysis_jobs", e.request.pathValue("id"));
   if (job.getString("status") === "succeeded") throw new BadRequestError("succeeded jobs cannot be reset");
+  job.set("logs", helpers.appendRetryLineage(job.get("logs"), job, "worker_job_reset", true));
   job.set("status", "queued");
   job.set("progress", 0);
   job.set("attempt", 0);
@@ -289,6 +292,7 @@ routerAdd("POST", "/api/lumina/material-analysis/jobs/{id}/reset", (e) => {
   job.set("current_stage", "queued");
   e.app.save(job);
   const material = e.app.findRecordById("ad_materials", job.getString("material"));
+  helpers.resetMaterialPublishedAnalysis(material);
   material.set("analysis_status", "queued");
   material.set("analysis_progress", 0);
   material.set("analysis_error", "");
@@ -302,7 +306,11 @@ routerAdd("POST", "/api/lumina/material-analysis/materials/{id}/retry", (e) => {
   helpers.authorizeLocalUi(e);
   const body = e.requestInfo().body || {};
   const force = body.force === true;
-  const forceSemanticRefresh = body.force_semantic_refresh === true || force;
+  // `force` controls queue state; semantic refresh is independently
+  // overridable so deterministic post-processing fixes can reuse the paid
+  // provider result. Existing clients that omit the field keep the old
+  // force-implies-refresh behavior.
+  const forceSemanticRefresh = body.force_semantic_refresh === true || (force && body.force_semantic_refresh === undefined);
   const material = e.app.findRecordById("ad_materials", e.request.pathValue("id"));
   const jobs = e.app.findRecordsByFilter("material_analysis_jobs", "material = {:material}", "-id", 1, 0, { material: material.id }).filter(Boolean);
   const job = jobs[0];
@@ -323,9 +331,9 @@ routerAdd("POST", "/api/lumina/material-analysis/materials/{id}/retry", (e) => {
   job.set("error", "");
   job.set("result", null);
   job.set("current_stage", "queued");
-  const previousLogs = job.get("logs");
-  job.set("logs", { ...(previousLogs && typeof previousLogs === "object" ? previousLogs : {}), force_semantic_refresh: forceSemanticRefresh });
+  job.set("logs", helpers.appendRetryLineage(job.get("logs"), job, "ui_material_retry", forceSemanticRefresh));
   e.app.save(job);
+  helpers.resetMaterialPublishedAnalysis(material);
   material.set("analysis_status", "queued");
   material.set("analysis_progress", 0);
   material.set("analysis_error", "");

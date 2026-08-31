@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "quality-supervision-golden-v1",
+  "title": "Blind expert golden and comparison envelope",
+  "type": "object",
+  "required": ["schemaVersion", "caseId", "goldenVersion", "status", "input", "blindness", "expertAnswer", "evaluationReadiness"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "caseId": {"type": "string", "pattern": "^QS-"},
+    "goldenVersion": {"type": "string", "pattern": "^v[0-9]+$"},
+    "status": {"enum": ["draft_blind", "frozen_blind", "frozen_with_prior", "superseded"]},
+    "frozenAt": {"type": ["string", "null"], "format": "date-time"},
+    "input": {
+      "type": "object",
+      "required": ["path", "sha256", "durationSeconds"],
+      "properties": {
+        "path": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "durationSeconds": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "blindness": {
+      "type": "object",
+      "required": ["systemOutputSeenBeforeFreeze", "allowedInputs", "knownBusinessPriors"],
+      "properties": {
+        "systemOutputSeenBeforeFreeze": {"const": false},
+        "allowedInputs": {"type": "array", "items": {"type": "string"}},
+        "knownBusinessPriors": {"type": "array", "items": {"type": "string"}},
+        "limitations": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "expertAnswer": {
+      "type": "object",
+      "required": ["genre", "sourceClassification", "hook", "entities", "conflict", "emotion", "suspense", "narrativePromise", "retention", "highlightCandidates", "matching", "transitionRecommendations", "rejectOrDegradeConditions"],
+      "properties": {
+        "genre": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "sourceClassification": {
+          "type": "object",
+          "required": ["businessLabel", "externalSubtype", "sourceEvidenceStatus", "t1t2"],
+          "properties": {
+            "businessLabel": {"type": "string"},
+            "externalSubtype": {"enum": ["unrelated_people_or_scenes", "reused_drama_assets_new_shots", "mixed", "unknown_pending_review"]},
+            "sourceEvidenceStatus": {"enum": ["verified", "business_prior_only", "pending_source_comparison"]},
+            "t1t2": {"type": "object", "required": ["value", "status"]}
+          }
+        },
+        "hook": {
+          "type": "object",
+          "required": ["boundaryStatus", "candidateRanges", "events"],
+          "properties": {
+            "boundaryStatus": {"enum": ["verified", "candidate_only", "unresolved"]},
+            "candidateRanges": {"type": "array", "items": {"$ref": "#/definitions/range"}},
+            "events": {"type": "array", "items": {"$ref": "#/definitions/evidencedStatement"}}
+          }
+        },
+        "entities": {"type": "array", "items": {"$ref": "#/definitions/evidencedStatement"}},
+        "conflict": {"type": "array", "items": {"$ref": "#/definitions/evidencedStatement"}},
+        "emotion": {"type": "array", "items": {"$ref": "#/definitions/evidencedStatement"}},
+        "suspense": {"type": "array", "items": {"$ref": "#/definitions/evidencedStatement"}},
+        "narrativePromise": {"type": "array", "items": {"$ref": "#/definitions/evidencedStatement"}},
+        "retention": {"type": "object", "required": ["score", "reasoning"], "properties": {"score": {"type": "number", "minimum": 0, "maximum": 100}, "reasoning": {"type": "array", "items": {"type": "string"}}}},
+        "highlightCandidates": {"type": "array", "items": {"$ref": "#/definitions/highlight"}},
+        "matching": {"type": "object"},
+        "transitionRecommendations": {"type": "object"},
+        "rejectOrDegradeConditions": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "evaluationReadiness": {"type": "object", "required": ["systemComparison", "episodeMatch", "renderModes"]},
+    "freeze": {"type": "object", "properties": {"canonicalSha256": {"type": ["string", "null"]}}}
+  },
+  "definitions": {
+    "range": {
+      "type": "object",
+      "required": ["startSeconds", "endSeconds"],
+      "properties": {
+        "startSeconds": {"type": "number", "minimum": 0},
+        "endSeconds": {"type": "number", "exclusiveMinimum": 0},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "basis": {"type": "string"}
+      }
+    },
+    "evidencedStatement": {
+      "type": "object",
+      "required": ["statement", "evidence", "confidence"],
+      "properties": {
+        "statement": {"type": "string"},
+        "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/range"}},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "highlight": {
+      "type": "object",
+      "required": ["id", "range", "description", "boundarySafety", "confidence"],
+      "properties": {
+        "id": {"type": "string"},
+        "range": {"$ref": "#/definitions/range"},
+        "description": {"type": "string"},
+        "boundarySafety": {"enum": ["safe", "needs_frame_review", "unsafe"]},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    }
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "caseId": "QS-MAT-LYCAN-13",
+  "comparisonVersion": "v2",
+  "golden": {
+    "version": "v1",
+    "status": "frozen_blind",
+    "sha256": "ca2c502069a14088d018beddc959555d9cd080f75f184933be2efe18da1e1c7d",
+    "unchanged": true
+  },
+  "system": {
+    "materialId": "zmzrljhnwl4uxw5",
+    "jobId": "30wqqaz0u3vav09",
+    "snapshotSha256": "4d2371e117adaed0572a65fa2f83891ac71ddb8a61c2ec594b7b38ab6f26ae9b",
+    "terminalStatus": "succeeded",
+    "progress": 100,
+    "terminalStage": "completed",
+    "finalResultPresent": true,
+    "semanticModel": "qwen-vl-max",
+    "semanticProvider": "openai-chat-completions",
+    "semanticPromptVersion": "material-v2-20260830.1",
+    "analysisVersion": "material-v2",
+    "retryLineage": [{"fromAttempt": 0, "fromStatus": "queued", "mode": "ui_material_retry", "at": "2026-08-30T16:27:01.090Z"}],
+    "attempt": 1,
+    "maxAttempts": 1,
+    "reviewRequired": true,
+    "qualityGatePassed": false
+  },
+  "verdict": {
+    "engineeringExecution": "PASS_WITH_TRACEABILITY_RESIDUAL",
+    "contentQuality": "FAIL",
+    "hardGate": "NO-GO",
+    "reason": "The job now completes and persists a final result, but the published result still omits the central reversal, returns no hook, falsely verifies story completeness, and accepts dangling/zero-duration evidence."
+  },
+  "scores": {
+    "factAndEvidenceAccuracy": 45,
+    "highlightLocalization": 5,
+    "hookRetention": 25,
+    "storyCompleteness": 10,
+    "hookMainMatch": null,
+    "transitionNarration": null,
+    "engineeringReliability": 70,
+    "fullWeightedTotal": null,
+    "scopeNormalizedScore": 28,
+    "scopeNormalizedDenominatorWeight": 75,
+    "priorScopeNormalizedScore": 22
+  },
+  "hardGates": {
+    "result": "NO-GO",
+    "triggered": [
+      "critical_causal_chain_omitted_causing_story_fracture",
+      "false_story_completeness",
+      "dangling_or_invalid_evidence_published_as_success"
+    ],
+    "clearedSinceV1": [
+      "terminal_job_failure_without_final_result",
+      "unsupported_source_lineage_marked_verified",
+      "unverified_T1_projected_to_material"
+    ]
+  },
+  "priorGapRetest": [
+    {
+      "id": "QS-L13-P0-001",
+      "status": "fixed",
+      "evidence": "Job/material are succeeded/100/completed; job.result is non-null and material-v2 contract is persisted.",
+      "nextAction": "Keep exact-media API/worker regression and assert terminal/result consistency."
+    },
+    {
+      "id": "QS-L13-P0-002",
+      "status": "partially_fixed_not_fully_retestable",
+      "evidence": "Current successful output clears failed status and projects TX rather than T1. The same record was overwritten, so atomic behavior during a newly injected failed attempt and preservation of the previous approved result are not proven; weakly evidenced episode-splice format is still projected.",
+      "nextAction": "Failure-inject after an approved successful result and snapshot material fields before/during/after; assert failed candidate output never becomes visible."
+    },
+    {
+      "id": "QS-L13-P0-003",
+      "status": "fixed_with_residual",
+      "evidence": "hookSourceStatus is now 来源未知/UNKNOWN, verification=unverified, reviewRequired=true, and review explicitly says source lineage cannot be confirmed.",
+      "residual": "Root sourceAttribution.status remains not_required rather than pending_source_comparison.",
+      "nextAction": "Align root attribution status with the source claim and preserve no-lineage regression."
+    },
+    {
+      "id": "QS-L13-P0-004",
+      "status": "partially_fixed",
+      "evidence": "Exact OCR sees Killian the Juggernaut and the identity inference is unverified/review-required; the prior two-character split and verified antagonist claim are gone.",
+      "residual": "characters and relationships are empty; ASR still says Wreckus; the purple caller, black-haired fighter, kneeling obedience and observers' shock are absent from the story model.",
+      "nextAction": "Fuse OCR, frames and dialogue into one stable masked-fighter entity and require the 16.1–25.2s command→kneel→shock causal chain."
+    },
+    {
+      "id": "QS-L13-P0-005",
+      "status": "not_fixed",
+      "evidence": "completeness remains complete/0.95/verified over 0–34.504; hooks=[], hookCount=0; the strongest 15.1–23.5s reversal is still absent and CTA is mislabeled as a cliffhanger.",
+      "nextAction": "Add incomplete/cliffhanger evidence gate and exact-media hook localization assertion with safe end before CTA."
+    },
+    {
+      "id": "QS-L13-P1-001",
+      "status": "not_fixed",
+      "evidence": "fact-004/fact-005/fact-006 are referenced without matching observations; OCR/frame/shot evidence includes start=end point ranges; result still succeeds and materialFields confidence is 100.",
+      "nextAction": "Reject dangling facts at final contract validation and explicitly model point-frame evidence instead of passing it as a duration range."
+    },
+    {
+      "id": "QS-L13-P1-002",
+      "status": "partially_fixed",
+      "evidence": "Tier is now TX/unverified and persisted creative_tier is TX.",
+      "residual": "format 正片剧集拼接 remains verified from generic full-duration dialogue/action rather than assembly or source evidence and is projected to material.",
+      "nextAction": "Require verified assembly/boundary evidence before episode-splice projection; otherwise persist 未确定."
+    },
+    {
+      "id": "QS-L13-P1-003",
+      "status": "mostly_fixed",
+      "evidence": "Job logs now persist model, provider, prompt version, processor, Python version and UI retry lineage.",
+      "residual": "attempt remains 1/maxAttempts 1 and lineage begins from queued attempt 0; the prior failed terminal snapshot is not represented as a durable predecessor record.",
+      "nextAction": "Persist immutable predecessor job ID/status/error or attempt-event history across retries."
+    },
+    {
+      "id": "QS-L13-P2-001",
+      "status": "not_fixed",
+      "evidence": "Review/quality-gate reasons still begin with three positive assertions, including that all conclusions are evidence-based and timecodes accurate, despite dangling facts and point ranges.",
+      "nextAction": "Separate audit assertions from failure reasons and only surface field-addressable failing conditions."
+    }
+  ],
+  "newOrElevatedGaps": [
+    {
+      "id": "QS-L13-P0-006",
+      "severity": "P0",
+      "category": "degraded_fallback_published_with_false_confidence",
+      "actual": "Fallback summary contains only the malformed opening ASR sentence, characters/hooks/scores are empty, quality gate fails, yet materialFields confidence=100 and analysisStatus=succeeded.",
+      "modules": ["processor/semantic_analysis.py summary fallback", "processor/semantic_analysis.py materialFields confidence", "pb_hooks/material_analysis_helpers.js"],
+      "regression": "When contract fallback omits critical story dimensions, confidence must be bounded by completeness/evidence coverage, result must remain review-blocked, and production-facing confidence cannot be 100."
+    },
+    {
+      "id": "QS-L13-P1-004",
+      "severity": "P1",
+      "category": "cta_misclassified_as_cliffhanger",
+      "actual": "24.48–26.56s Click-the-link CTA is published as a verified cliffhanger/highlight, while the actual unresolved command/obedience action is not represented.",
+      "modules": ["processor/semantic_analysis.py timeline/highlight classification", "app/lib/inspiration-material-store.ts"],
+      "regression": "CTA text is classified as CTA/packaging and excluded from story cliffhanger/highlight candidates; 15.1–23.5s remains the content high point."
+    }
+  ]
+}

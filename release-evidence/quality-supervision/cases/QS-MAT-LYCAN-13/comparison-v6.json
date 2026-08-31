@@ -1,0 +1,157 @@
+{
+  "caseId": "QS-MAT-LYCAN-13",
+  "comparisonVersion": "v6",
+  "golden": {
+    "version": "v1",
+    "status": "frozen_blind",
+    "sha256": "ca2c502069a14088d018beddc959555d9cd080f75f184933be2efe18da1e1c7d",
+    "unchanged": true
+  },
+  "system": {
+    "materialId": "zmzrljhnwl4uxw5",
+    "jobId": "30wqqaz0u3vav09",
+    "snapshotSha256": "9fce0b2a615ed8fbf46639b31cd1c06a8e5aed895757ea4459ac3d24f3f260ca",
+    "terminalStatus": "succeeded",
+    "progress": 100,
+    "terminalStage": "completed",
+    "finalResultPresent": true,
+    "semanticModel": "qwen-vl-max",
+    "semanticPromptVersion": "material-v2-20260830.1",
+    "verifiedFactCount": 3,
+    "characterCount": 2,
+    "relationshipCount": 1,
+    "hookCount": 1,
+    "materialFormat": "未确定",
+    "materialConfidence": 49,
+    "productionStatus": "blocked",
+    "sourceAttribution": "pending",
+    "qualityGatePassed": false
+  },
+  "verdict": {
+    "engineeringExecution": "PASS",
+    "contentQuality": "IMPROVED_BUT_BELOW_GATE",
+    "productionSafety": "PASS_BLOCKING_BEHAVIOR",
+    "hardGate": "NO-GO",
+    "reason": "Both v5 P0 implementation defects are fixed. The case remains content NO-GO because the observable kneeling/obedience action and observer-reaction payoff are absent from the verified story chain, leaving the central reversal materially incomplete."
+  },
+  "scores": {
+    "factAndEvidenceAccuracy": 70,
+    "highlightLocalization": 84,
+    "hookRetention": 79,
+    "storyCompleteness": 72,
+    "hookMainMatch": null,
+    "transitionNarration": null,
+    "engineeringReliability": 94,
+    "fullWeightedTotal": null,
+    "scopeNormalizedScore": 77,
+    "scopeNormalizedDenominatorWeight": 75,
+    "priorScopeNormalizedScores": {"v1": 22, "v2": 28, "v3": 66, "v4": 70, "v5": 69}
+  },
+  "requestedChecks": [
+    {
+      "check": "v5 P0 incorrect cross-event causal relationship",
+      "result": "fixed",
+      "evidence": "The 0–2.86 fact-002 speaker is no longer connected to the 20.9–21.86 response. The sole relation uses local-dialogue-title (16.8–20.04) and local-dialogue-response (20.9–21.86), type=mention_response, label=adjacent dialogue layer, with no kneeling or visual-action assertion."
+    },
+    {
+      "check": "v5 P0 full published evidence closure",
+      "result": "fixed",
+      "evidence": "A recursive scan of every basedOnFactIds outside review.rejectedClaims under material.analysis_result found zero references outside verified facts fact-002/local-dialogue-title/local-dialogue-response."
+    },
+    {
+      "check": "body format and material format downgrade",
+      "result": "pass",
+      "evidence": "material_format=未确定; bodyFormat is unverified/reviewRequired and references only fact-002; materialFields.materialType is 未确定."
+    },
+    {
+      "check": "source and risks closure",
+      "result": "pass",
+      "evidence": "hookSourceStatus has basedOnFactIds=[] and remains UNKNOWN/unverified; the only published risk references verified fact-002; sourceAttribution remains pending."
+    },
+    {
+      "check": "hook 15.1–23.9 boundary safety",
+      "result": "pass_with_review_gate",
+      "evidence": "Start/end are real shot boundaries and dialogue is complete. safeEnd action=shot_boundary_only, semantic/frame=unverified, boundaryStatus=unverified and reviewRequired=true; production remains blocked."
+    },
+    {
+      "check": "production blocking",
+      "result": "pass",
+      "evidence": "confidence=49, productionStatus=blocked, qualityGate=false, review pending and no unapproved asset progresses to production."
+    }
+  ],
+  "fullEvidenceGraphAudit": {
+    "result": "pass",
+    "verifiedFactIds": ["fact-002", "local-dialogue-title", "local-dialogue-response"],
+    "scanScope": "all objects with basedOnFactIds under material.analysis_result except review.rejectedClaims",
+    "invalidPublishedReferences": [],
+    "rejectedAuditOnly": true
+  },
+  "personAndCausalAudit": {
+    "result": "partial_safe",
+    "correct": [
+      "The opening speaker is no longer falsely linked to the later response.",
+      "The later relation is explicitly limited to adjacent spoken mention and response.",
+      "Identity of the mention speaker remains pending rather than labeled as the purple-clad woman.",
+      "Kneeling and observer shock are not asserted as verified facts."
+    ],
+    "residuals": [
+      "Character-title-speaker is marked verified from non-diarized transcript evidence; the event adjacency is supported, but speaker identity still requires frame/diarization review.",
+      "The central visual payoff—kneeling/obedience and observer shock—is omitted from the verified causal chain.",
+      "The ASR title phrase remains mistranscribed as 'Killed in the Juggernaut...' despite correct point OCR."
+    ]
+  },
+  "timecodeAndCausalComparison": [
+    {"golden": "0–3.4 armored man commands Juggernaut", "system": "fact-002 at 0–2.86, isolated from later relation", "result": "partial_match_safe"},
+    {"golden": "3.4–6.7 purple-clad woman's taunt", "system": "absent", "result": "omission"},
+    {"golden": "16.1–20.4 purple-clad woman names Killian / champion", "system": "local-dialogue-title at 16.8–20.04 plus 17.5 point OCR; speaker identity pending", "result": "event_match_identity_pending"},
+    {"golden": "20.9–21.86 Killian responds to later caller", "system": "local-dialogue-response and adjacent mention_response", "result": "dialogue_match_no_visual_claim"},
+    {"golden": "kneeling and observer shock 20.9–25.2", "system": "not verified; visualSummary requests review", "result": "safe_omission_but_story_incomplete"},
+    {"golden": "strongest highlight 15.1–23.5", "system": "15.1–23.9 at shot boundary", "result": "high_match_boundary_review_required"}
+  ],
+  "hardGates": {
+    "result": "NO-GO",
+    "triggered": ["central_reversal_story_chain_materially_incomplete"],
+    "clearedSinceV5": [
+      "critical_command_response_relationship_misattributed",
+      "verified_published_claim_references_nonexistent_or_rejected_evidence"
+    ],
+    "safetyNote": "The remaining content hard gate is safely enforced by the production block; it is not an unsafe publication event."
+  },
+  "priorGapRetest": [
+    {"id": "QS-L13-V5-P0-001", "status": "fixed", "evidence": "Opening fact-002 speaker removed from relation; later mention/response uses adjacent 16.8–21.86 dialogue only."},
+    {"id": "QS-L13-V5-P0-002", "status": "fixed", "evidence": "Full published basedOnFactIds scan outside rejectedClaims returns no invalid references."},
+    {"id": "QS-L13-V5-P1-001", "status": "not_fixed_but_not_overclaimed", "evidence": "Kneeling and observer reactions remain unverified and absent; no hallucinated visual fact."},
+    {"id": "QS-L13-V5-P1-002", "status": "partially_fixed_safely_blocked", "evidence": "23.9 shot boundary retained; action/semantic closure still pending."},
+    {"id": "QS-L13-V5-P1-003", "status": "fixed", "evidence": "material_format and projected material type are 未确定; bodyFormat is unverified/reviewRequired."}
+  ],
+  "developmentItems": [
+    {
+      "id": "QS-L13-V6-P1-001",
+      "severity": "P1",
+      "module": "processor visual fact extraction",
+      "task": "Add replayable positive-duration visual evidence for kneeling/obedience and observer reactions, with conservative actor labels and no unsupported emotion or identity inference.",
+      "regression": "Golden 20.9–25.2 actions are either verified with frame/clip evidence or explicitly pending; the resulting chain distinguishes spoken response from observed kneeling."
+    },
+    {
+      "id": "QS-L13-V6-P1-002",
+      "severity": "P1",
+      "module": "processor speaker/event attribution",
+      "task": "Keep mention_response event-level unless diarization or frame evidence identifies the later speaker; do not mark a character node verified solely because adjacent ASR exists.",
+      "regression": "character-title-speaker identity stays unverified/pending without speaker evidence, while the 16.8–21.86 dialogue adjacency remains usable."
+    },
+    {
+      "id": "QS-L13-V6-P1-003",
+      "severity": "P1",
+      "module": "processor hook boundary verification",
+      "task": "Retain the 23.9 shot snap and obtain action/semantic closure evidence before manual approval.",
+      "regression": "Shot-boundary-only never becomes production-approved without action/semantic confirmation."
+    },
+    {
+      "id": "QS-L13-V6-P2-001",
+      "severity": "P2",
+      "module": "ASR/OCR reconciliation and risk synthesis",
+      "task": "Prefer confirmed point OCR for the title text and avoid generating a verified controversy risk from the mistranscribed phrase 'Wreckus brat'.",
+      "regression": "Correct OCR does not coexist with an uncorrected title transcript as authoritative text; content risk requires an independently supported rationale."
+    }
+  ]
+}

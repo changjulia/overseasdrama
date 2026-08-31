@@ -76,6 +76,16 @@ export type HookMatchJob = {
   error: string;
   diagnostics?: HookMatchDiagnostics;
   matchContextHash?: string;
+  errorKind?: string;
+  updated?: string;
+};
+export type ManualRetryInput = {
+  reason: string;
+  idempotencyKey: string;
+  expectedStatus: string;
+  expectedUpdated: string;
+  overrideNonRetryable?: boolean;
+  overrideReason?: string;
 };
 export type ExternalMatchStrategy =
   "hook_to_story" | "story_to_hook" | "template_reuse";
@@ -256,18 +266,12 @@ export type StrategyHookRecommendation = {
   productionEligible?: boolean;
   template?: Record<string, unknown>;
 };
-const configuredUrl =
-  typeof process !== "undefined"
-    ? process.env.NEXT_PUBLIC_POCKETBASE_URL
-    : undefined;
-const PB_URL = (
-  configuredUrl ||
-  (typeof window !== "undefined" ? "/pb" : "http://127.0.0.1:8090")
-).replace(/\/$/, "");
+import { POCKETBASE_URL as PB_URL, pocketBaseUiHeaders } from "./pocketbase-url";
 async function request(path: string, init?: RequestInit) {
   const response = await fetch(`${PB_URL}${path}`, {
     cache: "no-store",
     ...init,
+    headers: { ...pocketBaseUiHeaders(), ...(init?.headers || {}) },
   });
   if (!response.ok) {
     const value = (await response.json().catch(() => null)) as {
@@ -325,7 +329,21 @@ export async function startHookStoryMatch(
     stage: String(value.current_stage || "queued"),
     error: String(value.error || ""),
     matchContextHash: String(value.match_context_hash || "") || undefined,
+    errorKind: String(value.error_kind || "") || undefined,
+    updated: String(value.updated || "") || undefined,
   };
+}
+
+export async function retryHookMatchJob(id: string, input: ManualRetryInput): Promise<HookMatchJob> {
+  const value = await request(`/api/lumina/hook-matching/jobs/${encodeURIComponent(id)}/retry`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+      reason: input.reason, idempotency_key: input.idempotencyKey,
+      expected_status: input.expectedStatus, expected_updated: input.expectedUpdated,
+      override_non_retryable: input.overrideNonRetryable === true,
+      override_reason: input.overrideReason,
+    }),
+  }) as Record<string, unknown>;
+  return { id: String(value.id), status: String(value.status) as HookMatchJob["status"], progress: 0, stage: "queued", error: "" };
 }
 
 function recommendation(
@@ -587,6 +605,8 @@ export async function getHookMatchJob(
     stage: String(value.current_stage || ""),
     error: String(value.error || ""),
     matchContextHash: String(value.match_context_hash || ""),
+    errorKind: String(value.error_kind || "") || undefined,
+    updated: String(value.updated || "") || undefined,
     diagnostics: parseDiagnostics(value),
   };
 }

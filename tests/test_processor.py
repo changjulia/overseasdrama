@@ -2,6 +2,7 @@ import copy
 import base64
 import io
 import json
+import sys
 import tempfile
 import unittest
 import urllib.error
@@ -14,9 +15,9 @@ from PIL import Image
 from processor.pack import group_phrases, pack_transcripts
 from processor.scribe import is_cache_valid, source_fingerprint
 from processor.batch_transcribe import select_free_episodes
-from processor.job_worker import ApiRequestError, classify_failure, envelope_from_dict, execute_entry_precision_job, execute_semantic_job, process_available, process_one_endpoint
-from processor.factory_render import build_render_quality_report
-from processor.semantic_analysis import AnalysisFailed, AnalysisEnvelope, Evidence, Timecode, _apply_material_evidence_gate, _complete_sentence_limit, _downgrade_unsupported_external_hook, _enrich_material_hooks, _external_hook_fragment_evidence, _external_hook_match_input, _extract_chat_stream, _extract_provider_result, _material_evidence_timestamps, _material_output_contract_valid, _material_semantic_analysis, _material_story_consistency_issues, _material_story_quality_issues, _normalize_material_format, _normalize_precision_hooks, _openai_request_body, _opening_preface_boundary, _precision_candidates, _reconstruct_storyline, _reconstruct_highlights, _sanitize_material_provider_input, _semantic_frame_base64, _semantic_request, _story_duration_validation, _storyboard_quality_issues, _storyboard_units_from_event_ledger, _strict_safety_provider_input, _target_duration_spec, _validate_semantic_claims, analyze_coarse, analyze_detail, analyze_hook_entry_points, analyze_hook_story_match, analyze_material, failed_envelope, transcribe
+from processor.job_worker import ApiRequestError, _detail_motion_recall_intervals, _select_detail_evidence_frames, classify_failure, envelope_from_dict, execute_entry_precision_job, execute_semantic_job, process_available, process_one_endpoint
+from processor.factory_render import _validated_splice_boundaries, build_render_quality_report
+from processor.semantic_analysis import AnalysisFailed, AnalysisEnvelope, Evidence, Timecode, _aggregate_material_classification, _apply_material_evidence_gate, _bounded_detail_frames, _bounded_precision_frames, _complete_sentence_limit, _detail_recall_probes, _downgrade_unsupported_external_hook, _drama_claim_safety_issue, _enrich_material_dialogue_entities, _enrich_material_hooks, _ensure_material_output_contract, _episode_owned_core_facts, _external_hook_fragment_evidence, _external_hook_match_input, _extract_chat_stream, _extract_provider_result, _material_evidence_timestamps, _material_output_contract_missing_paths, _material_output_contract_valid, _material_publish_confidence, _material_semantic_analysis, _material_story_consistency_issues, _material_story_quality_issues, _material_visual_event_verification, _normalize_material_format, _normalize_precision_hooks, _openai_request_body, _opening_preface_boundary, _precision_candidates, _rebuild_material_summary_from_verified_observations, _reconstruct_storyline, _reconstruct_highlights, _relink_material_ocr_evidence, _run_detail_checkpoint, _sanitize_drama_detail_semantics, _sanitize_material_provider_input, _sanitize_material_story_candidates, _select_precision_evidence_frames, _semantic_frame_base64, _semantic_model_for_task, _semantic_request, _story_duration_validation, _storyboard_quality_issues, _storyboard_units_from_event_ledger, _strict_safety_provider_input, _target_duration_spec, _validate_material_visual_events, _validate_semantic_claims, analyze_coarse, analyze_detail, analyze_detail_reconcile, analyze_hook_entry_points, analyze_hook_story_match, analyze_material, failed_envelope, transcribe
 
 MATERIAL_CONTRACT = {
     "content": {"summary": {"value": "摘要", "confidence": 0.9, "evidence": [{"source": "transcript", "timecode": {"start": 0, "end": 1}, "confidence": 0.9, "text": "开场对白"}], "basedOnFactIds": ["F1"], "verification": "verified"}, "observations": [{"factId": "F1", "actorObserved": "说话者", "actionObserved": "说出开场对白", "evidence": [{"source": "transcript", "timecode": {"start": 0, "end": 1}, "confidence": 0.9, "text": "开场对白"}], "verification": "verified"}], "inferences": [], "tags": [], "characters": [], "relationships": [], "segments": [], "completeness": {"value": "完整", "confidence": 0.9, "evidence": []}},
@@ -27,6 +28,249 @@ MATERIAL_CONTRACT = {
 
 
 class ProcessorTests(unittest.TestCase):
+    def test_material_content_hash_mismatch_is_permanent_media_failure(self):
+        self.assertEqual(classify_failure(RuntimeError("material content hash does not match the recorded intake identity")), ("media", False, 0))
+
+    def test_two_level_model_routing_keeps_final_judgment_on_max(self):
+        with patch.dict("os.environ", {"LUMINA_SEMANTIC_MODEL": "qwen-vl-max", "LUMINA_SEMANTIC_RECALL_MODEL": "qwen3-vl-flash"}):
+            self.assertEqual(_semantic_model_for_task("detail-recall-probe"), "qwen3-vl-flash")
+            for task in ("detail-drama-analysis", "repair-detail-output-contract"):
+                self.assertEqual(_semantic_model_for_task(task), "qwen3-vl-flash")
+            for task in ("reconcile-drama-storyline", "ground-drama-episode", "synthesize-drama-overview", "precision-highlight-analysis"):
+                self.assertEqual(_semantic_model_for_task(task), "qwen-vl-max")
+
+    def test_checkpoint_uses_actual_flash_model_and_does_not_persist_request_media(self):
+        secret_media = "signed-url-and-original-media-must-not-be-persisted"
+        payload = {"sourceUrl": f"https://media.invalid/video.mp4?signature={secret_media}", "frames": [{"base64": secret_media}]}
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LUMINA_SEMANTIC_MODEL": "qwen-vl-max", "LUMINA_SEMANTIC_RECALL_MODEL": "qwen3-vl-flash"}):
+            result, diagnostics = _run_detail_checkpoint(
+                "detail-recall-probe",
+                payload,
+                Path(directory),
+                "probe-001",
+                lambda request_diagnostics: {"probe": "safe structured output"},
+            )
+            checkpoint_files = list(Path(directory).glob("drama-detail/by-content-hash/*/qwen3-vl-flash/drama-detail-checkpoint-v1-20260831/*.json"))
+            self.assertEqual(result, {"probe": "safe structured output"})
+            self.assertEqual(diagnostics["model"], "qwen3-vl-flash")
+            self.assertEqual(len(checkpoint_files), 1)
+            self.assertNotIn(secret_media, checkpoint_files[0].read_text(encoding="utf-8"))
+    def test_visual_event_validator_rejects_single_frame_action_and_weak_speaker_link(self):
+        frames = [{"timecode": {"start": value, "end": value}} for value in (1.0, 1.4)]
+        result = _validate_material_visual_events({
+            "events": [{"id": "kneel", "start": 1, "end": 1.4, "actorCandidate": "man A", "actionObserved": "男子跪下", "evidenceFrames": [{"timecode": {"start": 1, "end": 1}}], "confidence": .9, "verification": "verified"}],
+            "speakerLinks": [{"speakerCandidate": "man A", "evidenceModalities": ["adjacency_only"], "confidence": .9, "verification": "verified"}],
+        }, frames, {"start": 1, "end": 1.4})
+        self.assertEqual(result["events"], [])
+        self.assertEqual(len(result["rejectedEvents"]), 1)
+        self.assertEqual(result["rejectedEvents"][0]["verification"], "unverified")
+        self.assertTrue(result["rejectedEvents"][0]["reviewRequired"])
+        self.assertEqual(result["speakerLinks"][0]["verification"], "unverified")
+        self.assertEqual(result["boundaryAssessment"]["actionStatus"], "unverified")
+        self.assertEqual(result["boundaryAssessment"]["semanticStatus"], "unverified")
+
+    def test_visual_event_validator_accepts_real_multiframe_state_change(self):
+        frames = [{"timecode": {"start": value, "end": value}} for value in (1.0, 1.4)]
+        result = _validate_material_visual_events({"events": [{
+            "id": "posture", "start": 1, "end": 1.4, "actorCandidate": "man A", "actionObserved": "男子从站立降低到单膝着地",
+            "evidenceFrames": [{"timecode": {"start": 1, "end": 1}}, {"timecode": {"start": 1.4, "end": 1.4}}], "confidence": .8, "verification": "verified",
+        }]}, frames, {"start": 1, "end": 1.4})
+        self.assertEqual(result["events"][0]["validatedFrameTimes"], [1.0, 1.4])
+        self.assertEqual(result["events"][0]["actorCandidate"], "可见角色（身份待核）")
+
+    def test_visual_event_validator_rejects_emotion_and_speaking_inference(self):
+        frames = [{"timecode": {"start": value, "end": value}} for value in (1.0, 1.4)]
+        result = _validate_material_visual_events({"events": [{
+            "id": "reaction", "start": 1, "end": 1.4, "actorCandidate": "Killian", "actionObserved": "似乎正在说话",
+            "reactionObserved": "因前一个镜头而震惊", "evidenceFrames": [{"timecode": {"start": 1, "end": 1}}, {"timecode": {"start": 1.4, "end": 1.4}}],
+            "confidence": .9, "verification": "verified",
+        }]}, frames, {"start": 1, "end": 1.4})
+        self.assertEqual(result["events"], [])
+        self.assertEqual(len(result["rejectedEvents"]), 1)
+
+    def test_visual_event_verification_uses_separate_cache(self):
+        provider_result = {"events": [], "speakerLinks": [], "boundaryAssessment": {}, "openQuestions": []}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image_path = root / "frame.jpg"
+            Image.new("RGB", (32, 32), "red").save(image_path)
+            frames = [{"path": str(image_path), "timecode": {"start": 1.0, "end": 1.0}}]
+            payload = {"transcript": [], "ocr": [], "shots": []}
+            with patch("processor.semantic_analysis._semantic_request", return_value=provider_result) as request:
+                _material_visual_event_verification(payload, frames, {"start": .5, "end": 1.5}, root, lambda *_: None)
+                _material_visual_event_verification(payload, frames, {"start": .5, "end": 1.5}, root, lambda *_: None)
+            self.assertEqual(request.call_count, 1)
+            self.assertEqual(len(list(root.glob("visual-events-v1-*.json"))), 1)
+
+    def test_visual_event_request_contract_forbids_single_frame_motion(self):
+        body = _openai_request_body("openai-chat-completions", "test-model", "paid-ad-material-visual-event-verification", {"frames": []})
+        prompt = json.loads(body["messages"][1]["content"][0]["text"])
+        self.assertIn("events", prompt["requiredOutputContract"])
+        self.assertTrue(any("at least two distinct" in rule for rule in prompt["outputRules"]))
+        self.assertEqual(body["max_tokens"], 4000)
+
+    def test_dialogue_entity_enrichment_uses_asr_and_point_ocr_without_visual_invention(self):
+        transcript = [
+            {"start": 0, "end": 2.8, "text": "Juggernaut, end this brat!", "confidence": .8},
+            {"start": 16.8, "end": 20.04, "text": "Killian the Juggernaut, champion warrior.", "confidence": .88},
+            {"start": 20.9, "end": 21.86, "text": "At your command.", "confidence": .98},
+        ]
+        ocr = [{"text": "Killian the Juggernaut", "timecode": {"start": 17.5, "end": 17.5}, "framePath": "/tmp/frame.jpg", "confidence": .99}]
+        enriched = _enrich_material_dialogue_entities({"observations": [{"factId": "fact-002", "actionObserved": "发出命令", "evidence": [{"source": "transcript", "timecode": {"start": 0, "end": 2.8}, "confidence": .8}], "verification": "verified"}]}, transcript, ocr)
+        self.assertEqual({item["factId"] for item in enriched["observations"]}, {"fact-002", "local-dialogue-title", "local-dialogue-response"})
+        self.assertEqual(len(enriched["characters"]), 2)
+        self.assertEqual(enriched["relationships"][0]["type"], "mention_response")
+        self.assertEqual(enriched["relationships"][0]["subject"], "character-title-speaker")
+        self.assertTrue(all(item["verification"] == "unverified" for item in enriched["characters"]))
+        self.assertEqual(enriched["relationships"][0]["verification"], "unverified")
+        self.assertIn("ocr_frame", {item["source"] for item in enriched["characters"][1]["evidence"]})
+        self.assertNotIn("跪", json.dumps(enriched, ensure_ascii=False))
+
+    def test_material_cta_is_not_a_story_cliffhanger_and_reveal_is_recovered(self):
+        creative = {"timeline": [{"code": "cliffhanger", "label": "悬念", "start": 24.48, "end": 26.56, "evidence": [{"sourceText": "Click the link below to watch the full series."}]}], "hooks": []}
+        transcript = [
+            {"start": 16.8, "end": 20.04, "text": "Killian the Juggernaut, champion warrior of the Shadow Pack.", "confidence": .88},
+            {"start": 20.9, "end": 21.86, "text": "At your command.", "confidence": .98},
+            {"start": 24.48, "end": 26.56, "text": "Click the link below to watch the full series.", "confidence": .99},
+        ]
+        result = _sanitize_material_story_candidates(creative, transcript, [], 34.504)
+        self.assertEqual(result["timeline"], [])
+        self.assertEqual(result["cta"][0]["code"], "cta")
+        self.assertEqual(result["hooks"][0]["code"], "identity_reveal_response")
+        self.assertAlmostEqual(result["hooks"][0]["start"], 15.1)
+        self.assertAlmostEqual(result["hooks"][0]["end"], 23.46)
+
+    def test_complete_material_is_downgraded_when_cta_replaces_story_resolution(self):
+        result = copy.deepcopy(MATERIAL_CONTRACT)
+        result["durationSeconds"] = 34.5
+        result["content"]["characters"] = []
+        result["content"]["relationships"] = []
+        result["content"]["completeness"] = {"code": "complete", "value": "完整", "confidence": .95, "evidence": [{"source": "transcript", "timecode": {"start": 0, "end": 34.5}, "confidence": .9, "sourceText": "Click the link below to watch the full series."}], "verification": "verified"}
+        gated = _apply_material_evidence_gate(result)
+        self.assertEqual(gated["content"]["completeness"]["value"], "不完整")
+        self.assertFalse(gated["qualityGate"]["passed"])
+        self.assertTrue(any("CTA" in reason for reason in gated["qualityGate"]["reasons"]))
+
+    def test_unverified_material_facts_are_quarantined_from_consumable_layers(self):
+        result = copy.deepcopy(MATERIAL_CONTRACT)
+        result["durationSeconds"] = 10
+        result["content"]["observations"].append({"factId": "F-DANGLING", "actionObserved": "零时长字幕推断", "confidence": .9, "evidence": [{"source": "ocr", "timecode": {"start": 5, "end": 5}, "confidence": .9}], "verification": "verified"})
+        result["content"]["inferences"] = [{"statement": "悬空身份", "basedOnFactIds": ["F-DANGLING"], "confidence": .9, "evidence": [{"source": "ocr", "timecode": {"start": 5, "end": 5}, "confidence": .9}], "verification": "verified"}]
+        gated = _apply_material_evidence_gate(result)
+        self.assertEqual([item["factId"] for item in gated["content"]["observations"]], ["F1"])
+        self.assertEqual(gated["content"]["inferences"], [])
+        rejected = gated["review"]["rejectedClaims"]
+        self.assertTrue({"observation", "inference"}.issubset({item["layer"] for item in rejected}))
+
+    def test_material_evidence_graph_has_no_dangling_consumable_edges(self):
+        result = copy.deepcopy(MATERIAL_CONTRACT)
+        result["durationSeconds"] = 10
+        result["content"]["segments"] = [{"code": "body", "basedOnFactIds": ["MISSING"], "verification": "unverified"}]
+        result["creative"]["transitions"] = [{"code": "fade", "basedOnFactIds": ["MISSING"], "verification": "verified"}]
+        result["creative"]["timeline"] = [{"code": "peak", "basedOnFactIds": ["F1"], "verification": "verified"}]
+        result["creative"]["cta"] = [{"code": "cta", "basedOnFactIds": ["MISSING"], "verification": "verified", "evidence": [{"source": "transcript", "timecode": {"start": 8, "end": 9}, "confidence": .9}]}]
+        result["creative"]["bodyFormat"] = {"value": "正片主导", "basedOnFactIds": ["MISSING"], "verification": "verified"}
+        result["value"]["risks"] = [{"label": "风险", "basedOnFactIds": ["MISSING"], "verification": "verified"}]
+        gated = _apply_material_evidence_gate(result)
+        self.assertEqual(gated["content"]["segments"], [])
+        self.assertEqual(gated["creative"]["transitions"], [])
+        self.assertEqual(gated["creative"]["timeline"][0]["basedOnFactIds"], ["F1"])
+        self.assertEqual(gated["creative"]["cta"][0]["basedOnFactIds"], [])
+        self.assertEqual(gated["creative"]["bodyFormat"]["basedOnFactIds"], [])
+        self.assertEqual(gated["creative"]["bodyFormat"]["verification"], "unverified")
+        self.assertEqual(gated["value"]["risks"], [])
+        rejected_layers = {item["layer"] for item in gated["review"]["rejectedClaims"]}
+        self.assertTrue({"content.segments", "creative.transitions", "creative.bodyFormat", "value.risks"}.issubset(rejected_layers))
+
+    def test_material_publish_confidence_is_capped_when_quality_gate_fails(self):
+        result = copy.deepcopy(MATERIAL_CONTRACT)
+        result["qualityGate"] = {"passed": False}
+        result["content"]["characters"] = []
+        result["content"]["relationships"] = []
+        result["creative"]["hooks"] = []
+        result["value"]["scores"] = {}
+        self.assertLessEqual(_material_publish_confidence(result), 49)
+
+    def test_material_contract_diagnostic_lists_nested_missing_paths(self):
+        invalid = {"content": {"summary": {"value": "摘要"}}, "creative": {}, "value": {}, "review": {}}
+        missing = _material_output_contract_missing_paths(invalid)
+        self.assertIn("content.summary.evidence[]", missing)
+        self.assertIn("content.summary.basedOnFactIds[]", missing)
+        self.assertIn("content.summary.verification=verified", missing)
+        self.assertIn("content.observations[]", missing)
+        self.assertFalse(_material_output_contract_valid(invalid))
+        self.assertEqual(_material_output_contract_missing_paths(MATERIAL_CONTRACT), [])
+
+    def test_material_aggregate_preserves_verified_segment_observations(self):
+        first = copy.deepcopy(MATERIAL_CONTRACT)
+        second = copy.deepcopy(MATERIAL_CONTRACT)
+        second["content"]["observations"][0]["actionObserved"] = "打开房门"
+        merged = _aggregate_material_classification([first, second], 20)
+        repaired = _rebuild_material_summary_from_verified_observations(merged)
+        fact_ids = [item["factId"] for item in repaired["content"]["observations"]]
+        self.assertEqual(fact_ids, ["segment-1:F1", "segment-2:F1"])
+        self.assertEqual(repaired["content"]["summary"]["basedOnFactIds"], fact_ids)
+
+    def test_material_ocr_point_relinks_only_to_matching_measured_frame(self):
+        claim = {"confidence": .9, "evidence": [{"source": "ocr", "timecode": {"start": 0, "end": 0}, "confidence": .9, "text": "救命"}]}
+        source = [{"timecode": {"start": 0, "end": 0}, "text": "救命", "framePath": "/local/frame-000.jpg"}]
+        linked = _validate_semantic_claims(_relink_material_ocr_evidence(claim, source), 5)
+        self.assertEqual(linked["verification"], "verified")
+        self.assertEqual(linked["evidence"][0]["framePath"], "/local/frame-000.jpg")
+        unmatched = _validate_semantic_claims(_relink_material_ocr_evidence(claim, [{**source[0], "text": "别走"}]), 5)
+        self.assertEqual(unmatched["verification"], "unverified")
+
+    def test_material_source_claim_requires_lineage_not_dialogue(self):
+        dialogue = [{"source": "transcript", "text": "You are from the same pack", "timecode": {"start": 1, "end": 2}, "confidence": .9}]
+        result = _apply_material_evidence_gate({
+            "content": {"observations": [{"factId": "F1", "actionObserved": "角色提到同一族群", "evidence": dialogue, "verification": "verified"}], "inferences": [], "characters": [], "relationships": []},
+            "creative": {
+                "hookSourceStatus": {"value": "已确认同剧", "confidence": .9, "evidence": dialogue, "verification": "verified"},
+                "hookAssemblyType": {"value": "同剧外搭", "confidence": .9, "evidence": dialogue, "verification": "verified"},
+                "tier": {"value": "T1", "confidence": .9, "evidence": dialogue, "verification": "verified"},
+                "packaging": {"audio": []},
+            },
+            "sourceAttribution": {"status": "not_required", "matches": []},
+            "review": {"status": "ready", "reviewRequired": False, "reasons": []},
+        })
+        self.assertEqual(result["creative"]["hookSourceStatus"]["value"], "来源未知")
+        self.assertEqual(result["creative"]["hookAssemblyType"]["value"], "外搭来源待确认")
+        self.assertEqual(result["creative"]["tier"]["verification"], "unverified")
+        self.assertTrue(result["review"]["reviewRequired"])
+        self.assertFalse(result["qualityGate"]["passed"])
+
+    def test_material_summary_repair_uses_only_verified_observations(self):
+        evidence = [{"source": "transcript", "timecode": {"start": 1, "end": 2}, "confidence": .9, "text": "Stop"}]
+        invalid = copy.deepcopy(MATERIAL_CONTRACT)
+        invalid["content"]["summary"] = {"value": "unsupported provider summary"}
+        invalid["content"]["observations"] = [
+            {"factId": "F1", "actorObserved": "发令者", "actionObserved": "命令众人停下", "confidence": .9, "evidence": evidence, "verification": "verified"},
+            {"factId": "F2", "actorObserved": "旁观者", "actionObserved": "可能感到害怕", "confidence": .8, "evidence": evidence, "verification": "unverified"},
+        ]
+        repaired = _rebuild_material_summary_from_verified_observations(invalid)
+        summary = repaired["content"]["summary"]
+        self.assertEqual(summary["basedOnFactIds"], ["F1"])
+        self.assertEqual(summary["evidence"], evidence)
+        self.assertNotIn("害怕", summary["value"])
+        self.assertEqual(summary["repair"], "rebuilt_from_verified_observations")
+        self.assertTrue(_material_output_contract_valid(repaired))
+        self.assertEqual(repaired["review"]["status"], "needs_review")
+
+    def test_material_summary_repair_refuses_unverified_facts(self):
+        invalid = copy.deepcopy(MATERIAL_CONTRACT)
+        invalid["content"]["summary"] = {}
+        invalid["content"]["observations"] = [{"factId": "F1", "actionObserved": "猜测身份", "evidence": [], "verification": "unverified"}]
+        repaired = _rebuild_material_summary_from_verified_observations(invalid)
+        self.assertFalse(_material_output_contract_valid(repaired))
+
+    def test_material_contract_repairs_summary_locally_before_paid_retry(self):
+        invalid = copy.deepcopy(MATERIAL_CONTRACT)
+        invalid["content"]["summary"] = {"value": "provider summary without fact lineage"}
+        with patch("processor.semantic_analysis._semantic_request", side_effect=AssertionError("provider repair must not run")):
+            repaired = _ensure_material_output_contract(invalid, {}, 34.5, lambda *_: None)
+        self.assertTrue(_material_output_contract_valid(repaired))
+        self.assertEqual(repaired["content"]["summary"]["repair"], "rebuilt_from_verified_observations")
+
     def test_material_primary_hook_prefers_complete_opening_over_later_climax(self):
         claim = {"confidence": .9, "evidence": [], "verification": "unverified"}
         creative = {
@@ -113,7 +357,8 @@ class ProcessorTests(unittest.TestCase):
         })
         self.assertFalse(result["qualityGate"]["passed"])
         self.assertEqual(result["content"]["summary"]["verification"], "unverified")
-        self.assertEqual(result["content"]["inferences"][0]["verification"], "unverified")
+        self.assertEqual(result["content"]["inferences"], [])
+        self.assertTrue(any(item["layer"] == "inference" for item in result["review"]["rejectedClaims"]))
 
     def test_material_evidence_gate_rejects_visual_motive_inference(self):
         result = _apply_material_evidence_gate({
@@ -124,7 +369,8 @@ class ProcessorTests(unittest.TestCase):
             }, "creative": {}, "review": {"status": "ready", "reviewRequired": False},
         })
         self.assertFalse(result["qualityGate"]["passed"])
-        self.assertEqual(result["content"]["inferences"][0]["verification"], "unverified")
+        self.assertEqual(result["content"]["inferences"], [])
+        self.assertTrue(any(item["layer"] == "inference" for item in result["review"]["rejectedClaims"]))
 
     def test_material_evidence_gate_respects_existing_review_required(self):
         result = _apply_material_evidence_gate({
@@ -141,7 +387,8 @@ class ProcessorTests(unittest.TestCase):
             "creative": {}, "review": {"status": "ready", "reviewRequired": False},
         })
         self.assertFalse(result["qualityGate"]["passed"])
-        self.assertEqual(result["content"]["observations"][0]["verification"], "unverified")
+        self.assertEqual(result["content"]["observations"], [])
+        self.assertTrue(any(item["layer"] == "observation" for item in result["review"]["rejectedClaims"]))
 
     def test_coarse_request_requires_episode_summary_contract(self):
         body = _openai_request_body("openai-chat-completions", "test-model", "coarse-episode-analysis", {"episode": 1})
@@ -195,7 +442,8 @@ class ProcessorTests(unittest.TestCase):
         model.transcribe.return_value = (missing_audio(), SimpleNamespace(language=""))
         runtime = SimpleNamespace(device="cpu", compute_type="int8", fallback_reason="")
         create_model.return_value = (model, runtime)
-        with patch.dict("os.environ", {"LUMINA_WHISPER_MODEL": "tiny", "LUMINA_WHISPER_DEVICE": "cpu", "LUMINA_WHISPER_COMPUTE_TYPE": "int8"}, clear=False):
+        fake_whisper = SimpleNamespace(WhisperModel=MagicMock())
+        with patch.dict(sys.modules, {"faster_whisper": fake_whisper}), patch.dict("os.environ", {"LUMINA_WHISPER_MODEL": "tiny", "LUMINA_WHISPER_DEVICE": "cpu", "LUMINA_WHISPER_COMPUTE_TYPE": "int8"}, clear=False):
             transcript, engine = transcribe(Path("silent.mp4"))
         self.assertEqual(transcript, [])
         self.assertEqual(engine["status"], "no_audio")
@@ -274,6 +522,12 @@ class ProcessorTests(unittest.TestCase):
         result = analyze_hook_story_match(payload).result
         self.assertEqual(result["matches"], [])
         self.assertEqual(result["supplementalAnalysisRequests"][0]["requestedAnalysis"], "highlight_precision")
+
+    @patch.dict("os.environ", {"LUMINA_SEMANTIC_MODEL": "test-model"})
+    def test_hook_story_match_accepts_verified_non_external_source_class(self):
+        payload = {"hook": {"id": "h1", "source_class": "episode_highlight", "boundary_status": "verified"}, "drama": {"id": "d1"}, "episodes": [{"episode_number": 1, "highlights": []}], "episode_scope": [1]}
+        result = analyze_hook_story_match(payload).result
+        self.assertEqual(result["matches"], [])
 
     def test_story_duration_tiers_allow_only_explained_shortfall(self):
         spec = _target_duration_spec({"targetDurationTier": "5-15m"})
@@ -451,6 +705,24 @@ class ProcessorTests(unittest.TestCase):
         creative, _review = _normalize_material_format({"bodyFormat": verified("解说主导"), "hookSourceStatus": verified("已确认外搭")}, {"status": "ready"})
         self.assertEqual(creative["format"]["label"], "外搭钩子＋本剧正片")
 
+    def test_external_hook_can_reuse_original_cast_in_newly_produced_shots(self):
+        verified = lambda label: {"label": label, "confidence": .95, "evidence": [], "verification": "verified"}
+        creative, _review = _normalize_material_format({
+            "bodyFormat": verified("正片主导"),
+            "hookSourceStatus": verified("已确认外搭"),
+            "externalHookSubtype": verified("复用原剧人物资产但镜头为新生成/新制作"),
+        }, {"status": "ready"})
+        self.assertEqual(creative["format"]["label"], "外搭钩子＋本剧正片")
+        self.assertEqual(creative["externalHookSubtype"]["code"], "REUSED_CAST_NEW_PRODUCTION")
+
+    def test_external_hook_subtype_defaults_to_review_when_lineage_is_missing(self):
+        verified = lambda label: {"label": label, "confidence": .8, "evidence": [], "verification": "verified"}
+        creative, _review = _normalize_material_format({
+            "bodyFormat": verified("正片主导"),
+            "hookSourceStatus": verified("疑似外搭"),
+        }, {"status": "ready", "reasons": []})
+        self.assertEqual(creative["externalHookSubtype"]["code"], "UNKNOWN_REVIEW")
+
     def test_phrase_breaks_on_speaker_and_silence(self):
         words = [
             {"text": "Hello", "start": 0.0, "end": 0.4, "type": "word", "speaker_id": "speaker_0"},
@@ -577,6 +849,35 @@ class ProcessorTests(unittest.TestCase):
         self.assertIn("observations", contract["content"])
         self.assertIn("inferences", contract["content"])
 
+    def test_short_material_prompt_is_compact_and_output_bounded(self):
+        body = _openai_request_body("openai-chat-completions", "qwen-vl-max", "paid-ad-material-analysis", {"durationSeconds": 34.5, "transcript": [], "ocr": []})
+        prompt = json.loads(body["messages"][1]["content"][0]["text"])
+        rules = " ".join(prompt["outputRules"])
+        self.assertIn("below 8000 Chinese characters", rules)
+        self.assertIn("at most 8 observations", rules)
+        self.assertIn("at most 1 strongest evidence item per claim", rules)
+        self.assertEqual(body["max_tokens"], 12000)
+
+    @patch("processor.semantic_analysis._semantic_request", return_value=copy.deepcopy(MATERIAL_CONTRACT))
+    def test_short_material_uses_compact_segment_contract(self, semantic_mock):
+        result = _material_semantic_analysis({"frames": [], "transcript": [], "ocr": [], "requirements": []}, 34.5, lambda *_: None)
+        self.assertTrue(_material_output_contract_valid(result))
+        self.assertEqual(semantic_mock.call_count, 1)
+        self.assertEqual(semantic_mock.call_args.args[0], "paid-ad-material-segment-analysis")
+        self.assertEqual(semantic_mock.call_args.args[1]["segment"], {"start": 0.0, "end": 34.5})
+
+    @patch("processor.semantic_analysis._semantic_request", return_value=copy.deepcopy(MATERIAL_CONTRACT))
+    def test_short_material_reuses_provider_result_cache(self, semantic_mock):
+        payload = {"frames": [], "transcript": [], "ocr": [], "requirements": []}
+        with tempfile.TemporaryDirectory() as temporary:
+            cache_dir = Path(temporary)
+            first = _material_semantic_analysis(payload, 34.5, lambda *_: None, cache_dir)
+            second = _material_semantic_analysis(payload, 34.5, lambda *_: None, cache_dir)
+            self.assertTrue((cache_dir / "semantic-short-v1.json").exists())
+        self.assertTrue(_material_output_contract_valid(first))
+        self.assertEqual(first, second)
+        self.assertEqual(semantic_mock.call_count, 1)
+
     def test_material_contract_rejects_single_summary_claim(self):
         self.assertFalse(_material_output_contract_valid({"value": "summary", "confidence": 0.9, "evidence": []}))
         empty_summary = copy.deepcopy(MATERIAL_CONTRACT)
@@ -626,6 +927,35 @@ class ProcessorTests(unittest.TestCase):
         self.assertTrue(request_body["stream"])
         self.assertFalse(request_body["enable_thinking"])
 
+    @patch("processor.semantic_analysis.time.sleep", return_value=None)
+    @patch("processor.semantic_analysis.urllib.request.urlopen")
+    def test_stream_truncation_retries_only_current_request_and_counts_attempts(self, urlopen_mock, _sleep_mock):
+        partial_context = MagicMock()
+        partial_context.__enter__.return_value.__iter__.return_value = iter([
+            b'data: {"choices":[{"delta":{"content":"{\\"summary\\":"},"finish_reason":"length"}]}\n',
+            b'data: [DONE]\n',
+        ])
+        complete_context = MagicMock()
+        complete_context.__enter__.return_value.__iter__.return_value = iter([
+            b'data: {"choices":[{"delta":{"content":"{\\"summary\\":{}}"},"finish_reason":"stop"}]}\n',
+            b'data: [DONE]\n',
+        ])
+        urlopen_mock.side_effect = [partial_context, complete_context]
+        diagnostics = {}
+        with patch.dict("os.environ", {
+            "DASHSCOPE_API_KEY": "local-test-key",
+            "LUMINA_SEMANTIC_ENDPOINT": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+            "LUMINA_SEMANTIC_MODEL": "qwen-vl-max",
+            "LUMINA_SEMANTIC_PROVIDER": "openai-chat-completions",
+            "LUMINA_SEMANTIC_REQUEST_ATTEMPTS": "2",
+        }, clear=True):
+            result = _semantic_request("detail-drama-analysis", {"episodes": []}, diagnostics=diagnostics)
+        self.assertEqual(result, {"summary": {}})
+        self.assertEqual(urlopen_mock.call_count, 2)
+        self.assertEqual(diagnostics["requestCount"], 2)
+        self.assertEqual(diagnostics["model"], "qwen-vl-max")
+        self.assertGreaterEqual(diagnostics["wallClockSeconds"], 0)
+
     @patch("processor.semantic_analysis.urllib.request.urlopen")
     def test_dashscope_content_inspection_retries_with_sanitized_evidence(self, urlopen_mock):
         blocked = urllib.error.HTTPError("https://dashscope", 400, "bad request", {}, io.BytesIO(b'{"error":{"code":"data_inspection_failed"}}'))
@@ -666,6 +996,52 @@ class ProcessorTests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["episode"], 1)
 
+    def test_detail_frames_are_evenly_bounded_by_count_and_encoded_size(self):
+        frames = [{"episode": 1, "timecode": index, "base64": "x" * 10_000} for index in range(12)]
+        bounded = _bounded_detail_frames(frames, 8, 35_000)
+        self.assertLessEqual(len(bounded), 8)
+        self.assertLessEqual(sum(len(item["base64"]) for item in bounded), 35_000)
+        self.assertEqual(bounded[0]["timecode"], 0)
+        self.assertEqual(bounded[-1]["timecode"], 11)
+
+    def test_detail_motion_selector_preserves_endpoints_and_motion_burst(self):
+        with tempfile.TemporaryDirectory() as directory:
+            frames = []
+            for index in range(27):
+                shade = 240 if index == 14 else 10
+                path = Path(directory) / f"{index}.jpg"
+                Image.new("RGB", (64, 64), (shade, shade, shade)).save(path)
+                frames.append({"path": str(path), "timecode": index * 3})
+            selected = _select_detail_evidence_frames(frames, 8)
+        times = [item["timecode"] for item in selected]
+        self.assertEqual(times[0], 0)
+        self.assertEqual(times[-1], 78)
+        self.assertTrue({39, 42, 45}.issubset(set(times)))
+
+    def test_drama_claim_safety_rejects_negation_reversal_and_weak_kinship(self):
+        negated = {"description": "Alpha怀疑Tiffany", "evidence": [{"sourceText": "No. Not Tiffany."}]}
+        self.assertIn("否定极性", _drama_claim_safety_issue(negated))
+        kinship = {"description": "Arya是Killen的母亲", "evidence": [{"sourceText": "She's his mother. Killen hadn't..."}]}
+        self.assertIn("血缘", _drama_claim_safety_issue(kinship))
+
+    def test_no_audio_relationships_and_frame_only_characters_are_not_published(self):
+        semantic = {
+            "characters": [{"name": "守护者", "episodes": [2], "verification": "verified", "evidence": [{"episode": 2, "source": "frame", "timecode": {"start": 1, "end": 1}, "confidence": .9}]}],
+            "relationships": [{"character1": "Amelia", "character2": "婴儿", "type": "母子", "episodes": [2], "verification": "verified", "evidence": [{"episode": 2, "source": "frame", "timecode": {"start": 1, "end": 1}, "confidence": .9}]}],
+        }
+        result = _sanitize_drama_detail_semantics(semantic, [{"episode": 2, "transcript": []}])
+        self.assertEqual(result["characters"], [])
+        self.assertEqual(result["relationships"], [])
+        self.assertEqual(len(result["characterCandidates"]), 1)
+        self.assertEqual(len(result["relationshipCandidates"]), 1)
+        self.assertTrue(result["reviewRequired"])
+
+    def test_episode_plot_rejects_cross_episode_evidence(self):
+        local = {"description": "local", "evidence": [{"episode": 9, "source": "transcript"}]}
+        foreign = {"description": "foreign", "evidence": [{"episode": 10, "source": "transcript"}]}
+        mixed = {"description": "mixed", "evidence": [{"episode": 9}, {"episode": 10}]}
+        self.assertEqual(_episode_owned_core_facts([local, foreign, mixed], 9), [local])
+
     def test_detail_precision_candidates_deduplicate_overlap_without_confidence_ranking(self):
         def candidate(episode, confidence):
             start = confidence * 5
@@ -680,10 +1056,77 @@ class ProcessorTests(unittest.TestCase):
         self.assertEqual([item["confidence"] for item in candidates], [.4, .75])
         self.assertFalse(candidates[0]["precisionEligible"])
 
+    def test_detail_candidate_enters_precision_before_dense_quality_scoring(self):
+        evidence = [{"episode": 1, "source": "transcript", "confidence": .95, "timecode": {"start": 10, "end": 12}}]
+        candidate = {"episode": 1, "start": 8, "end": 25, "confidence": .9, "audienceQuestion": "她为何隐瞒身份？", "narrativePromise": "后续将揭示真实身份。", "evidence": evidence}
+        result = _precision_candidates([candidate], {1: 40})
+        self.assertEqual(len(result), 1)
+        self.assertTrue(result[0]["precisionEligible"])
+        self.assertTrue(result[0]["precisionDiscoveryGate"]["passed"])
+        self.assertFalse(result[0]["scoreContractComplete"])
+        self.assertTrue(result[0]["reviewRequired"])
+
     def test_detail_precision_candidates_expand_fragments_to_twelve_seconds(self):
         evidence = [{"episode": 1, "source": "transcript", "confidence": .9, "timecode": {"start": 21, "end": 23}}]
         candidates = _precision_candidates([{"episode": 1, "start": 21, "end": 23, "confidence": .9, "evidence": evidence}], {1: 100})
         self.assertEqual(candidates[0]["end"] - candidates[0]["start"], 12)
+        self.assertEqual(candidates[0]["eventInterval"], {"start": 21.0, "end": 23.0})
+        self.assertEqual(candidates[0]["precisionInterval"], {"start": 16.0, "end": 28.0})
+
+    def test_precision_frames_obey_count_size_and_endpoint_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            frames = []
+            for index in range(121):
+                path = Path(directory) / f"{index}.jpg"
+                Image.new("RGB", (640, 360), (index % 255, (index * 3) % 255, (index * 7) % 255)).save(path)
+                frames.append({"path": str(path), "timecode": index / 2, "episode": 1})
+            selected = _select_precision_evidence_frames(frames, 16)
+            with patch.dict("os.environ", {"LUMINA_PRECISION_MAX_FRAMES": "16", "LUMINA_PRECISION_MAX_BASE64_CHARS": "240000"}):
+                bounded = _bounded_precision_frames(frames)
+        self.assertLessEqual(len(selected), 16)
+        self.assertEqual((selected[0]["timecode"], selected[-1]["timecode"]), (0, 60))
+        self.assertLessEqual(len(bounded), 16)
+        self.assertLessEqual(sum(len(item["base64"]) for item in bounded), 240000)
+        self.assertEqual((bounded[0]["timecode"], bounded[-1]["timecode"]), (0, 60))
+
+    def test_detail_recall_probes_enqueue_motion_and_uncovered_ending_without_claiming_highlight(self):
+        frames = [
+            {"episode": 8, "timecode": 42, "selectionReason": "motion_burst", "sequenceId": "motion-1"},
+            {"episode": 8, "timecode": 45, "selectionReason": "motion_burst", "sequenceId": "motion-1"},
+            {"episode": 8, "timecode": 48, "selectionReason": "motion_burst", "sequenceId": "motion-1"},
+            {"episode": 8, "timecode": 72, "selectionReason": "endpoint_context"},
+            {"episode": 8, "timecode": 75, "selectionReason": "endpoint_context"},
+            {"episode": 8, "timecode": 78, "selectionReason": "endpoint"},
+        ]
+        probes = _detail_recall_probes(frames, {8: 80}, [])
+        self.assertEqual({item["candidateKind"] for item in probes}, {"motion_recall_probe", "ending_recall_probe"})
+        self.assertTrue(all(item["precisionEligible"] and item["reviewRequired"] for item in probes))
+        self.assertTrue(all(not item["qualityGate"]["passed"] for item in probes))
+        self.assertGreaterEqual(probes[1]["eventInterval"]["end"], 79)
+
+    def test_detail_recall_probes_accept_worker_timecode_objects(self):
+        frames = [
+            {"episode": 4, "timecode": {"start": 27, "end": 27}, "selectionReason": "motion_burst", "sequenceId": "motion-1"},
+            {"episode": 4, "timecode": {"start": 30, "end": 30}, "selectionReason": "motion_burst", "sequenceId": "motion-1"},
+            {"episode": 4, "timecode": {"start": 33, "end": 33}, "selectionReason": "motion_burst", "sequenceId": "motion-1"},
+        ]
+        probes = _detail_recall_probes(frames, {4: 100}, [])
+        self.assertEqual(len(probes), 1)
+        self.assertEqual(probes[0]["eventInterval"], {"start": 25.5, "end": 34.5})
+
+    def test_detail_motion_recall_intervals_cover_each_timeline_quartile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            frames = []
+            for index in range(40):
+                shade = (index * 29) % 255
+                path = Path(directory) / f"{index}.jpg"
+                Image.new("RGB", (64, 64), (shade, shade, shade)).save(path)
+                frames.append({"path": str(path), "timecode": {"start": index * 3, "end": index * 3}})
+            intervals = _detail_motion_recall_intervals(frames, 4)
+        self.assertEqual([item["quartile"] for item in intervals], [1, 2, 3, 4])
+        self.assertTrue(all(item["episode"] == 4 for item in intervals))
+        centers = [(item["eventInterval"]["start"] + item["eventInterval"]["end"]) / 2 for item in intervals]
+        self.assertTrue(all(index * 30 - 15 <= center <= (index + 1) * 30 + 15 for index, center in enumerate(centers)))
 
     def test_precision_hooks_expand_and_require_boundary_review(self):
         hooks = _normalize_precision_hooks([{"start": 21, "end": 23, "evidence": [{"source": "transcript"}]}], 18, 30)
@@ -713,6 +1156,99 @@ class ProcessorTests(unittest.TestCase):
         self.assertEqual(detail.result["highlightCandidates"], [])
         self.assertEqual(detail.result["precisionCandidates"], [])
         self.assertEqual(semantic_request.call_count, 2)
+
+    def test_detail_episode_checkpoint_reuses_success_and_records_diagnostics(self):
+        provider_result = {
+            "characters": [], "relationships": [], "episodePlots": [{"episode": 1, "summary": "", "coreEvents": [], "relationshipChanges": [], "emotionSignals": [], "foreshadowing": []}],
+            "emotionCurve": [], "contentTags": [], "highlightCandidates": [],
+        }
+        coarse = AnalysisEnvelope("1.0.0", "coarse-1", "coarse", "succeeded", {"episode": 1, "durationSeconds": 10}, {}, {"episode": 1, "durationSeconds": 10, "transcript": [], "ocr": []})
+
+        def semantic_result(_task, _payload, *_args, **kwargs):
+            diagnostics = kwargs["diagnostics"]
+            diagnostics["requestCount"] += 1
+            diagnostics["wallClockSeconds"] += 0.012
+            return copy.deepcopy(provider_result)
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LUMINA_SEMANTIC_MODEL": "qwen-vl-max"}):
+            cache_dir = Path(directory) / "analysis-cache"
+            with patch("processor.semantic_analysis._semantic_request", side_effect=semantic_result) as first_request:
+                first = analyze_detail([coarse], cache_dir=cache_dir)
+            with patch("processor.semantic_analysis._semantic_request", side_effect=AssertionError("episode provider must be cached")):
+                second = analyze_detail([coarse], cache_dir=cache_dir)
+
+            self.assertEqual(first_request.call_count, 1)
+            first_chunk = first.result["diagnostics"]["detailCheckpoints"]["chunks"][0]
+            second_chunk = second.result["diagnostics"]["detailCheckpoints"]["chunks"][0]
+            self.assertFalse(first_chunk["cacheHit"])
+            self.assertEqual(first_chunk["requestCount"], 1)
+            self.assertEqual(first_chunk["model"], "qwen-vl-max")
+            self.assertTrue(second_chunk["cacheHit"])
+            self.assertEqual(second_chunk["requestCount"], 0)
+            checkpoint_files = list(cache_dir.glob("drama-detail/by-content-hash/*/qwen-vl-max/drama-detail-checkpoint-v1-20260831/*.json"))
+            self.assertEqual(len(checkpoint_files), 1)
+
+    def test_detail_reconciliation_consumes_episode_checkpoints_not_raw_media(self):
+        coarse = [
+            AnalysisEnvelope("1.0.0", f"coarse-{episode}", "coarse", "succeeded", {"episode": episode, "durationSeconds": 10}, {}, {"episode": episode, "durationSeconds": 10, "transcript": [{"start": 1, "end": 2, "text": f"line {episode}"}], "ocr": []})
+            for episode in (1, 2)
+        ]
+        reconciliation_payloads = []
+
+        def semantic_result(task, payload, *_args, **kwargs):
+            diagnostics = kwargs.get("diagnostics")
+            if diagnostics is not None:
+                diagnostics["requestCount"] += 1
+            if task == "detail-drama-analysis":
+                episode = payload["episodes"][0]["episode"]
+                return {"characters": [], "relationships": [], "episodePlots": [{"episode": episode, "summary": "", "coreEvents": [], "relationshipChanges": [], "emotionSignals": [], "foreshadowing": []}], "emotionCurve": [], "contentTags": [], "highlightCandidates": []}
+            if task == "reconcile-drama-storyline":
+                reconciliation_payloads.append(payload)
+                return {"characters": [], "relationships": [], "emotionCurve": [], "contentTags": []}
+            if task == "ground-drama-episode":
+                episode = payload["episode"]["episode"]
+                return {"episodePlot": {"episode": episode, "summary": "", "coreFacts": [], "evidence": []}}
+            if task == "synthesize-drama-overview":
+                return {"storyOverview": {"summary": ""}}
+            raise AssertionError(task)
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LUMINA_SEMANTIC_MODEL": "qwen-vl-max"}), patch("processor.semantic_analysis._semantic_request", side_effect=semantic_result):
+            analyze_detail(coarse, visual_frames=[{"episode": 1, "timecode": {"start": 1, "end": 1}, "base64": "YWJj"}], cache_dir=Path(directory))
+        self.assertEqual(len(reconciliation_payloads), 1)
+        payload = reconciliation_payloads[0]
+        self.assertEqual(len(payload["episodeCheckpoints"]), 2)
+        self.assertNotIn("episodes", payload)
+        self.assertNotIn("frames", payload)
+        self.assertNotIn("episodeBoundaryAnchors", payload)
+
+    @patch("processor.semantic_analysis._semantic_request")
+    def test_checkpoint_only_reconcile_uses_max_and_records_per_phase_cost(self, semantic_request):
+        def response(task, payload, *_args, **kwargs):
+            diagnostics = kwargs.get("diagnostics")
+            if diagnostics is not None:
+                diagnostics["model"] = "qwen-vl-max"; diagnostics["requestCount"] += 1
+            if task == "reconcile-drama-storyline":
+                self.assertIn("episodeCheckpoints", payload); self.assertNotIn("frames", payload)
+                return {"characters": [], "relationships": [], "emotionCurve": [], "contentTags": []}
+            if task == "ground-drama-episode":
+                self.assertIn("episodeCheckpoint", payload); self.assertNotIn("transcript", payload)
+                episode = payload["episodeCheckpoint"]["episode"]
+                return {"episodePlot": {"episode": episode, "summary": f"episode {episode}", "coreEvents": [], "evidence": []}}
+            if task == "synthesize-drama-overview":
+                return {"storyOverview": {"summary": "overview"}}
+            raise AssertionError(task)
+        semantic_request.side_effect = response
+        checkpoints = []
+        for episode in (1, 2):
+            checkpoints.append({"episode_number": episode, "result": {"tier": "detail", "status": "succeeded", "source": {"episodes": [episode]}, "checkpoint": {"episode": episode, "durationSeconds": 20}, "result": {"characters": [], "relationships": [], "episodePlots": [{"episode": episode, "summary": "", "coreEvents": []}], "emotionCurve": [], "contentTags": [], "highlightCandidates": []}}})
+        with patch.dict("os.environ", {"LUMINA_SEMANTIC_MODEL": "qwen-vl-max", "LUMINA_SEMANTIC_RECALL_MODEL": "qwen3-vl-flash"}):
+            result = analyze_detail_reconcile(checkpoints)
+        diagnostics = result.result["diagnostics"]["detailReconcile"]
+        self.assertTrue(diagnostics["checkpointOnly"])
+        self.assertEqual(diagnostics["checkpointCount"], 2)
+        self.assertEqual(diagnostics["modelCalls"], 4)
+        self.assertEqual(diagnostics["cacheHitRate"], 1.0)
+        self.assertTrue(all(item["model"] == "qwen-vl-max" for item in diagnostics["phases"]))
 
     @patch("processor.job_worker.api_request")
     def test_optional_material_queue_400_does_not_exit_drama_worker(self, api_request_mock):
@@ -808,6 +1344,35 @@ class ProcessorTests(unittest.TestCase):
         self.assertEqual(args[1:4], (3, 4.5, 8.0))
         self.assertEqual(args[4].analysis_id, "c3")
 
+    @patch("processor.job_worker.analyze_detail_reconcile")
+    @patch("processor.job_worker.extract_frames", side_effect=AssertionError("reconcile must not extract frames"))
+    @patch("processor.job_worker.download", side_effect=AssertionError("reconcile must not download media"))
+    def test_detail_reconcile_worker_consumes_only_persisted_checkpoints(self, _download, _frames, reconcile_mock):
+        reconcile_mock.return_value = AnalysisEnvelope("1.0.0", "detail-parent", "detail", "succeeded", {"episodes": [1], "checkpointOnly": True}, {}, {"highlightCandidates": []})
+        checkpoint = {"episode": "episode-1", "episode_number": 1, "result": {"tier": "detail", "status": "succeeded", "result": {"episodePlots": [{"episode": 1}]}}}
+        job = {"stage": "detail", "parameters": {"job_kind": "detail_reconcile", "checkpoint_only": True}, "episode_checkpoints": [checkpoint]}
+        with tempfile.TemporaryDirectory() as tmp:
+            result = execute_semantic_job(job, "http://pb", Path(tmp))
+        self.assertEqual(result["source"]["checkpointOnly"], True)
+        self.assertEqual(reconcile_mock.call_args.args[0], [checkpoint])
+
+    @patch("processor.job_worker._detail_frame_payload", return_value="encoded-frame")
+    @patch("processor.job_worker.extract_frames")
+    @patch("processor.job_worker.download")
+    @patch("processor.job_worker.analyze_detail")
+    def test_detail_episode_worker_downloads_only_its_episode_and_returns_checkpoint(self, detail_mock, download_mock, frames_mock, _frame_payload):
+        coarse = AnalysisEnvelope("1.0.0", "coarse-2", "coarse", "succeeded", {"episode": 2, "durationSeconds": 20}, {}, {"episode": 2, "durationSeconds": 20, "transcript": [], "ocr": []})
+        detail_mock.return_value = AnalysisEnvelope("1.0.0", "detail-2", "detail", "succeeded", {"episodes": [2]}, {}, {"highlightCandidates": [], "diagnostics": {"detailCheckpoints": {"chunks": [{"episode": 2, "model": "flash", "requestCount": 1, "cacheHit": False}]}}})
+        frames_mock.return_value = [{"path": "/does/not/need/to/exist.jpg", "timecode": {"start": 0, "end": 0}, "motionScore": 0}]
+        job = {"stage": "detail_episode", "video": "ep02.mp4", "episode": "episode-2", "collection_id": "episodes", "episode_number": 2, "coarse_result": coarse.to_dict(), "parameters": {"job_kind": "detail_episode"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            result = execute_semantic_job(job, "http://pb", Path(tmp))
+        self.assertEqual(download_mock.call_count, 1)
+        self.assertEqual(detail_mock.call_args.args[0][0].analysis_id, "coarse-2")
+        self.assertEqual(result["checkpoint"]["episode"], 2)
+        self.assertEqual(result["checkpoint"]["durationSeconds"], 20.0)
+        self.assertEqual(result["checkpoint"]["version"], "detail-episode-v1")
+
     def test_worker_start_script_checks_credentials_before_python(self):
         script = Path("scripts/start-analysis-worker.ps1").read_text(encoding="utf-8")
         key_check = script.index("LUMINA_SEMANTIC_API_KEY")
@@ -839,9 +1404,10 @@ class ProcessorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "output.mp4"
             output.write_bytes(b"video")
-            technical = {"format": {"duration": "12.0"}, "streams": [{"codec_type": "video", "codec_name": "h264", "width": 1080, "height": 1920}, {"codec_type": "audio", "codec_name": "aac"}]}
+            technical = {"format": {"duration": "12.0"}, "streams": [{"codec_type": "video", "codec_name": "h264", "width": 1080, "height": 1920}, {"codec_type": "audio", "codec_name": "aac", "duration": "12.0"}]}
             ledger = [{"status": "verified", "safeStart": {"status": "verified"}, "safeEnd": {"status": "verified"}, "kind": "hook"}]
-            report = build_render_quality_report(output=output, technical=technical, expected_duration=10.0, width=1080, height=1920, ledger=ledger)
+            with patch("processor.factory_render._loudnorm_measurement", return_value={"input_i": -14.0, "input_tp": -1.5}):
+                report = build_render_quality_report(output=output, technical=technical, expected_duration=10.0, width=1080, height=1920, ledger=ledger)
         self.assertFalse(report["passed"])
         self.assertIn("DURATION_CONSISTENCY", report["failureCodes"])
 
@@ -849,10 +1415,25 @@ class ProcessorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "output.mp4"
             output.write_bytes(b"video")
-            technical = {"format": {"duration": "10.04"}, "streams": [{"codec_type": "video", "codec_name": "h264", "width": 1080, "height": 1920}, {"codec_type": "audio", "codec_name": "aac"}]}
+            technical = {"format": {"duration": "10.04"}, "streams": [{"codec_type": "video", "codec_name": "h264", "width": 1080, "height": 1920}, {"codec_type": "audio", "codec_name": "aac", "duration": "10.04"}]}
             ledger = [{"status": "verified", "safeStart": {"status": "verified"}, "safeEnd": {"status": "verified"}, "kind": "episode", "flashTailStart": 12.0, "end": 10.0}]
-            report = build_render_quality_report(output=output, technical=technical, expected_duration=10.0, width=1080, height=1920, ledger=ledger)
+            with patch("processor.factory_render._loudnorm_measurement", return_value={"input_i": -14.0, "input_tp": -1.5}):
+                report = build_render_quality_report(output=output, technical=technical, expected_duration=10.0, width=1080, height=1920, ledger=ledger)
         self.assertTrue(report["passed"])
+
+    def test_episode_splice_boundary_contract_rejects_fabricated_or_missing_boundaries(self):
+        with self.assertRaisesRegex(AnalysisFailed, "approved highlight"):
+            _validated_splice_boundaries({"safeStart": {"status": "verified", "source": "selected_highlight_start"}, "safeEnd": {"status": "verified", "source": "episode_end"}}, first=True, episode=1, start=12)
+        with self.assertRaisesRegex(AnalysisFailed, "source-start"):
+            _validated_splice_boundaries({"safeStart": {"status": "verified", "source": "episode_start"}, "safeEnd": {"status": "verified", "source": "episode_end"}}, first=False, episode=2, start=1)
+        with self.assertRaisesRegex(AnalysisFailed, "source-end"):
+            _validated_splice_boundaries({"safeStart": {"status": "verified", "source": "episode_start"}}, first=False, episode=2, start=0)
+
+    def test_episode_splice_boundary_contract_accepts_server_canonical_boundaries(self):
+        first = {"safeStart": {"status": "verified", "source": "approved_highlight", "highlightAssetId": "hook1"}, "safeEnd": {"status": "verified", "source": "episode_end"}}
+        following = {"safeStart": {"status": "verified", "source": "episode_start"}, "safeEnd": {"status": "verified", "source": "episode_end"}}
+        self.assertEqual(_validated_splice_boundaries(first, first=True, episode=1, start=12)[0]["highlightAssetId"], "hook1")
+        self.assertEqual(_validated_splice_boundaries(following, first=False, episode=2, start=0)[0]["source"], "episode_start")
 
     def test_hook_match_uses_only_complete_fragment_evidence(self):
         hook = {

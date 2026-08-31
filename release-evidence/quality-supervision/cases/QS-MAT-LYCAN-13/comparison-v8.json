@@ -1,0 +1,161 @@
+{
+  "caseId": "QS-MAT-LYCAN-13",
+  "comparisonVersion": "v8",
+  "golden": {
+    "version": "v1",
+    "status": "frozen_blind",
+    "sha256": "ca2c502069a14088d018beddc959555d9cd080f75f184933be2efe18da1e1c7d",
+    "unchanged": true
+  },
+  "system": {
+    "materialId": "zmzrljhnwl4uxw5",
+    "jobId": "30wqqaz0u3vav09",
+    "snapshotSha256": "fea680c4a4c986624890a92e2eca5ff689564b5bff26ecf7d35ebc59b6468806",
+    "terminalStatus": "succeeded",
+    "progress": 100,
+    "terminalStage": "completed",
+    "materialAnalysisStatus": "succeeded",
+    "materialReviewStatus": "needs_review",
+    "materialConfidence": 49,
+    "productionStatus": "blocked",
+    "qualityGatePassed": false
+  },
+  "visualEventVerification": {
+    "acceptedComputed": 0,
+    "rejectedComputed": 4,
+    "speakerVerifiedComputed": 0,
+    "reviewRequired": true,
+    "allRejectedVerification": "unverified",
+    "allRejectedReviewRequired": true,
+    "rejectedEventLeakIds": [],
+    "boundaryAssessment": {
+      "candidateStart": 14.5,
+      "candidateEnd": 24.5,
+      "recommendedStart": 15.1,
+      "recommendedEnd": 23.9,
+      "actionStatus": "unverified",
+      "semanticStatus": "unverified",
+      "shotStatus": "verified",
+      "dialogueStatus": "verified",
+      "reviewRequired": true
+    }
+  },
+  "verdict": {
+    "engineeringExecution": "PASS",
+    "visualInferenceIsolation": "PASS",
+    "contentQuality": "BELOW_GATE",
+    "productionSafety": "PASS_BLOCKING_BEHAVIOR",
+    "hardGate": "NO-GO",
+    "reason": "Both v7 contract defects are fixed and no rejected visual inference leaks into consumable output. Content remains NO-GO because accepted visual events remain zero, so the golden kneeling/obedience and observer-reaction payoff is still absent from the verified story chain."
+  },
+  "scores": {
+    "factAndEvidenceAccuracy": 72,
+    "highlightLocalization": 84,
+    "hookRetention": 79,
+    "storyCompleteness": 72,
+    "hookMainMatch": null,
+    "transitionNarration": null,
+    "engineeringReliability": 96,
+    "fullWeightedTotal": null,
+    "scopeNormalizedScore": 77,
+    "scopeNormalizedDenominatorWeight": 75,
+    "priorScopeNormalizedScores": {"v1": 22, "v2": 28, "v3": 66, "v4": 70, "v5": 69, "v6": 77, "v7": 77}
+  },
+  "requestedChecks": [
+    {
+      "check": "rejected event contract",
+      "result": "pass",
+      "evidence": "All four rejectedEvents have verification=unverified and reviewRequired=true; none can satisfy a generic verified-event query."
+    },
+    {
+      "check": "accepted=0 boundary downgrade",
+      "result": "pass",
+      "evidence": "boundaryAssessment actionStatus and semanticStatus are unverified; shotStatus and dialogueStatus are verified; reviewRequired=true."
+    },
+    {
+      "check": "boundary recommendation aligned to published hook",
+      "result": "pass",
+      "evidence": "recommendedStart/End=15.1/23.9 exactly matches the published hook; raw candidates 14.5/24.5 are not promoted."
+    },
+    {
+      "check": "rejected visual inference leakage",
+      "result": "pass",
+      "evidence": "Computed rejectedEventLeakIds=[] across content observations, segments, relationships and hooks. Emotion, causality, speaking and identity guesses remain quarantined."
+    },
+    {
+      "check": "full published fact closure",
+      "result": "pass",
+      "evidence": "Recursive scan of all published basedOnFactIds outside review.rejectedClaims found no invalid fact reference."
+    },
+    {
+      "check": "production safety",
+      "result": "pass",
+      "evidence": "Material remains needs_review with confidence=49, qualityGate=false and productionStatus=blocked."
+    }
+  ],
+  "goldenTimecodeComparison": [
+    {"golden": "16.1–20.4 title/naming", "system": "dialogue/OCR fact retained; speaker verification remains zero", "result": "safe_partial_match"},
+    {"golden": "20.9–21.5 kneeling and spoken response", "system": "spoken response verified; visual event rejected/unverified", "result": "dialogue_match_visual_missing"},
+    {"golden": "21.5–25.2 observer shock", "system": "visual candidates rejected/unverified and review required", "result": "safe_rejection_story_missing"},
+    {"golden": "15.1–23.5 strongest highlight", "system": "recommended and published 15.1–23.9, action/semantic unverified", "result": "high_match_review_gated"}
+  ],
+  "priorGapRetest": [
+    {
+      "id": "QS-L13-V7-P1-001",
+      "status": "fixed",
+      "evidence": "Every rejected event is unverified and reviewRequired; confidence is no longer conflated with acceptance."
+    },
+    {
+      "id": "QS-L13-V7-P1-002",
+      "status": "fixed",
+      "evidence": "With accepted=0, action/semantic are unverified and recommendation matches the authoritative hook; shot/dialogue verification remains independently supported."
+    },
+    {
+      "id": "QS-L13-V7-P1-003",
+      "status": "not_fixed_but_safely_isolated",
+      "evidence": "No visual event is accepted; kneeling and observer reactions remain missing rather than hallucinated."
+    },
+    {
+      "id": "QS-L13-V7-P1-004",
+      "status": "not_fixed",
+      "evidence": "speakerLinks verified count is zero, but existing character-title-speaker remains verified from dialogue adjacency without speaker evidence."
+    }
+  ],
+  "hardGates": {
+    "result": "NO-GO",
+    "triggered": ["central_reversal_story_chain_materially_incomplete"],
+    "clearedSinceV7": [
+      "rejected_event_verification_contract_conflict",
+      "visual_boundary_assessment_conflicts_with_authoritative_hook"
+    ],
+    "notTriggered": [
+      "rejected_visual_inference_leaked",
+      "speaker_identity_promoted_by_visual_verifier",
+      "unsafe_boundary_auto_approved",
+      "unapproved_asset_entered_production"
+    ]
+  },
+  "developmentItems": [
+    {
+      "id": "QS-L13-V8-P1-001",
+      "severity": "P1",
+      "module": "multi-frame visual event extraction",
+      "task": "Acquire temporally sufficient frame pairs or short clips to verify kneeling/obedience and observer reactions using only observable motion/state.",
+      "regression": "Golden 20.9–25.2 visual actions become replayable accepted facts or remain review-required; no emotion, causality or identity is inferred from posture alone."
+    },
+    {
+      "id": "QS-L13-V8-P1-002",
+      "severity": "P1",
+      "module": "speaker/entity projection",
+      "task": "Downgrade character-title-speaker until diarization, lip-sync or frame speaker evidence identifies the later caller.",
+      "regression": "When speakerVerified=0, no speaker character node is marked verified solely from adjacent ASR."
+    },
+    {
+      "id": "QS-L13-V8-P2-001",
+      "severity": "P2",
+      "module": "ASR/OCR reconciliation and risk synthesis",
+      "task": "Prefer confirmed point OCR for the title and suppress the unsupported verified controversy risk derived from mistranscribed 'Wreckus brat'.",
+      "regression": "Correct OCR is authoritative over conflicting ASR title text, and content-risk claims require independent evidence."
+    }
+  ]
+}

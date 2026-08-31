@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "caseId": "QS-GH-002",
+  "goldenVersion": "v1",
+  "status": "frozen_with_prior",
+  "frozenAt": "2026-08-30T22:26:48+08:00",
+  "input": {
+    "path": "/Users/julia_chen/Downloads/1784805656_QTi3ycwhxA_H264_720.mp4",
+    "sha256": "eddfbf807420e9995222c3e65dad9a4c8db8c6eca69774305e75113bdcc186c1",
+    "durationSeconds": 1223.927
+  },
+  "blindness": {
+    "systemOutputSeenBeforeFreeze": false,
+    "allowedInputs": ["original media", "ffprobe fingerprint", "timestamped contact sheets", "user-provided business label and hard-positive note", "legacy sample-packaging metadata (not a current tested-system output)"],
+    "knownBusinessPriors": ["User designates the complete asset as an external-hook positive.", "User identifies this as the difficult positive where original-drama people/assets may be reused while shots are newly produced."],
+    "limitations": ["No corresponding original-drama episodes or production-lineage records available for independent shot-level confirmation.", "T1/T2 taxonomy definitions are absent.", "Exact hook-to-main boundary cannot be proven from the export alone.", "Legacy samples.json provisional visual triage was visible before freeze; it is disclosed as a packaging prior, and no current system answer was read."],
+    "reviewer": "independent_e2e_quality_supervisor"
+  },
+  "expertAnswer": {
+    "genre": ["家庭伦理/亲子", "失忆", "豪门/隐藏身份"],
+    "sourceClassification": {
+      "businessLabel": "external_hook_positive",
+      "externalSubtype": "reused_drama_assets_new_shots",
+      "sourceEvidenceStatus": "business_prior_only",
+      "reasoning": "Subtype follows the explicit human business prior, not visual discontinuity. Visual/person continuity must not negate external attribution; independent verification still requires source-shot and lineage comparison.",
+      "t1t2": {"value": null, "status": "not_evaluable_taxonomy_missing"}
+    },
+    "hook": {
+      "boundaryStatus": "candidate_only",
+      "candidateRanges": [
+        {"startSeconds": 0, "endSeconds": 63, "confidence": 0.7, "basis": "Wallet theft/abuse, food humiliation, amnesiac-mother reveal, and wealthy observer deciding to help."},
+        {"startSeconds": 0, "endSeconds": 145, "confidence": 0.59, "basis": "Extended causal setup through charity, mother reunion, and wealthy man recognition; exact cut needs dialogue/frame review."}
+      ],
+      "events": [
+        {"statement": "A street child takes a wallet and is physically threatened/abused by a suited man.", "evidence": [{"startSeconds": 0, "endSeconds": 9, "confidence": 0.96, "basis": "Wallet pickup, confrontation and child on ground."}], "confidence": 0.96},
+        {"statement": "Hungry and alone, the child attempts to eat discarded food and is confronted by stall owners.", "evidence": [{"startSeconds": 10, "endSeconds": 36, "confidence": 0.95, "basis": "Water, discarded hot dog, eating and confrontation."}], "confidence": 0.95},
+        {"statement": "The story states the child's mother suffered head trauma, lost her memory, and is also homeless/hungry.", "evidence": [{"startSeconds": 40, "endSeconds": 56, "confidence": 0.91, "basis": "Mother eating in alley and explicit head-trauma/amnesia captions."}], "confidence": 0.91},
+        {"statement": "A wealthy-looking man observes the mother and decides she may need help.", "evidence": [{"startSeconds": 52, "endSeconds": 63, "confidence": 0.88, "basis": "Man in chauffeured car, concern, instruction to pull over."}], "confidence": 0.88},
+        {"statement": "The stall owners feed and give money to the boy, who promises to repay them and looks for his mother.", "evidence": [{"startSeconds": 64, "endSeconds": 120, "confidence": 0.92, "basis": "Fresh food, money, gratitude, search/reunion progression."}], "confidence": 0.92}
+      ]
+    },
+    "entities": [
+      {"statement": "Street boy: vulnerable child searching for his mother and trying to survive hunger.", "evidence": [{"startSeconds": 0, "endSeconds": 30, "confidence": 0.96, "basis": "Wallet/food sequence."}], "confidence": 0.96},
+      {"statement": "Disheveled woman: the boy's mother; portrayed as injured, amnesiac, homeless and hungry.", "evidence": [{"startSeconds": 40, "endSeconds": 58, "confidence": 0.93, "basis": "Alley shots and captions."}], "confidence": 0.93},
+      {"statement": "Black couple operating the food stall: initially confront the child, then show compassion and provide food/money.", "evidence": [{"startSeconds": 12, "endSeconds": 38, "confidence": 0.92, "basis": "Stall confrontation."}, {"startSeconds": 64, "endSeconds": 90, "confidence": 0.9, "basis": "Fresh food and aid."}], "confidence": 0.92},
+      {"statement": "Dark-haired suited man: high-status observer with a driver; may recognize the mother later.", "evidence": [{"startSeconds": 52, "endSeconds": 63, "confidence": 0.88, "basis": "Chauffeured car sequence."}, {"startSeconds": 135, "endSeconds": 145, "confidence": 0.81, "basis": "Recognition exchange in alley."}], "confidence": 0.86}
+    ],
+    "conflict": [
+      {"statement": "A vulnerable child and cognitively impaired mother face hunger, homelessness and abuse while separated.", "evidence": [{"startSeconds": 0, "endSeconds": 60, "confidence": 0.95, "basis": "Abuse, discarded food, amnesia and separation."}], "confidence": 0.95}
+    ],
+    "emotion": [
+      {"statement": "Cruelty and humiliation shift toward compassion, reunion hope, and recognition suspense.", "evidence": [{"startSeconds": 0, "endSeconds": 145, "confidence": 0.91, "basis": "Abuse → aid → mother search → wealthy-man recognition."}], "confidence": 0.91}
+    ],
+    "suspense": [
+      {"statement": "Who is the amnesiac mother, why does the wealthy man recognize her, and can the family be restored?", "evidence": [{"startSeconds": 44, "endSeconds": 145, "confidence": 0.9, "basis": "Amnesia disclosure, high-status observer, later recognition."}], "confidence": 0.9}
+    ],
+    "narrativePromise": [
+      {"statement": "The abused child and amnesiac mother will be identified and protected, with a high-status man tied to the mother's past.", "evidence": [{"startSeconds": 44, "endSeconds": 145, "confidence": 0.88, "basis": "Amnesia, help decision, reunion and recognition."}], "confidence": 0.88}
+    ],
+    "retention": {
+      "score": 86,
+      "reasoning": ["Immediate child-in-danger stop-scroll event", "Strong empathy and escalating deprivation", "Amnesia and recognition create a durable mystery", "Early cruelty may feel exploitative and the arc needs careful moderation/QC"]
+    },
+    "highlightCandidates": [
+      {"id": "H1", "range": {"startSeconds": 0, "endSeconds": 22, "confidence": 0.83, "basis": "Wallet confrontation through discarded-food humiliation."}, "description": "High-intensity child-survival opener.", "boundarySafety": "needs_frame_review", "confidence": 0.83},
+      {"id": "H2", "range": {"startSeconds": 40, "endSeconds": 63, "confidence": 0.84, "basis": "Amnesiac mother reveal and wealthy observer's help decision."}, "description": "Identity mystery and rescue promise.", "boundarySafety": "needs_frame_review", "confidence": 0.84},
+      {"id": "H3", "range": {"startSeconds": 120, "endSeconds": 145, "confidence": 0.72, "basis": "Mother reunion and wealthy-man recognition."}, "description": "Emotional reunion plus identity cliffhanger.", "boundarySafety": "needs_frame_review", "confidence": 0.72}
+    ],
+    "matching": {
+      "status": "pending_original_drama_first10",
+      "mustBeCarriedByMainContent": ["same mother-child relationship or an evidence-backed bridge", "mother's amnesia/identity mystery", "high-status man's recognition and protective response"],
+      "incompatibleExamples": ["Matching solely because another story contains a poor child", "A different mother/son without a causal identity bridge", "A main event that contradicts the mother's amnesia"],
+      "sourceTypeIsHardGate": false,
+      "hardPositiveRegression": "System must retain external-positive classification even if original-drama characters/assets visually match."
+    },
+    "transitionRecommendations": {
+      "directCut": {"decision": "manual_only_if_same_event_continues", "reason": "Character continuity alone is insufficient; paired episode not present."},
+      "modeA": {"decision": "possible", "gapDiagnosis": ["causal", "character"], "copyCandidates": [], "constraint": "No identity or elapsed-time claim without episode evidence."},
+      "modeB": {"decision": "preferred_if_episode_opens_later", "targetSeconds": [60, 100], "requiredFacts": ["child abuse/hunger", "mother's injury and amnesia", "separation/reunion", "wealthy man's recognition"], "prohibited": ["inventing the man's exact relationship", "inventing how the mother was injured", "inventing elapsed time"]}
+    },
+    "rejectOrDegradeConditions": ["Reject if visual continuity is used to negate the supplied external-positive label.", "Reject a match that drops the mother-child identity mystery.", "Reject unsupported claims about the wealthy man's relationship to the mother.", "Manual safety review required for child violence/exploitation framing."]
+  },
+  "evaluationReadiness": {
+    "systemComparison": "pending_system_output",
+    "episodeMatch": "pending_corresponding_original_drama_first10",
+    "renderModes": "pending_three_real_renders",
+    "engineeringChain": "pending_real_record_ids_and_logs"
+  },
+  "freeze": {"canonicalSha256": null, "hashMethod": "sha256 of final file bytes recorded after schema validation"}
+}

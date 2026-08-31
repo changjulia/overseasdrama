@@ -1,0 +1,34 @@
+{
+  "runId": "isolated-v2-run-20260830",
+  "violation": false,
+  "actualPathsRead": [
+    "/Users/julia_chen/Downloads/1786532318_t7aTaPzDXJ_H264_720.mp4",
+    "/Users/julia_chen/Downloads/1784805656_QTi3ycwhxA_H264_720.mp4",
+    "/Users/julia_chen/Downloads/1785148210_3shFMGB3nT_H264_720.mp4",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/release-evidence/quality-supervision/protocol.schema.json",
+    "/Users/julia_chen/.codex/skills/video-use/SKILL.md",
+    "/Users/julia_chen/.codex/plugins/cache/openai-bundled/computer-use/1.0.1000901/skills/computer-use/SKILL.md",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-v2-run-20260830/QS-GH-001-evidence/metadata.json",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-v2-run-20260830/QS-GH-001-evidence/contact-sheet.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-v2-run-20260830/QS-GH-002-evidence/metadata.json",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-v2-run-20260830/QS-GH-002-evidence/contact-sheet.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-v2-run-20260830/QS-GH-003-evidence/metadata.json",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-v2-run-20260830/QS-GH-003-evidence/contact-sheet.jpg"
+  ],
+  "nonBusinessInstructionReads": [
+    "Video-use and computer-use SKILL.md files were read because higher-priority runtime instructions require applicable skills to be read in full. They supplied process/tool constraints only and were not used as business truth.",
+    "The Codex workspace dependency locator was queried read-only to look for bundled media tools; it did not expose project business content."
+  ],
+  "declaredNotRead": [
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/golden-hook-samples/",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/QS-GH-001/",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/QS-GH-002/",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/QS-GH-003/",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/release-evidence/ (except /Users/julia_chen/Documents/ChatGPT/短剧/release-evidence/quality-supervision/protocol.schema.json)",
+    "any system output, prompts, rollout documents, git diff, git status, or git history"
+  ],
+  "notes": [
+    "All generated evidence and drafts were written only under /Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-v2-run-20260830/.",
+    "No current system output was opened or compared."
+  ]
+}

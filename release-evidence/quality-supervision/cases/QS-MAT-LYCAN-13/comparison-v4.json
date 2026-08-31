@@ -1,0 +1,120 @@
+{
+  "caseId": "QS-MAT-LYCAN-13",
+  "comparisonVersion": "v4",
+  "golden": {
+    "version": "v1",
+    "status": "frozen_blind",
+    "sha256": "ca2c502069a14088d018beddc959555d9cd080f75f184933be2efe18da1e1c7d",
+    "unchanged": true
+  },
+  "system": {
+    "materialId": "zmzrljhnwl4uxw5",
+    "jobId": "30wqqaz0u3vav09",
+    "snapshotSha256": "b41f1561d0de5df7c311d222a9e4f923f9961b271b0ebae1a3e46107a2db27fe",
+    "terminalStatus": "succeeded",
+    "progress": 100,
+    "terminalStage": "completed",
+    "finalResultPresent": true,
+    "semanticModel": "qwen-vl-max",
+    "semanticPromptVersion": "material-v2-20260830.1",
+    "hookCount": 1,
+    "materialConfidence": 49,
+    "productionStatus": "blocked",
+    "sourceAttribution": "pending",
+    "qualityGatePassed": false
+  },
+  "verdict": {
+    "engineeringExecution": "PASS",
+    "contentQuality": "IMPROVED_BUT_BELOW_GATE",
+    "productionSafety": "PASS_BLOCKING_BEHAVIOR",
+    "hardGate": "NO-GO",
+    "reason": "The v3 evidence-graph closure P0 is fixed. Release remains NO-GO because the critical character/relationship/causal story model is absent, the hook end is unverified, and format attribution is unsupported."
+  },
+  "scores": {
+    "factAndEvidenceAccuracy": 62,
+    "highlightLocalization": 80,
+    "hookRetention": 74,
+    "storyCompleteness": 65,
+    "hookMainMatch": null,
+    "transitionNarration": null,
+    "engineeringReliability": 88,
+    "fullWeightedTotal": null,
+    "scopeNormalizedScore": 70,
+    "scopeNormalizedDenominatorWeight": 75,
+    "priorScopeNormalizedScores": {"v1": 22, "v2": 28, "v3": 66}
+  },
+  "evidenceGraphClosure": {
+    "result": "pass",
+    "verifiedObservationIds": ["fact-002"],
+    "consumableLayerCounts": {"observations": 1, "segments": 1, "timeline": 1, "transitions": 0, "hooks": 1},
+    "invalidBasedOnFactIds": [],
+    "note": "All basedOnFactIds in consumable observations/segments/timeline/transitions/hooks resolve to existing verified observations. Hook evidence is direct transcript evidence and does not invent fact references."
+  },
+  "requestedChecks": [
+    {"check": "consumable basedOnFactIds close over verified observations", "result": "pass", "evidence": "The only verified observation is fact-002; segment and timeline reference only fact-002; transitions are empty; hook has direct evidence and no basedOnFactIds."},
+    {"check": "rejected items exist only in review.rejectedClaims", "result": "pass", "evidence": "Rejected cut/fade claims referencing fact-006/fact-003 are audit-only under review.rejectedClaims and absent from consumable transitions."},
+    {"check": "CTA separated from story candidates", "result": "pass", "evidence": "creative.cta stores 24.48–26.56 and 29.367–34.504 CTA evidence with basedOnFactIds=[] and storyCandidate=false; CTA is absent from consumable segments/timeline/hooks."},
+    {"check": "completeness no longer claims a complete flow", "result": "pass", "evidence": "completeness=incomplete, confidence=0.49, verification=unverified; diagnosis states that character, causal outcome and story closure still require review and evidence cites only fact-002."},
+    {"check": "15.1–23.46 reversal hook remains review-gated", "result": "pass_with_review_gate", "evidence": "identity_reveal_response remains 15.1–23.46 with title/command transcript evidence; boundaryStatus=unverified and reviewRequired=true."},
+    {"check": "production safety gate", "result": "pass", "evidence": "materialFields.confidence=49, productionStatus=blocked, qualityGate=false and sourceAttribution.status=pending."}
+  ],
+  "timecodeAndCausalComparison": [
+    {"golden": "0–3.4 execution command", "system": "0–2.86 transcript fact-002", "result": "partial_match", "note": "Timing matches opening command, but transcript/object identity remains unreliable."},
+    {"golden": "3.4–6.7 purple-clad woman's death taunt", "system": "absent", "result": "omission"},
+    {"golden": "16.1–20.4 Killian / Shadow Pack champion naming", "system": "hook transcript 16.8–20.04", "result": "time_match_text_review_required"},
+    {"golden": "20.9–21.86 kneeling obedience", "system": "At your command transcript; visual action not modeled", "result": "partial_match"},
+    {"golden": "21.5–25.2 observer shock", "system": "only a visualSummary review request; no character/causal graph", "result": "omission_in_consumable_story"},
+    {"golden": "15.1–23.5 strongest highlight", "system": "15.1–23.46", "result": "high_match_boundary_unverified"},
+    {"golden": "post-25 CTA / post-29 end card", "system": "creative.cta archive, storyCandidate=false", "result": "match"}
+  ],
+  "hardGates": {
+    "result": "NO-GO",
+    "triggered": ["critical_character_relationship_story_model_incomplete"],
+    "clearedSinceV3": ["rejected_or_dangling_facts_referenced_by_consumable_claims"],
+    "safetyNote": "The system correctly blocks production, so no unapproved asset enters rendering."
+  },
+  "priorGapRetest": [
+    {"id": "QS-L13-V3-P0-001", "status": "fixed", "evidence": "No invalid basedOnFactIds remain in consumable observations/segments/timeline/transitions/hooks; rejected transitions are audit-only."},
+    {"id": "QS-L13-V3-P1-001", "status": "not_fixed", "evidence": "characters and relationships remain empty; caller→kneel/obey→observer shock is not represented as a causal chain."},
+    {"id": "QS-L13-V3-P1-002", "status": "fixed", "evidence": "Incomplete diagnosis and evidence no longer assert a complete flow."},
+    {"id": "QS-L13-V3-P1-003", "status": "not_fixed_but_safely_blocked", "evidence": "safeEnd 23.46 remains action/shot/semantic unverified; review gate blocks production."},
+    {"id": "QS-L13-V3-P1-004", "status": "not_fixed", "evidence": "EPISODE_SPLICE/正片剧集拼接 remains verified/projected from generic whole-duration transcript rather than assembly/source evidence."}
+  ],
+  "developmentItems": [
+    {
+      "id": "QS-L13-V4-P1-001",
+      "severity": "P1",
+      "module": "processor/semantic_analysis.py entity and causal synthesis",
+      "task": "Fuse OCR/ASR/frame observations into review-safe characters, relationships and the observable caller → kneel/obey → observer reaction chain without asserting unsupported identities.",
+      "regression": "Golden intervals 16.1–25.2 appear as a linked causal chain with evidence timecodes; uncertain names/roles remain explicitly unverified."
+    },
+    {
+      "id": "QS-L13-V4-P1-002",
+      "severity": "P1",
+      "module": "processor/semantic_analysis.py hook boundary verification",
+      "task": "Provide positive-duration frame/action/semantic end evidence near 23.46 or keep the candidate unapproved.",
+      "regression": "Hook cannot become production-ready until safeEnd is supported and no dialogue/action is cut; current blocked behavior must remain."
+    },
+    {
+      "id": "QS-L13-V4-P1-003",
+      "severity": "P1",
+      "module": "processor/semantic_analysis.py format classifier and PocketBase projection",
+      "task": "Require observable assembly/source-boundary evidence before verifying EPISODE_SPLICE; otherwise project 未确定.",
+      "regression": "This isolated ad cannot be labeled verified episode splice from generic dialogue/action evidence alone."
+    },
+    {
+      "id": "QS-L13-V4-P2-001",
+      "severity": "P2",
+      "module": "processor/semantic_analysis.py review diagnostics",
+      "task": "Recompute current gate reasons after evidence-graph reconciliation or explicitly mark historical violations as repaired audit history.",
+      "regression": "Current failure reasons do not claim consumable segments/transitions/timeline still reference fact-003/004/005/006 after those edges are removed."
+    },
+    {
+      "id": "QS-L13-V4-P2-002",
+      "severity": "P2",
+      "module": "analysis job retry audit storage",
+      "task": "Persist immutable predecessor job/error references across retries instead of only mutable retry lineage.",
+      "regression": "The initial launcher failure and successful retry can be independently reconstructed from immutable records."
+    }
+  ]
+}

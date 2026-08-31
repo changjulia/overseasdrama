@@ -2,9 +2,8 @@
 
 import type { FactoryEpisodeMedia } from "../features/factory/types";
 import { normalizeAnalysisPayload } from "./ontology/normalization";
+import { POCKETBASE_URL as PB_URL, pocketBaseUiHeaders } from "./pocketbase-url";
 
-const configuredUrl = typeof process !== "undefined" ? process.env.NEXT_PUBLIC_POCKETBASE_URL : undefined;
-const PB_URL = (configuredUrl || (typeof window !== "undefined" ? "/pb" : "http://127.0.0.1:8090")).replace(/\/$/, "");
 
 type PocketBaseRecord = Record<string, unknown> & { id: string; collectionId: string; collectionName: string };
 
@@ -46,6 +45,8 @@ export type PocketBaseDramaRecord = {
   detailProgress: number;
   precisionStatus: string;
   precisionProgress: number;
+  precisionJobCount: number;
+  precisionSucceededCount: number;
   analysisError?: string;
   detailResult?: unknown;
   precisionResults: Array<{ episode: number; result: unknown; parameters?: unknown }>;
@@ -66,6 +67,7 @@ export type ExternalDramaInput = {
   coverUrl?: string;
   sourceMetadata?: Record<string, unknown>;
   episodes?: Array<{episode:number;url:string}>;
+  episodeLimit?: number;
   onProgress?: (completed:number,total:number)=>void;
 };
 
@@ -85,7 +87,7 @@ export async function deletePocketBaseDramaEpisode(dramaId: string, episode: num
 async function pbFetch(path: string, init?: RequestInit) {
   let response: Response;
   try {
-    response = await fetch(`${PB_URL}${path}`, init);
+    response = await fetch(`${PB_URL}${path}`, { ...init, headers: { ...pocketBaseUiHeaders(), ...(init?.headers || {}) } });
   } catch (error) {
     throw new Error(`无法连接 PocketBase（${PB_URL}），请先启动本项目的 PocketBase 服务`);
   }
@@ -99,7 +101,7 @@ async function pbFetch(path: string, init?: RequestInit) {
 
 function pbUpload(path: string, method: "POST" | "PATCH", body: FormData, onProgress?: (loaded:number,total:number)=>void, signal?:AbortSignal) {
   return new Promise<PocketBaseRecord>((resolve,reject)=>{
-    const request=new XMLHttpRequest();request.open(method,`${PB_URL}${path}`);
+    const request=new XMLHttpRequest();request.open(method,`${PB_URL}${path}`);Object.entries(pocketBaseUiHeaders()).forEach(([key,value])=>request.setRequestHeader(key,String(value)));
     request.upload.onprogress=event=>onProgress?.(event.loaded,event.lengthComputable?event.total:0);
     request.onerror=()=>reject(new Error(`上传连接中断（${PB_URL}）`));
     request.onabort=()=>reject(new DOMException("上传已取消","AbortError"));
@@ -197,6 +199,12 @@ export async function saveExternalDramaToPocketBase(input: ExternalDramaInput): 
   for (let index = 0; index < sourceKey.length; index += 1) hash = Math.imul(hash ^ sourceKey.charCodeAt(index), 16777619);
   const externalId = String(1_000_000_000 + (hash >>> 0) % 1_000_000_000);
   const existing = await findDramaBySource(input.platform.trim(),input.sourceId.trim()) ?? await findDramaByExternalId(externalId);
+  const orderedEpisodes=[...(input.episodes??[])].sort((left,right)=>left.episode-right.episode);
+  if(orderedEpisodes.some((item,index)=>!Number.isInteger(item.episode)||item.episode<1||!/^https?:\/\//i.test(item.url)||index>0&&item.episode===orderedEpisodes[index-1].episode))throw new Error("外部分集列表包含无效集号、重复集号或无效媒体地址");
+  const selectedEpisodes=orderedEpisodes.slice(0,input.episodeLimit&&Number.isInteger(input.episodeLimit)?Math.max(1,input.episodeLimit):undefined);
+  if(input.episodeLimit&&selectedEpisodes.length!==input.episodeLimit)throw new Error(`验收导入需要完整 ${input.episodeLimit} 集，当前仅有 ${selectedEpisodes.length} 集`);
+  if(input.episodeLimit&&selectedEpisodes.some((item,index)=>item.episode!==index+1))throw new Error(`验收导入要求从第 1 集开始连续 ${input.episodeLimit} 集`);
+  const acceptanceAuthorized=input.sourceMetadata?.acceptance_scope==="first_10"&&input.episodeLimit===10&&selectedEpisodes.length===10;
   const body = {
     external_id: externalId,
     title: input.name.trim(),
@@ -204,8 +212,8 @@ export async function saveExternalDramaToPocketBase(input: ExternalDramaInput): 
     genre: "待补充",
     language: "待识别",
     total_episodes: input.totalEpisodes,
-    free_episodes: 0,
-    copyright_status: "外部数据 · 授权待确认",
+    free_episodes: acceptanceAuthorized ? 10 : 0,
+    copyright_status: acceptanceAuthorized ? "外部数据 · 用户授权内部验收前10集（非生产）" : "外部数据 · 授权待确认",
     parse_state: "external_ready",
     parse_config: { coarse: "未配置", detail: "未配置", precision: "未配置" },
     source_type: "外部",
@@ -221,21 +229,30 @@ export async function saveExternalDramaToPocketBase(input: ExternalDramaInput): 
     body: JSON.stringify(body),
   });
   const stored = await response.json() as PocketBaseRecord;
-  if(input.episodes?.length){
+  if(selectedEpisodes?.length){
     const filter=encodeURIComponent(`drama="${stored.id}"`);
     const episodeResponse=await pbFetch(`/api/collections/drama_episodes/records?perPage=500&filter=${filter}&fields=id,episode_number`);
     const episodePayload=await episodeResponse.json() as {items:PocketBaseRecord[]};
     const existingNumbers=new Set(episodePayload.items.map(item=>Number(item.episode_number)));
-    let completed=0;input.onProgress?.(completed,input.episodes.length);
-    for(const item of input.episodes){
-      if(existingNumbers.has(item.episode)){completed++;input.onProgress?.(completed,input.episodes.length);continue}
+    let completed=0;input.onProgress?.(completed,selectedEpisodes.length);
+    for(const item of selectedEpisodes){
+      if(existingNumbers.has(item.episode)){completed++;input.onProgress?.(completed,selectedEpisodes.length);continue}
+      // This object store intentionally rejects HEAD. A one-byte Range GET is
+      // the authoritative liveness probe and avoids downloading a full file
+      // merely to discover an expired signature.
+      const healthResponse=await fetch(item.url,{cache:"no-store",headers:{Range:"bytes=0-0"}});
+      try{
+        const contentType=(healthResponse.headers.get("content-type")||"").split(";",1)[0].trim().toLowerCase();
+        if(healthResponse.status!==206)throw new Error(`第 ${item.episode} 集签名地址校验失败（期望 Range GET 206，实际 HTTP ${healthResponse.status}）`);
+        if(contentType!=="video/mp4")throw new Error(`第 ${item.episode} 集媒体类型异常（${contentType||"未返回 Content-Type"}）`);
+      }finally{await healthResponse.body?.cancel().catch(()=>undefined)}
       const mediaResponse=await fetch(item.url,{cache:"no-store"});
       if(!mediaResponse.ok)throw new Error(`第 ${item.episode} 集下载失败（HTTP ${mediaResponse.status}）`);
       const blob=await mediaResponse.blob();
       const file=new File([blob],`EP${String(item.episode).padStart(3,"0")}.mp4`,{type:blob.type||"video/mp4"});
       const form=new FormData();form.set("drama",stored.id);form.set("episode_number",String(item.episode));form.set("original_name",file.name);form.set("mime_type",file.type);form.set("byte_size",String(file.size));form.set("duration_seconds","0");form.set("analysis_status","idle");form.set("analysis_progress","0");form.set("video",file,file.name);
       await pbUpload("/api/collections/drama_episodes/records","POST",form);
-      completed++;input.onProgress?.(completed,input.episodes.length);
+      completed++;input.onProgress?.(completed,selectedEpisodes.length);
     }
   }
   return getPocketBaseDrama(stored.id);
@@ -344,6 +361,7 @@ async function getPocketBaseDrama(recordId: string, signal?: AbortSignal): Promi
   const coarse = stageSnapshot("coarse");
   const detail = stageSnapshot("detail");
   const precision = stageSnapshot("precision");
+  const precisionJobs = jobsPayload.items.filter((item) => item.stage === "precision");
   return {
     recordId: drama.id,
     externalId: String(drama.external_id),
@@ -364,6 +382,8 @@ async function getPocketBaseDrama(recordId: string, signal?: AbortSignal): Promi
     detailProgress: detail.progress,
     precisionStatus: precision.status,
     precisionProgress: precision.progress,
+    precisionJobCount: precisionJobs.length,
+    precisionSucceededCount: precisionJobs.filter((item) => item.status === "succeeded").length,
     analysisError: [coarse.status, detail.status, precision.status].includes("failed") ? String(drama.analysis_error || "") || undefined : undefined,
     detailResult: normalizeAnalysisPayload(latestDetail?.result ?? drama.analysis),
     precisionResults,

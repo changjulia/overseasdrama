@@ -40,6 +40,113 @@ routerAdd("POST", "/api/lumina/materials/{id}/rights", (e) => {
   });
 });
 
+// Production entry for a human editor to localize a hook that the semantic
+// projection did not persist.  Creating the draft is deliberately not a
+// review decision: the independent boundary-review endpoint below must still
+// bind safe_start/safe_end before matching can claim the asset.
+routerAdd("POST", "/api/lumina/materials/{id}/hook-drafts", (e) => {
+  const helpers = require(`${__hooks}/hook_factory_helpers.js`);
+  helpers.authorizeReviewUi(e);
+  const material = e.app.findRecordById(
+    "ad_materials",
+    e.request.pathValue("id"),
+  );
+  if (!material.getString("video"))
+    throw new BadRequestError("hook draft source media is not playable");
+  const body = e.requestInfo().body || {};
+  const start = Number(body.start_seconds);
+  const end = Number(body.end_seconds);
+  const duration = material.getFloat("duration_seconds");
+  if (
+    !Number.isFinite(start) ||
+    !Number.isFinite(end) ||
+    start < 0 ||
+    end <= start ||
+    end - start < 5 ||
+    end - start > 60 ||
+    (duration > 0 && end > duration + 0.05)
+  )
+    throw new BadRequestError(
+      "hook draft boundaries must be inside the source and 5-60 seconds long",
+    );
+  const note = String(body.note || "").trim();
+  if (!note)
+    throw new BadRequestError("hook draft localization note is required");
+  const sourceStatus = String(body.hook_source_status || "来源未知");
+  const allowedSourceStatuses = [
+    "无独立钩子",
+    "已确认同剧",
+    "疑似外搭",
+    "已确认外搭",
+    "来源未知",
+  ];
+  if (!allowedSourceStatuses.includes(sourceStatus))
+    throw new BadRequestError("unsupported hook_source_status label");
+  const assemblyType = String(
+    body.hook_assembly_type || "外搭来源待确认",
+  );
+  const allowedAssemblyTypes = [
+    "无前置钩子",
+    "同剧外搭",
+    "跨剧外搭",
+    "外搭来源待确认",
+  ];
+  if (!allowedAssemblyTypes.includes(assemblyType))
+    throw new BadRequestError("unsupported hook_assembly_type label");
+
+  const record = new Record(
+    e.app.findCollectionByNameOrId("hook_assets"),
+  );
+  record.set("material", material.id);
+  record.set("source_class", "external_material");
+  record.set("hook_source_status", sourceStatus);
+  record.set("hook_assembly_type", assemblyType);
+  record.set(
+    "title",
+    String(body.title || `人工圈定钩子 - ${material.getString("title")}`).slice(
+      0,
+      240,
+    ),
+  );
+  record.set("start_seconds", Math.round(start * 1000) / 1000);
+  record.set("end_seconds", Math.round(end * 1000) / 1000);
+  record.set("boundary_status", "unverified");
+  record.set("review_status", "needs_review");
+  record.set("rights_status", material.getString("rights_status"));
+  record.set("safe_start", {
+    kind: "start",
+    time: Math.round(start * 1000) / 1000,
+    status: "unverified",
+    evidence: [{ source: "human_localization_draft", result: note }],
+  });
+  record.set("safe_end", {
+    kind: "end",
+    time: Math.round(end * 1000) / 1000,
+    status: "unverified",
+    evidence: [{ source: "human_localization_draft", result: note }],
+  });
+  record.set("evidence", [
+    {
+      source: "human_localization_draft",
+      text: note.slice(0, 2000),
+      timecode: { start, end },
+    },
+  ]);
+  record.set("production_gate", {
+    passed: false,
+    reviewRequired: true,
+    reasons: ["manual hook draft requires independent boundary approval"],
+    schemaVersion: "hook-draft-v1",
+  });
+  e.app.save(record);
+  return e.json(201, {
+    id: record.id,
+    material: material.id,
+    boundary_status: "unverified",
+    review_status: "needs_review",
+  });
+});
+
 routerAdd("POST", "/api/lumina/hooks/{id}/review", (e) => {
   require(`${__hooks}/hook_factory_helpers.js`).authorizeReviewUi(e);
   try {
@@ -267,10 +374,20 @@ routerAdd("POST", "/api/lumina/hook-driven-storyline-plans", (e) => {
       "hook_assets",
       String(body.hook_id || ""),
     );
-    if (hook.getString("source_class") !== "external_material")
+    if (
+      !hook.getString("material") ||
+      hook.getString("boundary_status") !== "verified" ||
+      hook.getString("review_status") !== "approved"
+    )
       throw new BadRequestError(
-        "hook-driven storylines require an external hook asset",
+        "hook-driven storylines require an approved verified hook from the material library",
       );
+    const hookMaterial = e.app.findRecordById(
+      "ad_materials",
+      hook.getString("material"),
+    );
+    if (!hookMaterial.getString("video"))
+      throw new BadRequestError("hook source media is not playable");
     const requested = Array.isArray(body.episode_scope)
       ? body.episode_scope
           .map(Number)
@@ -364,8 +481,9 @@ routerAdd("POST", "/api/lumina/template-adaptation-plans", (e) => {
   const body = e.requestInfo().body || {};
   const drama = e.app.findRecordById("dramas", String(body.drama_id || ""));
   const hook = e.app.findRecordById("hook_assets", String(body.hook_id || ""));
-  if (hook.getString("source_class") !== "external_material" || !hook.getString("material")) throw new BadRequestError("template adaptation requires a historical external hook");
+  if (!hook.getString("material")) throw new BadRequestError("template adaptation requires a hook from the material library");
   const material = e.app.findRecordById("ad_materials", hook.getString("material"));
+  if (!material.getString("video")) throw new BadRequestError("hook source media is not playable");
   const requested = Array.isArray(body.episode_scope) ? body.episode_scope.map(Number).filter((value) => Number.isInteger(value) && value > 0) : [];
   const scope = requested.length ? [...new Set(requested)] : Array.from({ length: Math.max(0, drama.getInt("free_episodes")) }, (_, index) => index + 1);
   const episodes = e.app.findRecordsByFilter("drama_episodes", "drama = {:drama}", "episode_number", 10000, 0, { drama: drama.id }).filter((episode) => scope.includes(episode.getInt("episode_number"))).map((episode) => ({
@@ -447,12 +565,23 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
     const hooks = e.app
       .findRecordsByFilter(
         "hook_assets",
-        "source_class = 'external_material' && boundary_status = 'verified' && review_status = 'approved'",
+        "boundary_status = 'verified' && review_status = 'approved' && material != ''",
         "-id",
         500,
         0,
       )
-      .filter(Boolean);
+      .filter(Boolean)
+      .filter((hook) => {
+        try {
+          return Boolean(
+            e.app
+              .findRecordById("ad_materials", hook.getString("material"))
+              .getString("video"),
+          );
+        } catch (_) {
+          return false;
+        }
+      });
     const candidates = hooks
       .map((hook) => {
         const exported = helpers.hookSemanticSnapshot(hook);
@@ -460,6 +589,11 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
         return {
           hook_id: hook.id,
           material_id: hook.getString("material"),
+          source_class: hook.getString("source_class") || "unknown",
+          source_compatibility: {
+            role: "ranking_diagnostic",
+            production_gate: false,
+          },
           matched_storyline_ids: storyNeed.selectedStorylineIds || [],
           retrieval,
         };
@@ -493,8 +627,7 @@ routerAdd("POST", "/api/lumina/historical-templates", (e) => {
     String(body.source_hook_id || ""),
   );
   if (
-    hook.getString("material") !== material.id ||
-    hook.getString("source_class") !== "external_material"
+    hook.getString("material") !== material.id
   )
     throw new BadRequestError(
       "template hook must belong to the historical material",
@@ -663,7 +796,18 @@ routerAdd("POST", "/api/lumina/historical-template-recommendations", (e) => {
         500,
         0,
       )
-      .filter(Boolean);
+      .filter(Boolean)
+      .filter((hook) => {
+        try {
+          return Boolean(
+            e.app
+              .findRecordById("ad_materials", hook.getString("material"))
+              .getString("video"),
+          );
+        } catch (_) {
+          return false;
+        }
+      });
     const persistedTemplates = persistedRecords.map((record) => {
       const hook = e.app.findRecordById(
         "hook_assets",
@@ -713,12 +857,23 @@ routerAdd("POST", "/api/lumina/historical-template-recommendations", (e) => {
     const hooks = e.app
       .findRecordsByFilter(
         "hook_assets",
-        "source_class = 'external_material' && boundary_status = 'verified' && review_status = 'approved' && material != ''",
+        "boundary_status = 'verified' && review_status = 'approved' && material != ''",
         "-id",
         500,
         0,
       )
-      .filter(Boolean);
+      .filter(Boolean)
+      .filter((hook) => {
+        try {
+          return Boolean(
+            e.app
+              .findRecordById("ad_materials", hook.getString("material"))
+              .getString("video"),
+          );
+        } catch (_) {
+          return false;
+        }
+      });
     const fallbackTemplates = hooks
       .filter(
         (hook) =>
@@ -831,10 +986,14 @@ routerAdd("POST", "/api/lumina/hook-matching/jobs", (e) => {
   const body = e.requestInfo().body || {};
   const hook = e.app.findRecordById("hook_assets", String(body.hook_id || ""));
   const drama = e.app.findRecordById("dramas", String(body.drama_id || ""));
-  if (hook.getString("source_class") !== "external_material")
-    throw new BadRequestError(
-      "external-hook mode only accepts external_material hooks",
-    );
+  if (!hook.getString("material"))
+    throw new BadRequestError("hook must belong to the material library");
+  const hookMaterial = e.app.findRecordById(
+    "ad_materials",
+    hook.getString("material"),
+  );
+  if (!hookMaterial.getString("video"))
+    throw new BadRequestError("hook source media is not playable");
   const hookDuration =
     hook.getFloat("end_seconds") - hook.getFloat("start_seconds");
   if (hookDuration < 5 || hookDuration > 60)
@@ -845,6 +1004,8 @@ routerAdd("POST", "/api/lumina/hook-matching/jobs", (e) => {
     throw new BadRequestError(
       "hook boundaries must be verified before matching",
     );
+  if (hook.getString("review_status") !== "approved")
+    throw new BadRequestError("hook must be approved before matching");
   const freeEpisodes = Math.max(0, drama.getInt("free_episodes"));
   const scopeMode = String(body.scope_mode || "free_only");
   if (!["free_only", "custom"].includes(scopeMode))
@@ -1127,6 +1288,11 @@ routerAdd("POST", "/api/lumina/hook-matching/jobs", (e) => {
     hookId: hook.id,
     hookAnalysisVersion: hook.getString("analysis_version"),
     hookUpdated: hook.getString("updated"),
+    hookSourceClass: hook.getString("source_class") || "unknown",
+    sourceCompatibility: {
+      role: "ranking_diagnostic",
+      productionGate: false,
+    },
     dramaId: drama.id,
     dramaAnalysisVersion: drama.getString("analysis_version"),
     dramaUpdated: drama.getString("updated"),
@@ -1148,6 +1314,7 @@ routerAdd("POST", "/api/lumina/hook-matching/jobs", (e) => {
   const matchContextHash = helpers.contextHash(matchContext);
   const key = `hook-match:${hook.id}:${drama.id}:${matchContextHash}`;
   let job;
+  let createdJob = false;
   try {
     job = e.app.findFirstRecordByFilter(
       "hook_match_jobs",
@@ -1155,6 +1322,7 @@ routerAdd("POST", "/api/lumina/hook-matching/jobs", (e) => {
       { key },
     );
   } catch (_) {
+    createdJob = true;
     job = new Record(e.app.findCollectionByNameOrId("hook_match_jobs"));
     job.set("hook", hook.id);
     job.set("drama", drama.id);
@@ -1173,23 +1341,15 @@ routerAdd("POST", "/api/lumina/hook-matching/jobs", (e) => {
     job.set("idempotency_key", key);
     e.app.save(job);
   }
-  // A repeated UI click must not revoke the lease of an analysis that is
-  // already running. Reset only terminal jobs; queued/running jobs are
-  // idempotently returned to every caller.
+  // Legacy force_retry had no optimistic lock, operator reason, or permanent
+  // failure override audit. It is deliberately fail-closed for existing
+  // terminal jobs; callers must use the job-id retry route.
   if (
     body.force_retry === true &&
+    !createdJob &&
     !["queued", "running"].includes(job.getString("status"))
-  ) {
-    job.set("status", "queued");
-    job.set("progress", 0);
-    job.set("current_stage", matchStrategy === "story_to_hook" ? "interactive_queued" : "queued");
-    job.set("error", "");
-    job.set("attempt", 0);
-    job.set("worker_id", "");
-    job.set("lease_token", "");
-    job.set("lease_until", "");
-    e.app.save(job);
-  }
+  )
+    throw new ApiError(409, `manual retry requires /api/lumina/hook-matching/jobs/${job.id}/retry`);
   // Re-opening an interactive story-to-hook pair should promote its existing
   // queued job without revoking a running worker lease.
   if (
@@ -1231,15 +1391,10 @@ routerAdd("POST", "/api/lumina/hook-matching/jobs", (e) => {
         supplemental.set("contract_version", "supplemental-highlight-v1");
       }
       const supplementalStatus = supplemental.getString("status");
-      // A force retry only requeues unfinished/failed work. Successful episode
-      // analysis is immutable for this match context and must not be rerun.
-      if (
-        !supplementalStatus ||
-        (supplementalStatus === "failed" &&
-          (body.force_retry === true ||
-            supplemental.getInt("attempt") <
-              supplemental.getInt("max_attempts")))
-      ) {
+      // Existing failures remain immutable here: retryable failures are
+      // reclaimed by worker backoff, while human retries use the audited
+      // supplemental job-id route. Opening the parent must not reset attempts.
+      if (!supplementalStatus) {
         supplemental.set("status", "queued");
         supplemental.set("attempt", 0);
         supplemental.set("progress", 0);
@@ -1300,6 +1455,7 @@ routerAdd("POST", "/api/lumina/hook-matching/jobs", (e) => {
     episode_scope: helpers.jsonArray(job, "episode_scope"),
     contains_paid_episodes: job.getBool("contains_paid_episodes"),
     match_context_hash: job.getString("match_context_hash") || matchContextHash,
+    updated: job.getString("updated"),
   });
 });
 
@@ -1353,11 +1509,35 @@ routerAdd("GET", "/api/lumina/hook-matching/jobs/{id}/status", (e) => {
     progress: job.getInt("progress"),
     current_stage: job.getString("current_stage"),
     error: job.getString("error"),
+    updated: job.getString("updated"),
     match_context_hash: job.getString("match_context_hash"),
     outcome_status: diagnostics.outcome_status,
     diagnostics,
     matches: matches.map((item) => item.publicExport()),
   });
+});
+
+routerAdd("POST", "/api/lumina/hook-matching/jobs/{id}/retry", (e) => {
+  const helpers = require(`${__hooks}/hook_factory_helpers.js`);
+  helpers.authorizeUi(e);
+  let response;
+  e.app.runInTransaction((tx) => {
+    const job = tx.findRecordById("hook_match_jobs", e.request.pathValue("id"));
+    const request = helpers.manualRetryRequest(e, job, ["queued", "running"]);
+    if (request.duplicate) {
+      response = { id: job.id, status: job.getString("status"), idempotent: true };
+      return;
+    }
+    const audit = helpers.resetFailedJobForManualRetry(
+      job,
+      request,
+      e.requestInfo().headers["x-lumina-user-id"],
+      ["result", "logs", "outcome_status", "diagnostics"],
+    );
+    tx.save(job);
+    response = { id: job.id, status: "queued", audit };
+  });
+  return e.json(200, response);
 });
 
 routerAdd("POST", "/api/lumina/hook-matching/claim", (e) => {
@@ -1416,7 +1596,9 @@ routerAdd("POST", "/api/lumina/hook-matching/claim", (e) => {
       if (supplemental.length && !hasSelectedStorylineEvidence) return false;
       if (candidate.getString("status") === "queued") return true;
       if (candidate.getString("status") === "failed")
-        return candidate.getInt("attempt") < candidate.getInt("max_attempts");
+        return !["permanent", "media", "validation"].includes(candidate.getString("error_kind")) &&
+          candidate.getInt("attempt") < candidate.getInt("max_attempts") &&
+          (!Date.parse(candidate.getString("next_attempt_at")) || Date.parse(candidate.getString("next_attempt_at")) <= now);
       const lease = Date.parse(candidate.getString("lease_until"));
       return !lease || lease <= now;
     });
@@ -1553,6 +1735,16 @@ routerAdd("PATCH", "/api/lumina/hook-matching/jobs/{id}", (e) => {
         ? String(body.error || "matching failed").slice(0, 4000)
         : "",
     );
+    if (nextStatus === "failed") {
+      const errorKind = String(body.error_kind || "permanent"),
+        retryable = body.retryable === true && !["permanent", "media", "validation"].includes(errorKind),
+        delay = Math.max(0, Math.min(1800, Number(body.retry_after_seconds || 0)));
+      job.set("error_kind", errorKind);
+      job.set("next_attempt_at", retryable && delay ? new Date(Date.now() + delay * 1000).toISOString() : "");
+    } else if (nextStatus === "succeeded") {
+      job.set("error_kind", "");
+      job.set("next_attempt_at", "");
+    }
     if (body.result != null) job.set("result", body.result);
     if (body.logs != null) job.set("logs", body.logs);
     if (nextStatus === "running")
@@ -1812,16 +2004,54 @@ routerAdd("POST", "/api/lumina/entry-precision/jobs", (e) => {
     job.set("max_attempts", 3);
     job.set("contract_version", "entry-precision-v1");
   }
+  // Repeated UI requests must never revoke an active worker lease or erase a
+  // queued job's progress. Failed jobs require the explicit audited retry API.
+  if (["queued", "running"].includes(job.getString("status")))
+    return e.json(200, {
+      id: job.id,
+      status: job.getString("status"),
+      match: match.id,
+      idempotent: true,
+    });
+  if (job.getString("status") === "failed")
+    throw new ApiError(409, "failed entry precision job requires explicit retry");
+  if (job.getString("status") === "succeeded")
+    return e.json(200, {
+      id: job.id,
+      status: "succeeded",
+      match: match.id,
+      idempotent: true,
+    });
   job.set("status", "queued");
   job.set("progress", 0);
   job.set("current_stage", "queued");
   job.set("error", "");
   job.set("result", {});
-  job.set("worker_id", "");
-  job.set("lease_token", "");
-  job.set("lease_until", "");
   e.app.save(job);
   return e.json(200, { id: job.id, status: "queued", match: match.id });
+});
+
+routerAdd("POST", "/api/lumina/entry-precision/jobs/{id}/retry", (e) => {
+  const helpers = require(`${__hooks}/hook_factory_helpers.js`);
+  helpers.authorizeUi(e);
+  let response;
+  e.app.runInTransaction((tx) => {
+    const job = tx.findRecordById("entry_precision_jobs", e.request.pathValue("id"));
+    const request = helpers.manualRetryRequest(e, job, ["queued", "running"]);
+    if (request.duplicate) {
+      response = { id: job.id, status: job.getString("status"), idempotent: true };
+      return;
+    }
+    const audit = helpers.resetFailedJobForManualRetry(
+      job,
+      request,
+      e.requestInfo().headers["x-lumina-user-id"],
+      ["result"],
+    );
+    tx.save(job);
+    response = { id: job.id, status: "queued", match: job.getString("match"), audit };
+  });
+  return e.json(200, response);
 });
 
 routerAdd("POST", "/api/lumina/entry-precision/claim", (e) => {
@@ -1829,6 +2059,7 @@ routerAdd("POST", "/api/lumina/entry-precision/claim", (e) => {
   helpers.authorizeWorker(e);
   const body = e.requestInfo().body || {},
     workerId = String(body.worker_id || ""),
+    requestedJobId = String(body.job_id || ""),
     leaseSeconds = Math.max(
       60,
       Math.min(1800, Number(body.lease_seconds || 600)),
@@ -1847,12 +2078,15 @@ routerAdd("POST", "/api/lumina/entry-precision/claim", (e) => {
         .filter(Boolean);
     const job = jobs.find(
       (candidate) =>
-        candidate.getString("status") === "queued" ||
-        (candidate.getString("status") === "failed" &&
-          candidate.getInt("attempt") < candidate.getInt("max_attempts")) ||
-        (candidate.getString("status") === "running" &&
-          (!Date.parse(candidate.getString("lease_until")) ||
-            Date.parse(candidate.getString("lease_until")) <= now)),
+        (!requestedJobId || candidate.id === requestedJobId) &&
+        (candidate.getString("status") === "queued" ||
+          (candidate.getString("status") === "failed" &&
+            !["permanent", "media", "validation"].includes(candidate.getString("error_kind")) &&
+            candidate.getInt("attempt") < candidate.getInt("max_attempts") &&
+            (!Date.parse(candidate.getString("next_attempt_at")) || Date.parse(candidate.getString("next_attempt_at")) <= now)) ||
+          (candidate.getString("status") === "running" &&
+            (!Date.parse(candidate.getString("lease_until")) ||
+              Date.parse(candidate.getString("lease_until")) <= now))),
     );
     if (!job) return;
     const token = $security.randomString(32);
@@ -1960,6 +2194,16 @@ routerAdd("PATCH", "/api/lumina/entry-precision/jobs/{id}", (e) => {
         ? String(body.error || "entry precision failed").slice(0, 4000)
         : "",
     );
+    if (status === "failed") {
+      const errorKind = String(body.error_kind || "permanent"),
+        retryable = body.retryable === true && !["permanent", "media", "validation"].includes(errorKind),
+        delay = Math.max(0, Math.min(1800, Number(body.retry_after_seconds || 0)));
+      job.set("error_kind", errorKind);
+      job.set("next_attempt_at", retryable && delay ? new Date(Date.now() + delay * 1000).toISOString() : "");
+    } else if (status === "succeeded") {
+      job.set("error_kind", "");
+      job.set("next_attempt_at", "");
+    }
     if (body.result != null)
       job.set("result", Object.assign({}, envelope, { candidates }));
     if (status === "running")
@@ -2002,11 +2246,30 @@ routerAdd("PATCH", "/api/lumina/entry-precision/jobs/{id}", (e) => {
   return e.json(200, { id, status });
 });
 
+routerAdd("POST", "/api/lumina/supplemental-highlights/jobs/{id}/retry", (e) => {
+  const helpers = require(`${__hooks}/hook_factory_helpers.js`);
+  helpers.authorizeUi(e);
+  let response;
+  e.app.runInTransaction((tx) => {
+    const job = tx.findRecordById("supplemental_highlight_jobs", e.request.pathValue("id"));
+    const request = helpers.manualRetryRequest(e, job, ["queued", "running"]);
+    if (request.duplicate) {
+      response = { id: job.id, status: job.getString("status"), idempotent: true };
+      return;
+    }
+    const audit = helpers.resetFailedJobForManualRetry(job, request, e.requestInfo().headers["x-lumina-user-id"], ["result"]);
+    tx.save(job);
+    response = { id: job.id, status: "queued", match_job: job.getString("match_job"), episode: job.getString("episode"), audit };
+  });
+  return e.json(200, response);
+});
+
 routerAdd("POST", "/api/lumina/supplemental-highlights/claim", (e) => {
   const helpers = require(`${__hooks}/hook_factory_helpers.js`);
   helpers.authorizeWorker(e);
   const body = e.requestInfo().body || {},
     workerId = String(body.worker_id || ""),
+    requestedJobId = String(body.job_id || ""),
     leaseSeconds = Math.max(
       60,
       Math.min(1800, Number(body.lease_seconds || 600)),
@@ -2025,12 +2288,15 @@ routerAdd("POST", "/api/lumina/supplemental-highlights/claim", (e) => {
         .filter(Boolean);
     const job = jobs.find(
       (candidate) =>
-        candidate.getString("status") === "queued" ||
-        (candidate.getString("status") === "failed" &&
-          candidate.getInt("attempt") < candidate.getInt("max_attempts")) ||
-        (candidate.getString("status") === "running" &&
-          (!Date.parse(candidate.getString("lease_until")) ||
-            Date.parse(candidate.getString("lease_until")) <= now)),
+        (!requestedJobId || candidate.id === requestedJobId) &&
+        (candidate.getString("status") === "queued" ||
+          (candidate.getString("status") === "failed" &&
+            !["permanent", "media", "validation"].includes(candidate.getString("error_kind")) &&
+            candidate.getInt("attempt") < candidate.getInt("max_attempts") &&
+            (!Date.parse(candidate.getString("next_attempt_at")) || Date.parse(candidate.getString("next_attempt_at")) <= now)) ||
+          (candidate.getString("status") === "running" &&
+            (!Date.parse(candidate.getString("lease_until")) ||
+              Date.parse(candidate.getString("lease_until")) <= now))),
     );
     if (!job) return;
     const token = $security.randomString(32);
@@ -2104,6 +2370,16 @@ routerAdd("PATCH", "/api/lumina/supplemental-highlights/jobs/{id}", (e) => {
         ? String(body.error || "supplemental highlight failed").slice(0, 4000)
         : "",
     );
+    if (status === "failed") {
+      const errorKind = String(body.error_kind || "permanent"),
+        retryable = body.retryable === true && !["permanent", "media", "validation"].includes(errorKind),
+        delay = Math.max(0, Math.min(1800, Number(body.retry_after_seconds || 0)));
+      job.set("error_kind", errorKind);
+      job.set("next_attempt_at", retryable && delay ? new Date(Date.now() + delay * 1000).toISOString() : "");
+    } else if (status === "succeeded") {
+      job.set("error_kind", "");
+      job.set("next_attempt_at", "");
+    }
     if (body.result != null) job.set("result", body.result);
     if (status === "running")
       job.set(
@@ -2547,6 +2823,8 @@ routerAdd("POST", "/api/lumina/factory/episode-splice/projects", (e) => {
   const byNumber = {};
   records.forEach((item) => { byNumber[item.getInt("episode_number")] = item; });
   let total = 0;
+  let approvedStart = null;
+  const normalizedClips = [];
   clips.forEach((item, index) => {
     const episode = episodeNumbers[index], record = byNumber[episode];
     if (!record || !record.getString("video")) throw new BadRequestError(`episode ${episode} source is unavailable`);
@@ -2554,6 +2832,36 @@ routerAdd("POST", "/api/lumina/factory/episode-splice/projects", (e) => {
     if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start || end > duration + 0.1)
       throw new BadRequestError(`episode ${episode} has an invalid splice range`);
     if (index > 0 && start > 0.1) throw new BadRequestError("following episodes must start from the beginning");
+    const requestedSafeStart = item.safeStart && typeof item.safeStart === "object" ? item.safeStart : {};
+    const requestedSafeEnd = item.safeEnd && typeof item.safeEnd === "object" ? item.safeEnd : {};
+    if (index === 0) {
+      const candidates = e.app.findRecordsByFilter(
+        "hook_assets",
+        "episode = {:episode} && source_class = 'episode_highlight' && boundary_status = 'verified' && review_status = 'approved'",
+        "start_seconds",
+        500,
+        0,
+        { episode: record.id },
+      ).filter(Boolean);
+      approvedStart = candidates.find((candidate) => Math.abs(candidate.getFloat("start_seconds") - start) <= 0.1) || null;
+      if (!approvedStart) throw new BadRequestError("first splice segment must start at an approved verified highlight");
+      const verifiedStart = helpers.jsonObject(approvedStart, "safe_start");
+      if (verifiedStart.status !== "verified") throw new BadRequestError("approved highlight start boundary is not verified");
+      if (requestedSafeStart.status !== "verified" || requestedSafeStart.source !== "selected_highlight_start")
+        throw new BadRequestError("first splice segment must explicitly identify the selected highlight start");
+    } else if (requestedSafeStart.status !== "verified" || requestedSafeStart.source !== "episode_start") {
+      throw new BadRequestError("following splice segments must explicitly use the episode source start");
+    }
+    if (requestedSafeEnd.status !== "verified" || requestedSafeEnd.source !== "episode_end" || Math.abs(end - duration) > 0.1)
+      throw new BadRequestError("splice segments must explicitly continue to the episode source end");
+    normalizedClips.push(Object.assign({}, item, {
+      startSeconds: start,
+      endSeconds: end,
+      safeStart: index === 0
+        ? { status: "verified", source: "approved_highlight", highlightAssetId: approvedStart.id, episodeRecordId: record.id, time: start }
+        : { status: "verified", source: "episode_start", episodeRecordId: record.id, time: 0 },
+      safeEnd: { status: "verified", source: "episode_end", episodeRecordId: record.id, time: duration },
+    }));
     total += end - start;
   });
   if (total < 300 || total > 900) throw new BadRequestError("sequential splice duration must be between 5 and 15 minutes");
@@ -2568,8 +2876,24 @@ routerAdd("POST", "/api/lumina/factory/episode-splice/projects", (e) => {
   project.set("story_matches", []);
   project.set("selected_episodes", episodeNumbers);
   project.set("topics", []);
-  project.set("transition", { id: "episode-sequential-cut", strategy: "highlight-to-episode-end-plus-next-episodes" });
-  project.set("timeline", clips);
+  project.set("transition", {
+    type: "direct_cut",
+    gapDiagnosis: ["causal"],
+    start: 0,
+    end: 0,
+    copy: "",
+    script: "",
+    language: String(body.language || "英语"),
+    voice: null,
+    audio: null,
+    evidence: [{ source: "approved_highlight_sequence", verification: "verified" }],
+    renderConfig: { effect: "hard_cut" },
+    reviewStatus: "pending",
+    reviewerNote: "",
+    version: 1,
+    bodyAssemblyMode: "sequential_from_highlight",
+  });
+  project.set("timeline", normalizedClips);
   project.set("quality_report", body.quality_report || { passed: true, durationSeconds: total });
   project.set("ratio", String(body.ratio || "9:16"));
   project.set("language", String(body.language || "英语"));
@@ -2590,10 +2914,19 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
     String(body.story_match_id || ""),
   );
   if (
-    hook.getString("source_class") !== "external_material" ||
-    hook.getString("boundary_status") !== "verified"
+    !hook.getString("material") ||
+    hook.getString("boundary_status") !== "verified" ||
+    hook.getString("review_status") !== "approved"
   )
-    throw new BadRequestError("a verified external hook asset is required");
+    throw new BadRequestError(
+      "an approved verified hook from the material library is required",
+    );
+  const hookMaterial = e.app.findRecordById(
+    "ad_materials",
+    hook.getString("material"),
+  );
+  if (!hookMaterial.getString("video"))
+    throw new BadRequestError("hook source media is not playable");
   const hookDuration =
     hook.getFloat("end_seconds") - hook.getFloat("start_seconds");
   if (hookDuration < 5 || hookDuration > 60)
@@ -2626,15 +2959,15 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
   );
   if (
     !advisoryOnlyMatch && !humanVideoApproved &&
-    match.getFloat("story_score") < 75 &&
+    match.getFloat("story_score") < 80 &&
     !(softOverride.story_score && softOverride.story_score.overridden === true)
   )
     throw new BadRequestError(
-      "story score must be at least 75 before production",
+      "story completeness score must be at least 80 before production",
     );
-  if (!advisoryOnlyMatch && !humanVideoApproved && match.getFloat("promise_fulfillment_score") < 70)
+  if (!advisoryOnlyMatch && !humanVideoApproved && match.getFloat("promise_fulfillment_score") < 75)
     throw new BadRequestError(
-      "promise fulfillment score must be at least 70 before production",
+      "promise fulfillment score must be at least 75 before production",
     );
   const paidScopeConfirmed = body.paid_scope_confirmed === true;
   if (match.getBool("contains_paid_episodes") && !paidScopeConfirmed)
@@ -2667,8 +3000,6 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
     );
   const timelineDurationSeconds = timeline.reduce((sum, item) => {
     if (!item || typeof item !== "object") return sum;
-    const explicit = Number(item.durationSeconds == null ? item.duration_seconds : item.durationSeconds);
-    if (Number.isFinite(explicit) && explicit > 0) return sum + explicit;
     const start = Number(item.startSeconds == null ? item.start : item.startSeconds);
     const end = Number(item.endSeconds == null ? item.end : item.endSeconds);
     return sum + (Number.isFinite(start) && Number.isFinite(end) && end > start ? end - start : 0);
@@ -2681,6 +3012,60 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
     body.transition && typeof body.transition === "object"
       ? body.transition
       : {};
+  const transitionType = String(transitionInput.type || "");
+  if (!["direct_cut", "transition_copy", "continuous_narration"].includes(transitionType))
+    throw new BadRequestError("transition.type must be direct_cut, transition_copy or continuous_narration");
+  const gapDiagnosis = Array.isArray(transitionInput.gapDiagnosis)
+    ? transitionInput.gapDiagnosis.map(String)
+    : [String(transitionInput.gapDiagnosis || "")].filter(Boolean);
+  if (!gapDiagnosis.length || gapDiagnosis.some((value) => !["time", "space", "character", "causal", "emotion"].includes(value)))
+    throw new BadRequestError("transition.gapDiagnosis is required and contains an unsupported value");
+  const transitionEvidence = Array.isArray(transitionInput.evidence) ? transitionInput.evidence : [];
+  const transitionRenderConfig = transitionInput.renderConfig && typeof transitionInput.renderConfig === "object" ? transitionInput.renderConfig : {};
+  if (!Number.isFinite(Number(transitionInput.start)) || !Number.isFinite(Number(transitionInput.end)) || Number(transitionInput.end) < Number(transitionInput.start))
+    throw new BadRequestError("transition.start/end must be valid timeline seconds");
+  if (!String(transitionInput.language || "").trim() || !Number.isInteger(Number(transitionInput.version)) || Number(transitionInput.version) < 1)
+    throw new BadRequestError("transition.language and positive integer version are required");
+  if (transitionType === "transition_copy") {
+    const copy = String(transitionInput.copy || "").trim();
+    if (!copy) throw new BadRequestError("transition_copy requires editable copy");
+    if (!["hard_cut", "fade", "black", "flash_avoidance", "match_cut"].includes(String(transitionRenderConfig.transitionStyle || transitionRenderConfig.effect || "")))
+      throw new BadRequestError("transition_copy renderConfig.effect is unsupported");
+    if (/(年后|年前|天后|小时前|与此同时|重生|穿越)/.test(copy) && !transitionEvidence.length)
+      throw new BadRequestError("time/causal transition copy requires plot evidence");
+  }
+  if (transitionType === "continuous_narration") {
+    if (!String(transitionInput.script || "").trim()) throw new BadRequestError("continuous_narration requires a script");
+    const duration = Number(transitionInput.end) - Number(transitionInput.start);
+    if (Number(transitionInput.start) !== 0 || duration < 60 || duration > 100)
+      throw new BadRequestError("continuous_narration must start at 0 and last 60-100 seconds");
+    const voice = transitionInput.voice && typeof transitionInput.voice === "object" ? transitionInput.voice : {};
+    const hasUploadedAudio = String(voice.mode || "") === "manual_audio" && Boolean(String(voice.assetId || ""));
+    if (hasUploadedAudio) {
+      let audioAsset;
+      let narrationProject;
+      try {
+        narrationProject = e.app.findRecordById("factory_projects", String(body.id || ""));
+        audioAsset = e.app.findRecordById("narration_audio_assets", String(voice.assetId || ""));
+      } catch (_) {
+        throw new BadRequestError("continuous_narration requires an existing project and a valid uploaded audio asset");
+      }
+      if (audioAsset.getString("project") !== narrationProject.id)
+        throw new BadRequestError("narration audio asset belongs to a different project");
+      if (audioAsset.getString("status") !== "ready")
+        throw new BadRequestError("narration audio asset has not passed server probing");
+      const audioHelpers = require(`${__hooks}/narration_audio_helpers.js`);
+      const expectedUrl = `${audioHelpers.workerBaseUrl()}/api/lumina/factory/narration-audio/${audioAsset.id}/media?token=${encodeURIComponent(audioHelpers.mediaToken(audioAsset))}`;
+      if (String(voice.audioUrl) !== expectedUrl ||
+          String(voice.sha256 || "") !== audioAsset.getString("sha256") ||
+          Number(voice.byteSize) !== audioAsset.getInt("byte_size") ||
+          String(voice.mimeType || "") !== audioAsset.getString("mime_type") ||
+          Math.abs(Number(voice.durationSeconds) - audioAsset.getFloat("duration_seconds")) > 0.01)
+        throw new BadRequestError("narration audio lineage metadata does not match the uploaded asset");
+    } else if (!["draft", "pending"].includes(String(transitionInput.reviewStatus || "draft"))) {
+      throw new BadRequestError("continuous_narration requires uploaded manual audio before review");
+    }
+  }
   const sequentialBodyMode =
     String(transitionInput.bodyAssemblyMode || "") ===
     "sequential_from_highlight";
@@ -2802,18 +3187,52 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
     causalCoverage = Number(
       completeness.causalCoverage || completeness.causal_coverage || 0,
     );
+  const dimensionScores = helpers.jsonObject(match, "dimension_scores");
+  const firstFiniteScore = (keys) => {
+    for (const key of keys) {
+      const value = Number(dimensionScores[key]);
+      if (Number.isFinite(value) && value > 0) return value;
+    }
+    return null;
+  };
+  const retentionScore = firstFiniteScore([
+    "hookRetention",
+    "hook_retention",
+    "retention",
+    "retentionScore",
+    "retention_score",
+  ]);
+  const connectivityScore = firstFiniteScore([
+    "connectivity",
+    "connectivityScore",
+    "connectivity_score",
+    "continuity",
+    "transition",
+  ]);
+  const severeMismatch = helpers.jsonArray(match, "risks").some((risk) => {
+    const text = typeof risk === "string" ? risk : JSON.stringify(risk || {});
+    return /(serious[_ -]?(fact|factual)[_ -]?conflict|false[_ -]?promise|severe[_ -]?mismatch|严重事实冲突|虚假承诺|严重错配)/i.test(text);
+  });
+  const productionRights = ["已获授权可制作", "已获授权可投放", "synthetic-test-only"];
   const qualityChecks = [
     {
       code: "HOOK_SOURCE",
-      label: "外搭钩子来源",
-      passed: hook.getString("source_class") === "external_material",
+      label: "钩子来源兼容性（仅诊断）",
+      passed: true,
+      severity: "advisory",
+      metrics: { sourceClass: hook.getString("source_class") || "unknown" },
+    },
+    {
+      code: "HOOK_MEDIA",
+      label: "钩子素材库归属与媒体可用性",
+      passed: Boolean(hook.getString("material") && hookMaterial.getString("video")),
       severity: "hard",
     },
     {
       code: "HOOK_RIGHTS",
-      label: "钩子授权状态（当前不设门槛）",
-      passed: true,
-      severity: "advisory",
+      label: "钩子授权可制作",
+      passed: productionRights.includes(hook.getString("rights_status")),
+      severity: "hard",
       metrics: { rightsStatus: hook.getString("rights_status") },
     },
     {
@@ -2868,9 +3287,36 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
     {
       code: "STORY_COMPLETENESS",
       label: "故事完整度",
-      passed: storyCompleteness >= 0.6,
+      passed: match.getFloat("story_score") >= 80,
       severity: "advisory",
-      metrics: { storyCompleteness },
+      metrics: { storyScore: match.getFloat("story_score"), storyCompleteness },
+    },
+    {
+      code: "HOOK_RETENTION",
+      label: "钩子留人能力",
+      passed: retentionScore == null || retentionScore >= 80,
+      severity: "advisory",
+      metrics: { score: retentionScore, threshold: 80, missing: retentionScore == null },
+    },
+    {
+      code: "PROMISE_FULFILLMENT",
+      label: "叙事承诺兑现",
+      passed: match.getFloat("promise_fulfillment_score") >= 75,
+      severity: "advisory",
+      metrics: { score: match.getFloat("promise_fulfillment_score"), threshold: 75 },
+    },
+    {
+      code: "CONNECTIVITY",
+      label: "人物、因果、空间与情绪过渡可理解",
+      passed: connectivityScore == null || connectivityScore >= 70,
+      severity: "advisory",
+      metrics: { score: connectivityScore, threshold: 70, missing: connectivityScore == null },
+    },
+    {
+      code: "SEVERE_MISMATCH_VETO",
+      label: "严重事实冲突或虚假承诺一票否决",
+      passed: !severeMismatch,
+      severity: "hard",
     },
     {
       code: "MATCH_SCORE_CONSISTENCY",
@@ -2885,7 +3331,7 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
     {
       code: "TRANSITION_RATIONALE",
       label: "过渡方案依据",
-      passed: Boolean(String(transitionInput.rationale || "").trim()),
+      passed: transitionEvidence.length > 0 || transitionType === "direct_cut",
       severity: "advisory",
     },
   ];
@@ -2942,7 +3388,15 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
       : "9:16",
   );
   project.set("language", String(body.language || "英语").slice(0, 80));
-  project.set("transition", body.transition || {});
+  project.set("transition", {
+    ...transitionInput,
+    reviewStatus: "pending",
+    reviewerNote: "",
+    reviewPreviewUrl: "",
+    reviewPreviewHash: "",
+    reviewPreviewVersion: 0,
+    reviewPreviewTransitionVersion: 0,
+  });
   project.set("timeline", timeline);
   project.set("quality_report", {
     schemaVersion: "factory-self-qc-v1",
@@ -3037,6 +3491,7 @@ routerAdd("GET", "/api/lumina/factory/history", (e) => {
               preview_url: latest.getString("preview_url"),
               output_url: latest.getString("output_url"),
               validation: helpers.jsonObject(latest, "validation"),
+              retry_of: latest.getString("retry_of"),
             }
           : null,
         render_versions: renders.map((render) => ({
@@ -3045,11 +3500,147 @@ routerAdd("GET", "/api/lumina/factory/history", (e) => {
           status: render.getString("status"),
           preview_url: render.getString("preview_url"),
           output_url: render.getString("output_url"),
+          retry_of: render.getString("retry_of"),
           created: "",
         })),
       };
     });
   return e.json(200, { items: projects });
+});
+
+routerAdd("POST", "/api/lumina/factory/projects/{id}/transition-review", (e) => {
+  const helpers = require(`${__hooks}/hook_factory_helpers.js`);
+  helpers.authorizeUi(e);
+  const body = e.requestInfo().body || {};
+  const decision = String(body.decision || "");
+  if (!["approved", "rejected"].includes(decision))
+    throw new BadRequestError("transition review decision must be approved or rejected");
+  const note = String(body.note || "").trim();
+  if (!note) throw new BadRequestError("transition reviewer note is required");
+  const project = e.app.findRecordById("factory_projects", e.request.pathValue("id"));
+  if (project.getString("status") === "rendering")
+    throw new BadRequestError("transition cannot change while rendering");
+  const transition = helpers.jsonObject(project, "transition");
+  if (!transition.type) throw new BadRequestError("formal transition production object is missing");
+  const previewVersion = Number(body.preview_version || 0);
+  const previewHash = String(body.preview_hash || "");
+  if (!transition.reviewPreviewUrl || !transition.reviewPreviewHash ||
+      previewVersion !== Number(transition.reviewPreviewVersion || 0) ||
+      previewHash !== String(transition.reviewPreviewHash) ||
+      Number(transition.reviewPreviewTransitionVersion || 0) !== Number(transition.version || 0))
+    throw new BadRequestError("transition approval must bind the latest preview hash and production version");
+  if (decision === "approved") {
+    const previewRender = e.app
+      .findRecordsByFilter(
+        "factory_renders",
+        "project = {:project} && version = {:version}",
+        "-version",
+        1,
+        0,
+        { project: project.id, version: previewVersion },
+      )
+      .filter(Boolean)[0];
+    const previewValidation = previewRender
+      ? helpers.jsonObject(previewRender, "validation")
+      : {};
+    if (
+      !previewRender ||
+      previewRender.getString("status") !== "succeeded" ||
+      previewRender.getString("output_sha256") !== previewHash ||
+      previewValidation.passed !== true ||
+      Number(previewValidation.transitionVersion || 0) !==
+        Number(transition.version || 0)
+    )
+      throw new BadRequestError(
+        "transition approval requires a passed preview with matching production lineage",
+      );
+    if (transition.type === "continuous_narration") {
+      const voice =
+        transition.voice && typeof transition.voice === "object"
+          ? transition.voice
+          : {};
+      if (
+        String(previewValidation.audioAssetId || "") !==
+          String(voice.assetId || "") ||
+        String(previewValidation.audioSha256 || "") !==
+          String(voice.sha256 || "")
+      )
+        throw new BadRequestError(
+          "transition approval requires preview audio lineage to match the current narration asset",
+        );
+    }
+  }
+  transition.reviewStatus = decision;
+  transition.reviewerNote = note.slice(0, 2000);
+  transition.version = Math.max(1, Number(transition.version || 1));
+  project.set("transition", transition);
+  project.set("status", decision === "approved" ? "ready" : "rejected");
+  e.app.save(project);
+  return e.json(200, { id: project.id, reviewStatus: decision, version: transition.version });
+});
+
+routerAdd("POST", "/api/lumina/factory/projects/{id}/transition-preview", (e) => {
+  const helpers = require(`${__hooks}/hook_factory_helpers.js`);
+  helpers.authorizeUi(e);
+  const project = e.app.findRecordById("factory_projects", e.request.pathValue("id"));
+  const transition = helpers.jsonObject(project, "transition");
+  if (!transition.type || !Number(transition.version))
+    throw new BadRequestError("formal transition production object is required");
+  if (transition.type === "continuous_narration") {
+    const voice = transition.voice && typeof transition.voice === "object" ? transition.voice : {};
+    let audioAsset;
+    try {
+      audioAsset = e.app.findRecordById("narration_audio_assets", String(voice.assetId || ""));
+    } catch (_) {
+      throw new BadRequestError("continuous narration preview requires uploaded manual audio");
+    }
+    if (audioAsset.getString("project") !== project.id ||
+        audioAsset.getString("status") !== "ready" ||
+        String(voice.sha256 || "") !== audioAsset.getString("sha256") ||
+        Number(voice.byteSize) !== audioAsset.getInt("byte_size"))
+      throw new BadRequestError("continuous narration preview requires matching project audio lineage");
+  }
+  const existing = e.app.findRecordsByFilter("factory_renders", "project = {:project}", "-version", 500, 0, { project: project.id }).filter(Boolean);
+  const version = existing.length ? existing[0].getInt("version") + 1 : 1;
+  const render = new Record(e.app.findCollectionByNameOrId("factory_renders"));
+  render.set("project", project.id);
+  render.set("version", version);
+  render.set("status", "queued");
+  render.set("progress", 0);
+  render.set("current_stage", "transition_review_queued");
+  render.set("attempt", 0);
+  render.set("max_attempts", 3);
+  render.set("render_config", { purpose: "transition_review", transitionVersion: Number(transition.version), format: "MP4" });
+  e.app.save(render);
+  transition.reviewStatus = "pending";
+  transition.reviewPreviewUrl = "";
+  transition.reviewPreviewHash = "";
+  transition.reviewPreviewVersion = version;
+  transition.reviewPreviewTransitionVersion = Number(transition.version);
+  project.set("transition", transition);
+  project.set("status", "ready");
+  e.app.save(project);
+  return e.json(200, { id: render.id, project: project.id, status: "queued", previewVersion: version, transitionVersion: Number(transition.version) });
+});
+
+routerAdd("GET", "/api/lumina/factory/projects/{id}/transition-preview", (e) => {
+  const helpers = require(`${__hooks}/hook_factory_helpers.js`);
+  helpers.authorizeUi(e);
+  const project = e.app.findRecordById("factory_projects", e.request.pathValue("id"));
+  const transition = helpers.jsonObject(project, "transition");
+  const render = e.app.findRecordsByFilter("factory_renders", "project = {:project}", "-version", 500, 0, { project: project.id })
+    .filter((item) => helpers.jsonObject(item, "render_config").purpose === "transition_review")[0];
+  return e.json(200, {
+    projectId: project.id,
+    status: render ? render.getString("status") : "missing",
+    renderId: render ? render.id : "",
+    previewUrl: render ? render.getString("preview_url") : "",
+    previewVersion: render ? render.getInt("version") : 0,
+    previewHash: render ? render.getString("output_sha256") : "",
+    transitionVersion: Number(transition.version || 0),
+    error: render ? render.getString("error") : "",
+    transition,
+  });
 });
 
 routerAdd("POST", "/api/lumina/factory/projects/{id}/renders", (e) => {
@@ -3058,6 +3649,9 @@ routerAdd("POST", "/api/lumina/factory/projects/{id}/renders", (e) => {
     "factory_projects",
     e.request.pathValue("id"),
   );
+  const transition = require(`${__hooks}/hook_factory_helpers.js`).jsonObject(project, "transition");
+  if (String(transition.reviewStatus || "") !== "approved")
+    throw new BadRequestError("transition review must be approved before rendering, including direct_cut");
   if (!["ready", "rejected", "approved"].includes(project.getString("status")))
     throw new BadRequestError("project is not ready to render");
   if (project.getString("mode") !== "episode-splice") {
@@ -3126,10 +3720,84 @@ routerAdd("GET", "/api/lumina/factory/renders/{id}", (e) => {
     progress: render.getInt("progress"),
     current_stage: render.getString("current_stage"),
     error: render.getString("error"),
+    error_kind: render.getString("error_kind"),
+    queued_at: render.getString("created"),
+    last_heartbeat_at: render.getString("updated"),
+    lease_until: render.getString("lease_until"),
+    next_attempt_at: render.getString("next_attempt_at"),
     preview_url: render.getString("preview_url"),
     output_url: render.getString("output_url"),
     validation: helpers.jsonObject(render, "validation"),
+    retry_of: render.getString("retry_of"),
+    updated: render.getString("updated"),
   });
+});
+
+routerAdd("POST", "/api/lumina/factory/renders/{id}/retry", (e) => {
+  const helpers = require(`${__hooks}/hook_factory_helpers.js`);
+  helpers.authorizeUi(e);
+  let response;
+  e.app.runInTransaction((tx) => {
+    const failed = tx.findRecordById("factory_renders", e.request.pathValue("id"));
+    const request = helpers.manualRetryRequest(e, failed, ["queued", "rendering"]);
+    if (request.duplicate) {
+      const existing = tx.findRecordsByFilter("factory_renders", "retry_of = {:failed}", "-version", 1, 0, { failed: failed.id }).filter(Boolean)[0];
+      response = existing ? { id: existing.id, project: existing.getString("project"), version: existing.getInt("version"), status: existing.getString("status"), retry_of: failed.id, idempotent: true } : { id: failed.id, status: failed.getString("status"), idempotent: true };
+      return;
+    }
+    const project = tx.findRecordById("factory_projects", failed.getString("project"));
+    const projectTransition = helpers.jsonObject(project, "transition");
+    const failedConfig = helpers.jsonObject(failed, "render_config");
+    if (failedConfig.purpose === "transition_review") {
+      if (Number(failedConfig.transitionVersion || 0) !== Number(projectTransition.version || 0))
+        throw new ApiError(409, "failed preview belongs to an obsolete transition version");
+    } else if (String(projectTransition.reviewStatus || "") !== "approved") {
+      throw new ApiError(409, "transition must remain approved before retrying final render");
+    }
+    const renders = tx.findRecordsByFilter("factory_renders", "project = {:project}", "-version", 500, 0, { project: project.id }).filter(Boolean);
+    const version = renders.length ? renders[0].getInt("version") + 1 : 1;
+    const historyValue = helpers.jsonValue(failed.get("manual_retry_audit"), []);
+    const history = Array.isArray(historyValue) ? historyValue.slice(-49) : [];
+    const audit = {
+      at: new Date().toISOString(), by: String(e.requestInfo().headers["x-lumina-user-id"] || "local-workstation").slice(0, 500),
+      reason: request.reason.slice(0, 2000), overrideNonRetryable: request.body.override_non_retryable === true,
+      overrideReason: String(request.body.override_reason || "").slice(0, 2000), previousStatus: failed.getString("status"),
+      previousErrorKind: failed.getString("error_kind"), previousAttempt: failed.getInt("attempt"), idempotencyKey: request.retryKey,
+    };
+    history.push(audit);
+    failed.set("manual_retry_audit", history);
+    failed.set("last_manual_retry_key", request.retryKey);
+    tx.save(failed);
+    const render = new Record(tx.findCollectionByNameOrId("factory_renders"));
+    render.set("project", project.id);
+    render.set("retry_of", failed.id);
+    render.set("version", version);
+    render.set("status", "queued");
+    render.set("progress", 0);
+    const renderConfig = failedConfig;
+    const transitionReview = renderConfig.purpose === "transition_review";
+    render.set("current_stage", transitionReview ? "transition_review_queued" : "queued");
+    render.set("attempt", 0);
+    render.set("max_attempts", failed.getInt("max_attempts") || 3);
+    render.set("render_config", renderConfig);
+    render.set("manual_retry_audit", [audit]);
+    render.set("last_manual_retry_key", request.retryKey);
+    tx.save(render);
+    project.set("review", {});
+    if (transitionReview) {
+      const transition = helpers.jsonObject(project, "transition");
+      transition.reviewStatus = "pending";
+      transition.reviewPreviewUrl = "";
+      transition.reviewPreviewHash = "";
+      transition.reviewPreviewVersion = version;
+      transition.reviewPreviewTransitionVersion = Number(transition.version || 0);
+      project.set("transition", transition);
+      project.set("status", "ready");
+    } else project.set("status", "rendering");
+    tx.save(project);
+    response = { id: render.id, project: project.id, version, status: "queued", retry_of: failed.id, audit };
+  });
+  return e.json(201, response);
 });
 
 routerAdd("POST", "/api/lumina/factory/projects/{id}/review", (e) => {
@@ -3201,24 +3869,22 @@ routerAdd("POST", "/api/lumina/factory/projects/{id}/export", (e) => {
   const validation = helpers.jsonObject(render, "validation");
   if (validation.passed !== true || !render.getString("output_sha256"))
     throw new BadRequestError("render validation must pass before export");
-  if (project.getString("status") !== "approved") {
-    project.set("status", "approved");
-    project.set("review", {
-      decision: "approved",
-      source: "automatic_render_validation",
-      renderId: render.id,
-      renderVersion: render.getInt("version"),
-      outputSha256: render.getString("output_sha256"),
-      reviewedAt: new Date().toISOString(),
-    });
-    e.app.save(project);
-  }
+  const existingReview = helpers.jsonObject(project, "review");
+  if (
+    project.getString("status") !== "approved" ||
+    existingReview.decision !== "approved" ||
+    existingReview.renderId !== render.id ||
+    Number(existingReview.renderVersion) !== render.getInt("version") ||
+    existingReview.outputSha256 !== render.getString("output_sha256")
+  )
+    throw new BadRequestError(
+      "export requires an approved human review for this exact render",
+    );
   const requestedName = String(body.file_name || "")
     .trim()
     .replace(/[\\/:*?\"<>|]+/g, "-");
   const fileName =
     requestedName || `factory-${project.id}-v${render.getInt("version")}.mp4`;
-  const existingReview = helpers.jsonObject(project, "review");
   const exportRecord = {
     renderId: render.id,
     fileName,
@@ -3234,11 +3900,148 @@ routerAdd("POST", "/api/lumina/factory/projects/{id}/export", (e) => {
   return e.json(200, exportRecord);
 });
 
+routerAdd("POST", "/api/lumina/factory/projects/{id}/narration-audio", (e) => {
+  const helpers = require(`${__hooks}/hook_factory_helpers.js`);
+  const audioHelpers = require(`${__hooks}/narration_audio_helpers.js`);
+  helpers.authorizeUi(e);
+  const project = e.app.findRecordById(
+    "factory_projects",
+    e.request.pathValue("id"),
+  );
+  audioHelpers.assertAssetMutable(e.app, project);
+  const replaceAssetId = String(e.requestInfo().query.replaceAssetId || "");
+  let replacedAsset = null;
+  if (replaceAssetId) {
+    try {
+      replacedAsset = e.app.findRecordById("narration_audio_assets", replaceAssetId);
+    } catch (_) {
+      throw new BadRequestError("replacement narration audio asset does not exist");
+    }
+    if (replacedAsset.getString("project") !== project.id)
+      throw new BadRequestError("replacement narration audio asset belongs to a different project");
+    if (replacedAsset.getString("status") !== "ready")
+      throw new BadRequestError("replacement narration audio asset is not active");
+  }
+  const files = e.findUploadedFiles("audio").filter(Boolean);
+  if (files.length !== 1)
+    throw new BadRequestError("exactly one narration audio file is required");
+  const declaredDuration = Number(e.requestInfo().body.durationSeconds);
+  if (!Number.isFinite(declaredDuration) || declaredDuration < 60 || declaredDuration > 100)
+    throw new BadRequestError("narration audio duration must be between 60 and 100 seconds");
+  const metadata = audioHelpers.audioMetadata(files[0]);
+  const duration = Number(metadata.probe.durationSeconds);
+  if (duration < 60 || duration > 100)
+    throw new BadRequestError("server-probed narration audio duration must be between 60 and 100 seconds");
+  if (Math.abs(duration - declaredDuration) > 0.5)
+    throw new BadRequestError("declared narration duration does not match server ffprobe");
+  const declaredSha256 = String(e.requestInfo().body.sha256 || "").toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(declaredSha256) || declaredSha256 !== metadata.sha256)
+    throw new BadRequestError("audio sha256 does not match the uploaded bytes");
+  const record = new Record(
+    e.app.findCollectionByNameOrId("narration_audio_assets"),
+  );
+  record.set("project", project.id);
+  record.set("audio", files[0]);
+  record.set("original_name", metadata.originalName);
+  record.set("mime_type", metadata.mimeType);
+  record.set("byte_size", metadata.byteSize);
+  record.set("duration_seconds", duration);
+  record.set("sha256", metadata.sha256);
+  record.set(
+    "uploaded_by",
+    String(e.requestInfo().headers["x-lumina-user-id"] || "local-workstation").slice(0, 500),
+  );
+  record.set("uploaded_at", new Date().toISOString());
+  record.set("status", "ready");
+  record.set("probe_evidence", metadata.probe);
+  e.app.save(record);
+  // Revoke approval/preview lineage before deactivating the old asset. If a
+  // later save fails, the safe failure mode is an unapproved project, never an
+  // approved project pointing at inaccessible bytes.
+  const transitionVersion = audioHelpers.invalidateTransition(e.app, project, replaceAssetId);
+  if (replacedAsset) {
+    replacedAsset.set("status", "rejected");
+    e.app.save(replacedAsset);
+  }
+  const storedName = record.getString("audio");
+  const filePath = `/api/lumina/factory/narration-audio/${record.id}/media?token=${encodeURIComponent(audioHelpers.mediaToken(record))}`;
+  return e.json(201, {
+    assetId: record.id,
+    collection: record.collection().id,
+    recordId: record.id,
+    projectId: project.id,
+    audioUrl: `${audioHelpers.workerBaseUrl()}${filePath}`,
+    filePath,
+    fileName: metadata.originalName,
+    byteSize: metadata.byteSize,
+    mimeType: metadata.mimeType,
+    detectedMime: metadata.mimeType,
+    sha256: metadata.sha256,
+    durationSeconds: duration,
+    uploadedBy: record.getString("uploaded_by"),
+    uploadedAt: record.getString("uploaded_at"),
+    createdAt: record.getString("uploaded_at"),
+    status: record.getString("status"),
+    probeEvidence: metadata.probe,
+    transitionVersion,
+  });
+});
+
+routerAdd("DELETE", "/api/lumina/factory/projects/{id}/narration-audio/{assetId}", (e) => {
+  const helpers = require(`${__hooks}/hook_factory_helpers.js`);
+  const audioHelpers = require(`${__hooks}/narration_audio_helpers.js`);
+  helpers.authorizeUi(e);
+  const project = e.app.findRecordById("factory_projects", e.request.pathValue("id"));
+  audioHelpers.assertAssetMutable(e.app, project);
+  const asset = e.app.findRecordById("narration_audio_assets", e.request.pathValue("assetId"));
+  if (asset.getString("project") !== project.id)
+    throw new BadRequestError("narration audio asset belongs to a different project");
+  if (asset.getString("status") !== "ready")
+    throw new BadRequestError("narration audio asset is already inactive");
+  const transitionVersion = audioHelpers.invalidateTransition(e.app, project, asset.id);
+  asset.set("status", "rejected");
+  e.app.save(asset);
+  return e.json(200, {
+    assetId: asset.id,
+    status: "rejected",
+    transitionVersion,
+    previewInvalidated: true,
+    approvalInvalidated: true,
+    recoverable: true,
+    recovery: "The file is retained but inaccessible; an administrator may restore the asset after review.",
+  });
+});
+
+routerAdd("GET", "/api/lumina/factory/narration-audio/{id}/media", (e) => {
+  const audioHelpers = require(`${__hooks}/narration_audio_helpers.js`);
+  const record = e.app.findRecordById(
+    "narration_audio_assets",
+    e.request.pathValue("id"),
+  );
+  if (record.getString("status") !== "ready")
+    throw new UnauthorizedError("narration media asset is inactive");
+  const supplied = String(e.requestInfo().query.token || "");
+  const expected = audioHelpers.mediaToken(record);
+  if (!require(`${__hooks}/hook_factory_helpers.js`).constantTimeTextEqual(supplied, expected))
+    throw new UnauthorizedError("invalid narration media token");
+  const filesystem = e.app.newFilesystem();
+  let reader = null;
+  try {
+    const key = `${record.collection().id}/${record.id}/${record.getString("audio")}`;
+    reader = filesystem.getReader(key);
+    e.stream(200, record.getString("mime_type"), reader);
+  } finally {
+    if (reader) reader.close();
+    filesystem.close();
+  }
+});
+
 routerAdd("POST", "/api/lumina/factory-render/claim", (e) => {
   const helpers = require(`${__hooks}/hook_factory_helpers.js`);
   helpers.authorizeWorker(e);
   const body = e.requestInfo().body || {},
     workerId = String(body.worker_id || ""),
+    requestedJobId = String(body.job_id || ""),
     leaseSeconds = Math.max(
       60,
       Math.min(1800, Number(body.lease_seconds || 600)),
@@ -3257,12 +4060,15 @@ routerAdd("POST", "/api/lumina/factory-render/claim", (e) => {
         .filter(Boolean);
     const render = records.find(
       (item) =>
-        item.getString("status") === "queued" ||
-        (item.getString("status") === "failed" &&
-          item.getInt("attempt") < item.getInt("max_attempts")) ||
-        (item.getString("status") === "rendering" &&
-          (!Date.parse(item.getString("lease_until")) ||
-            Date.parse(item.getString("lease_until")) <= now)),
+        (!requestedJobId || item.id === requestedJobId) &&
+        (item.getString("status") === "queued" ||
+          (item.getString("status") === "failed" &&
+            !["permanent", "media", "validation"].includes(item.getString("error_kind")) &&
+            item.getInt("attempt") < item.getInt("max_attempts") &&
+            (!Date.parse(item.getString("next_attempt_at")) || Date.parse(item.getString("next_attempt_at")) <= now)) ||
+          (item.getString("status") === "rendering" &&
+            (!Date.parse(item.getString("lease_until")) ||
+              Date.parse(item.getString("lease_until")) <= now))),
     );
     if (!render) return;
     const token = $security.randomString(32);
@@ -3286,8 +4092,22 @@ routerAdd("POST", "/api/lumina/factory-render/claim", (e) => {
     const hook = isEpisodeSplice ? null : tx.findRecordById("hook_assets", project.getString("hook"));
     const match = isEpisodeSplice ? null : tx.findRecordById("hook_story_matches", project.getString("story_match"));
     const material = isEpisodeSplice ? null : tx.findRecordById("ad_materials", hook.getString("material"));
+    const projectTransition = helpers.jsonObject(project, "transition");
+    const sequentialExternalBody =
+      !isEpisodeSplice &&
+      String(projectTransition.bodyAssemblyMode || "") ===
+        "sequential_from_highlight";
     const episodeNumbers = isEpisodeSplice
       ? helpers.jsonArray(project, "selected_episodes").map(Number).filter(Boolean)
+      : sequentialExternalBody
+        ? [
+            ...new Set(
+              helpers
+                .jsonArray(project, "timeline")
+                .map((item) => Number(item && item.episode))
+                .filter(Boolean),
+            ),
+          ]
       : [...new Set(helpers.jsonArray(match, "segments").map((segment) => Number(segment.episode)).filter(Boolean))];
     const episodes = tx
       .findRecordsByFilter(
@@ -3356,6 +4176,16 @@ routerAdd("PATCH", "/api/lumina/factory-render/jobs/{id}", (e) => {
         ? String(body.error || "render failed").slice(0, 4000)
         : "",
     );
+    if (nextStatus === "failed") {
+      const errorKind = String(body.error_kind || "permanent"),
+        retryable = body.retryable === true && !["permanent", "media", "validation"].includes(errorKind),
+        delay = Math.max(0, Math.min(1800, Number(body.retry_after_seconds || 0)));
+      render.set("error_kind", errorKind);
+      render.set("next_attempt_at", retryable && delay ? new Date(Date.now() + delay * 1000).toISOString() : "");
+    } else if (nextStatus === "succeeded") {
+      render.set("error_kind", "");
+      render.set("next_attempt_at", "");
+    }
     if (body.boundary_ledger != null)
       render.set("boundary_ledger", body.boundary_ledger);
     if (body.validation != null) render.set("validation", body.validation);
@@ -3384,9 +4214,23 @@ routerAdd("PATCH", "/api/lumina/factory-render/jobs/{id}", (e) => {
       "factory_projects",
       render.getString("project"),
     );
+    const renderConfig = require(`${__hooks}/hook_factory_helpers.js`).jsonObject(render, "render_config");
+    if (nextStatus === "succeeded" && renderConfig.purpose === "transition_review") {
+      const transition = require(`${__hooks}/hook_factory_helpers.js`).jsonObject(project, "transition");
+      if (Number(transition.version || 0) === Number(renderConfig.transitionVersion || 0)) {
+        transition.reviewPreviewUrl = String(body.preview_url || "");
+        transition.reviewPreviewHash = String(body.output_sha256 || "");
+        transition.reviewPreviewVersion = render.getInt("version");
+        transition.reviewPreviewTransitionVersion = Number(transition.version);
+        transition.reviewStatus = "pending";
+        project.set("transition", transition);
+      }
+    }
     project.set(
       "status",
-      nextStatus === "succeeded"
+      renderConfig.purpose === "transition_review"
+        ? "ready"
+        : nextStatus === "succeeded"
         ? "review"
         : nextStatus === "failed"
           ? "ready"

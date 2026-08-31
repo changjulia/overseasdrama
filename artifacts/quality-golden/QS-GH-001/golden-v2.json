@@ -1,0 +1,253 @@
+{
+  "schemaVersion": 1,
+  "caseId": "QS-GH-001",
+  "goldenVersion": "v2",
+  "status": "frozen_blind",
+  "frozenAt": "2026-08-30T22:43:45+08:00",
+  "input": {
+    "path": "/Users/julia_chen/Downloads/1786532318_t7aTaPzDXJ_H264_720.mp4",
+    "sha256": "406ba710e25778f3f59b8881d058807e1aa266d97c40ee2c54eb0da3980c003b",
+    "durationSeconds": 1184.2415487528344
+  },
+  "blindness": {
+    "systemOutputSeenBeforeFreeze": false,
+    "allowedInputs": [
+      "the named source video and independently generated frames",
+      "/Users/julia_chen/Documents/ChatGPT/短剧/release-evidence/quality-supervision/protocol.schema.json",
+      "business prior: external_hook_positive"
+    ],
+    "knownBusinessPriors": [
+      "external_hook_positive"
+    ],
+    "limitations": [
+      "No original-drama source video or lineage evidence was available.",
+      "Hook end is a candidate boundary inferred from visual and embedded-caption progression, not a verified source splice.",
+      "Audio was not independently transcribed; embedded English captions and visible action are the textual evidence."
+    ]
+  },
+  "expertAnswer": {
+    "genre": [
+      "family melodrama",
+      "hidden-wealth romance",
+      "poverty-to-security fantasy"
+    ],
+    "sourceClassification": {
+      "businessLabel": "external_hook_positive",
+      "externalSubtype": "unknown_pending_review",
+      "sourceEvidenceStatus": "pending_source_comparison",
+      "t1t2": {
+        "value": "candidate_external_hook",
+        "status": "pending"
+      }
+    },
+    "hook": {
+      "boundaryStatus": "candidate_only",
+      "candidateRanges": [
+        {
+          "startSeconds": 0,
+          "endSeconds": 39,
+          "confidence": 0.71,
+          "basis": "Opening compresses pregnancy, trash collection, sacrifice for a son's wedding, collapse, and introduction to a wealthy father; the presentation shifts toward sustained character dialogue by roughly 39-50s."
+        }
+      ],
+      "events": [
+        {
+          "statement": "A visibly pregnant young woman is introduced with the caption that she became pregnant at 17 and is shown collecting trash to support the baby.",
+          "evidence": [
+            {
+              "startSeconds": 0,
+              "endSeconds": 9,
+              "confidence": 0.96,
+              "basis": "Visible pool shot, garbage truck shots, and embedded captions."
+            }
+          ],
+          "confidence": 0.96
+        },
+        {
+          "statement": "The same hook frames her as self-sacrificing, spending her savings to help her son marry and trying not to burden him.",
+          "evidence": [
+            {
+              "startSeconds": 10,
+              "endSeconds": 21,
+              "confidence": 0.9,
+              "basis": "Visible domestic shots and embedded captions at 12s and 18s."
+            }
+          ],
+          "confidence": 0.9
+        },
+        {
+          "statement": "A collapsed young woman becomes the bridge to a wealthy father and a possible life-changing relationship.",
+          "evidence": [
+            {
+              "startSeconds": 24,
+              "endSeconds": 39,
+              "confidence": 0.88,
+              "basis": "Purse/collapse imagery, young blonde woman, and embedded caption introducing her wealthy father."
+            }
+          ],
+          "confidence": 0.88
+        }
+      ]
+    },
+    "entities": [
+      {
+        "statement": "Central woman: working-class mother, introduced retrospectively as a pregnant 17-year-old and later shown sacrificing for her adult son.",
+        "evidence": [
+          {
+            "startSeconds": 0,
+            "endSeconds": 21,
+            "confidence": 0.91,
+            "basis": "Repeated blonde woman imagery and captions."
+          }
+        ],
+        "confidence": 0.91
+      },
+      {
+        "statement": "A younger blonde woman and her wealthy father enter as the encounter that can alter the mother's prospects.",
+        "evidence": [
+          {
+            "startSeconds": 24,
+            "endSeconds": 50,
+            "confidence": 0.84,
+            "basis": "Collapse/meeting sequence and transition into the father's self-introduction."
+          }
+        ],
+        "confidence": 0.84
+      }
+    ],
+    "conflict": [
+      {
+        "statement": "Material hardship and maternal sacrifice conflict with the desire to protect and support her son.",
+        "evidence": [
+          {
+            "startSeconds": 5,
+            "endSeconds": 21,
+            "confidence": 0.92,
+            "basis": "Trash work and savings captions."
+          }
+        ],
+        "confidence": 0.92
+      }
+    ],
+    "emotion": [
+      {
+        "statement": "Pity and admiration are elicited first, then curiosity and hope when wealthy characters appear.",
+        "evidence": [
+          {
+            "startSeconds": 0,
+            "endSeconds": 39,
+            "confidence": 0.89,
+            "basis": "Escalating hardship-to-opportunity montage."
+          }
+        ],
+        "confidence": 0.89
+      }
+    ],
+    "suspense": [
+      {
+        "statement": "The hook withholds how the impoverished mother will become connected to the wealthy father and what that means for her son.",
+        "evidence": [
+          {
+            "startSeconds": 24,
+            "endSeconds": 50,
+            "confidence": 0.86,
+            "basis": "Encounter setup followed by direct introduction."
+          }
+        ],
+        "confidence": 0.86
+      }
+    ],
+    "narrativePromise": [
+      {
+        "statement": "A class-crossing romance or rescue will transform a self-sacrificing mother's life while testing family loyalty.",
+        "evidence": [
+          {
+            "startSeconds": 0,
+            "endSeconds": 50,
+            "confidence": 0.82,
+            "basis": "Title overlay 'MARRIED TO A HIDDEN FORTUNE' plus poverty and wealthy-father setup."
+          }
+        ],
+        "confidence": 0.82
+      }
+    ],
+    "retention": {
+      "score": 86,
+      "reasoning": [
+        "Immediate vulnerable protagonist and unusual teenage-pregnancy premise.",
+        "Rapid escalation through work, sacrifice, collapse, and wealthy-family encounter.",
+        "A clear unanswered transformation question carries into sustained dialogue."
+      ]
+    },
+    "highlightCandidates": [
+      {
+        "id": "GH001-H1",
+        "range": {
+          "startSeconds": 0,
+          "endSeconds": 9,
+          "confidence": 0.94,
+          "basis": "Pregnancy-to-garbage-work contrast."
+        },
+        "description": "Visually immediate hardship premise.",
+        "boundarySafety": "needs_frame_review",
+        "confidence": 0.94
+      },
+      {
+        "id": "GH001-H2",
+        "range": {
+          "startSeconds": 10,
+          "endSeconds": 21,
+          "confidence": 0.88,
+          "basis": "Maternal sacrifice escalation."
+        },
+        "description": "All-savings-for-son beat.",
+        "boundarySafety": "needs_frame_review",
+        "confidence": 0.88
+      },
+      {
+        "id": "GH001-H3",
+        "range": {
+          "startSeconds": 24,
+          "endSeconds": 39,
+          "confidence": 0.84,
+          "basis": "Collapse and wealthy-father reveal."
+        },
+        "description": "Life-changing encounter and status reveal.",
+        "boundarySafety": "needs_frame_review",
+        "confidence": 0.84
+      }
+    ],
+    "matching": {
+      "recommended": "Match to an episode opening on the same mother/wealthy-father relationship and the son's impending marriage; prioritize entity roles and causal continuity over wardrobe or face similarity.",
+      "confidence": 0.7,
+      "requiredChecks": [
+        "Compare against original-drama source around the first mother/father encounter.",
+        "Verify whether the hook summarizes future plot or is unrelated promotional material."
+      ]
+    },
+    "transitionRecommendations": {
+      "direct": "Preferred only if the episode begins with the wealthy father's introduction or the immediate aftermath of the collapsed-girl encounter; cut on the dialogue handoff around 39-50s after frame review.",
+      "A": "If the episode opens earlier in the mother's hardship arc, transition after the savings/sacrifice beat using a short contextual bridge.",
+      "B": "If the episode opens later at the romance, retain the wealthy-father reveal and use a brief recap/title bridge before the episode scene.",
+      "avoid": "Do not claim an exact splice or source subtype without original-drama comparison."
+    },
+    "rejectOrDegradeConditions": [
+      "Reject as a match if the target episode has no mother/son/wealthy-father causal chain.",
+      "Degrade boundary confidence if frame-accurate review places the narration-to-scene transition before 39s or after 50s.",
+      "Keep source subtype pending unless original source comparison proves reuse, unrelatedness, or mixing.",
+      "Do not reject an external hook solely because people, wardrobe, or visual style remain continuous."
+    ]
+  },
+  "evaluationReadiness": {
+    "systemComparison": "ready_after_draft_review",
+    "episodeMatch": "pending_original_source",
+    "renderModes": [
+      "direct",
+      "A",
+      "B"
+    ]
+  },
+  "freeze": {
+    "canonicalSha256": null
+  }
+}

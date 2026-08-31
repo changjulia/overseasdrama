@@ -1,0 +1,73 @@
+{
+  "attestationVersion": "isolated-access-attestation-v1",
+  "task": "blind_lycan_ep01_05",
+  "statement": "除系统强制要求读取的 video-use 技能说明外，叙事盲评只读取了用户指定的五个原始 MP4 及本次从它们自行生成的临时抽帧/短音频。未访问任何数据库、analysis_jobs、episodes、analysis_result、既有 golden、监督报告、推进文档、实现代码或项目提示词。",
+  "sourcePathsRead": [
+    "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/ed6gkt0rs143m9i/ep001_l3c0uq7oty.mp4",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/umuu90pueb51pcd/ep002_jsawtaxblt.mp4",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/d1ioorgaznqg6a4/ep003_kpjbcfsc8m.mp4",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/qwu7arhqdy76fut/ep004_9cuqmt85eg.mp4",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/d4hl19mhjzv393s/ep005_d218wasmj6.mp4"
+  ],
+  "systemInstructionPathRead": [
+    "/Users/julia_chen/.codex/skills/video-use/SKILL.md"
+  ],
+  "generatedTemporaryPathsRead": [
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep1_030.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep1_024_5.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep1_sheet_00.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep1_sheet_01.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep2_sheet_00.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep2_sheet_01.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep3_sheet_00.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep3_sheet_01.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep4_sheet_00.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep4_sheet_01.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep4_sheet_02.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep5_sheet_00.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep1key_0145.0_0183.0_p00.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep1key_0145.0_0183.0_p01.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep1key_0145.0_0183.0_p02.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep2key_0072.0_0102.0_p00.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep2key_0072.0_0102.0_p01.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep3key_0050.0_0100.0_p00.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep3key_0050.0_0100.0_p01.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep3key_0050.0_0100.0_p02.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep3key_0050.0_0100.0_p03.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep4keya_0015.0_0055.0_p00.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep4keya_0015.0_0055.0_p01.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep4keya_0015.0_0055.0_p02.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep4keyb_0135.0_0200.0_p00.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep4keyb_0135.0_0200.0_p01.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep4keyb_0135.0_0200.0_p02.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep4keyb_0135.0_0200.0_p03.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep4keyb_0135.0_0200.0_p04.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep5key_0000.0_0060.0_p00.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep5key_0000.0_0060.0_p01.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep5key_0000.0_0060.0_p02.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep5key_0000.0_0060.0_p03.jpg",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/.blind-temp/ep1_015_025_hi.m4a"
+  ],
+  "temporaryGenerationNotes": [
+    "另尝试生成 ep1_015_025.m4a，但 afconvert 失败，文件未形成可读内容。",
+    "临时抽帧和短音频均由上述五个指定 MP4 生成，完成后清理。"
+  ],
+  "validationPathsRead": [
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/draft.json",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/access-attestation.json"
+  ],
+  "forbiddenZonesAccessed": false,
+  "forbiddenZones": [
+    "任何数据库（包括 analysis_jobs/episodes）",
+    "任何 analysis_result",
+    "任何现有 golden 或监督报告",
+    "任何推进文档",
+    "任何实现代码",
+    "任何项目提示词"
+  ],
+  "writes": [
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/draft.json",
+    "/Users/julia_chen/Documents/ChatGPT/短剧/artifacts/quality-golden/isolated-lycan-ep01-05/access-attestation.json"
+  ],
+  "otherPersistentFilesModified": false
+}

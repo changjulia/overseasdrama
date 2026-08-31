@@ -127,7 +127,7 @@ compatible endpoint):
 DASHSCOPE_API_KEY=...
 LUMINA_SEMANTIC_PROVIDER=openai-chat-completions
 LUMINA_SEMANTIC_ENDPOINT=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-LUMINA_SEMANTIC_MODEL=qwen3-vl-plus
+LUMINA_SEMANTIC_MODEL=qwen-vl-max
 ```
 
 For production, replace the endpoint with the workspace-specific compatible

@@ -1,7 +1,19 @@
 /// <reference path="../pb_data/types.d.ts" />
 migrate((app) => {
-  const helpers = require(`${__hooks}/analysis_helpers.js`);
   const dramas = app.findRecordsByFilter("dramas", "id != ''", "id", 100000, 0);
+  // Fresh databases contain no records and must not try to load hook modules
+  // from the migration VM (where __hooks isn't available). Existing installs
+  // that already applied this migration are unchanged.
+  if (!dramas.length) return;
+  let helpers;
+  try {
+    helpers = require(`${__hooks}/analysis_helpers.js`);
+  } catch (_) {
+    // Ontology projection is also performed by normal analysis/reprojection;
+    // do not make a deployment fail solely because the migration VM cannot
+    // import runtime hook modules.
+    return;
+  }
   for (const drama of dramas) {
     const existing = helpers.storedJsonArray(drama, "ontology_tags");
     const analysis = drama.get("analysis");

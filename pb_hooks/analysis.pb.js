@@ -35,22 +35,35 @@ routerAdd("POST", "/api/lumina/analysis/claim", (e) => {
   let claimed = null;
   e.app.runInTransaction((tx) => {
     const candidates = tx.findRecordsByFilter("analysis_jobs", "status = 'queued' || status = 'running' || status = 'failed'", "created", 200, 0).filter(Boolean);
-    const stageOrder = { coarse: 0, detail: 1, precision: 2 };
+    const stageOrder = { coarse: 0, detail_episode: 1, detail: 2, precision: 3 };
     candidates.sort((a, b) => (stageOrder[a.getString("stage")] ?? 9) - (stageOrder[b.getString("stage")] ?? 9));
     const now = Date.now();
     const job = candidates.find((item) => {
       if (requestedJobId && item.id !== requestedJobId) return false;
       const stage = item.getString("stage");
       const dramaId = item.getString("drama");
+      if (stage === "detail_episode") {
+        const episodeId = item.getString("episode");
+        let dependency = null;
+        try { dependency = tx.findFirstRecordByFilter("analysis_jobs", "episode = {:episode} && stage = 'coarse'", { episode: episodeId }); } catch (_) {}
+        if (!dependency || dependency.getString("status") !== "succeeded") return false;
+      }
       if (stage === "detail") {
         const dependencies = tx.findRecordsByFilter("analysis_jobs", "drama = {:drama} && stage = 'coarse'", "created", 10000, 0, { drama: dramaId }).filter(Boolean);
         if (!dependencies.length || dependencies.some((dependency) => dependency.getString("status") !== "succeeded")) return false;
+        const shards = helpers.detailShardSummary(tx, dramaId, item.id);
+        if (!shards.ready) return false;
       }
       if (stage === "precision") {
         const dependencies = tx.findRecordsByFilter("analysis_jobs", "drama = {:drama} && stage = 'detail'", "created", 10000, 0, { drama: dramaId }).filter(Boolean);
         if (!dependencies.some((dependency) => dependency.getString("status") === "succeeded")) return false;
       }
-      if (item.getString("status") === "queued" || item.getString("status") === "failed") return item.getInt("attempt") < item.getInt("max_attempts");
+      if (item.getString("status") === "queued") return true;
+      if (item.getString("status") === "failed") {
+        if (["permanent", "media", "validation"].includes(item.getString("error_kind"))) return false;
+        const nextAttempt = Date.parse(item.getString("next_attempt_at"));
+        return item.getInt("attempt") < item.getInt("max_attempts") && (!nextAttempt || nextAttempt <= now);
+      }
       const lease = Date.parse(item.getString("lease_until"));
       return !lease || lease <= now;
     });
@@ -63,7 +76,10 @@ routerAdd("POST", "/api/lumina/analysis/claim", (e) => {
     job.set("lease_token", token);
     job.set("lease_until", new Date(now + leaseSeconds * 1000).toISOString());
     job.set("error", "");
-    job.set("result", null);
+    // A reclaimed detail shard may already hold a durable partial checkpoint.
+    // Do not erase it merely because its lease expired; the worker receives
+    // the checkpoint and retries only the unfinished chunk.
+    if (job.getString("stage") !== "detail_episode") job.set("result", null);
     tx.save(job);
     const stage = job.getString("stage");
     const episodeId = job.getString("episode");
@@ -80,8 +96,9 @@ routerAdd("POST", "/api/lumina/analysis/claim", (e) => {
       tx.save(episode);
     }
     const drama = tx.findRecordById("dramas", job.getString("drama"));
-    drama.set(`${stage}_status`, "running");
-    drama.set(`${stage}_progress`, job.getInt("progress"));
+    const aggregateStage = stage === "detail_episode" ? "detail" : stage;
+    drama.set(`${aggregateStage}_status`, "running");
+    drama.set(`${aggregateStage}_progress`, stage === "detail_episode" ? Math.min(90, job.getInt("progress")) : job.getInt("progress"));
     tx.save(drama);
     let parameters = {};
     try {
@@ -93,14 +110,21 @@ routerAdd("POST", "/api/lumina/analysis/claim", (e) => {
       if (parts.length >= 5) parameters = { ...parameters, interval: { start: Number(parts[2]), end: Number(parts[3]) } };
     }
     claimed = { id: job.id, stage, drama: job.getString("drama"), episode: episode ? episode.id : "", episode_number: episode ? episode.getInt("episode_number") : 0, video: episode ? episode.getString("video") : "", collection_id: episode ? episode.collection().id : "", lease_token: token, lease_until: job.getString("lease_until"), attempt: job.getInt("attempt"), analysis_version: "highlight-attraction-v3", parameters };
-    if (stage === "detail") {
-      const freeEpisodes = Math.max(0, drama.getInt("free_episodes"));
-      claimed.episode_assets = tx.findRecordsByFilter("drama_episodes", "drama = {:drama} && episode_number <= {:free} && video != ''", "episode_number", 10000, 0, { drama: job.getString("drama"), free: freeEpisodes }).filter(Boolean).map((item) => ({ id: item.id, episode_number: item.getInt("episode_number"), video: item.getString("video"), collection_id: item.collection().id }));
-      claimed.coarse_results = tx.findRecordsByFilter("analysis_jobs", "drama = {:drama} && stage = 'coarse' && status = 'succeeded'", "created", 10000, 0, { drama: job.getString("drama") }).filter(Boolean).filter((item) => {
-        const episodeId = item.getString("episode");
-        if (!episodeId) return false;
-        try { return tx.findRecordById("drama_episodes", episodeId).getInt("episode_number") <= freeEpisodes; } catch (_) { return false; }
-      }).map((item) => item.get("result"));
+    if (stage === "detail_episode" && episode) {
+      try { claimed.coarse_result = tx.findFirstRecordByFilter("analysis_jobs", "episode = {:episode} && stage = 'coarse' && status = 'succeeded'", { episode: episode.id }).get("result"); } catch (_) {}
+      if (job.get("result")) claimed.checkpoint = job.get("result");
+      claimed.parameters = Object.assign({}, parameters, { job_kind: "detail_episode", checkpoint_required: true });
+    } else if (stage === "detail") {
+      const shards = helpers.detailShardSummary(tx, job.getString("drama"), job.id);
+      const shardEpisodeNumber = (item) => {
+        const logged = Number(helpers.jobLogs(item).episode_number || 0);
+        if (logged > 0) return logged;
+        try { return tx.findRecordById("drama_episodes", item.getString("episode")).getInt("episode_number"); } catch (_) { return 0; }
+      };
+      claimed.episode_checkpoints = shards.jobs.sort((a, b) => shardEpisodeNumber(a) - shardEpisodeNumber(b)).map((item) => ({
+        episode: item.getString("episode"), episode_number: shardEpisodeNumber(item), result: item.get("result"), checkpoint: helpers.jobLogs(item).checkpoint || null,
+      }));
+      claimed.parameters = Object.assign({}, parameters, { job_kind: "detail_reconcile", checkpoint_only: true, shard_count: shards.total });
     } else if (stage === "precision" && episode) {
       try { claimed.coarse_result = tx.findFirstRecordByFilter("analysis_jobs", "episode = {:episode} && stage = 'coarse' && status = 'succeeded'", { episode: episode.id }).get("result"); } catch (_) {}
     }
@@ -137,6 +161,16 @@ routerAdd("PATCH", "/api/lumina/analysis/jobs/{id}", (e) => {
     job.set("status", nextStatus);
     job.set("progress", progress);
     job.set("error", nextStatus === "failed" ? String(body.error || "analysis failed").slice(0, 4000) : "");
+    if (nextStatus === "failed") {
+      const errorKind = String(body.error_kind || "permanent");
+      const retryable = body.retryable === true && !["permanent", "media", "validation"].includes(errorKind);
+      const delay = Math.max(0, Math.min(1800, Number(body.retry_after_seconds || 0)));
+      job.set("error_kind", errorKind);
+      job.set("next_attempt_at", retryable && delay ? new Date(Date.now() + delay * 1000).toISOString() : "");
+    } else if (nextStatus === "succeeded") {
+      job.set("error_kind", "");
+      job.set("next_attempt_at", "");
+    }
     if (body.result != null) job.set("result", body.result);
     if (body.logs != null) {
       let existingLogs = {};
@@ -169,8 +203,9 @@ routerAdd("PATCH", "/api/lumina/analysis/jobs/{id}", (e) => {
     dramaId = job.getString("drama");
     currentStage = stage;
     const drama = tx.findRecordById("dramas", dramaId);
-    drama.set(`${stage}_status`, nextStatus);
-    drama.set(`${stage}_progress`, progress);
+    const aggregateStage = stage === "detail_episode" ? "detail" : stage;
+    drama.set(`${aggregateStage}_status`, nextStatus);
+    drama.set(`${aggregateStage}_progress`, stage === "detail_episode" ? Math.min(90, progress) : progress);
     if (nextStatus === "failed") drama.set("analysis_error", job.getString("error"));
     else if (nextStatus === "succeeded") drama.set("analysis_error", "");
     if (stage === "detail" && nextStatus === "succeeded" && body.result) { drama.set("analysis", body.result); drama.set("ontology_tags", helpers.projectDramaOntologyTags(body.result, helpers.storedJsonArray(drama, "ontology_tags"))); }
@@ -189,7 +224,7 @@ routerAdd("PATCH", "/api/lumina/analysis/jobs/{id}", (e) => {
 
 routerAdd("POST", "/api/lumina/analysis/jobs/{id}/retry", (e) => {
   const helpers = require(`${__hooks}/analysis_helpers.js`);
-  helpers.authorize(e);
+  helpers.authorizeLocalUi(e);
   const job = e.app.findRecordById("analysis_jobs", e.request.pathValue("id"));
   const force = Boolean((e.requestInfo().body || {}).force);
   if (job.getString("status") !== "failed" && !force) throw new BadRequestError("only failed jobs can be retried without force");
@@ -199,7 +234,9 @@ routerAdd("POST", "/api/lumina/analysis/jobs/{id}/retry", (e) => {
   job.set("lease_token", "");
   job.set("lease_until", "");
   job.set("error", "");
-  job.set("result", null);
+  job.set("error_kind", "");
+  job.set("next_attempt_at", "");
+  if (job.getString("stage") !== "detail_episode") job.set("result", null);
   if (job.getString("stage") === "precision") {
     let logs = {};
     try { logs = JSON.parse(JSON.stringify(job.get("logs") || {})); } catch (_) {}
@@ -277,7 +314,7 @@ routerAdd("POST", "/api/lumina/analysis/jobs/{id}/reset", (e) => {
   job.set("lease_token", "");
   job.set("lease_until", "");
   job.set("error", "");
-  job.set("result", null);
+  if (job.getString("stage") !== "detail_episode") job.set("result", null);
   if (job.getString("stage") === "precision") {
     let logs = {};
     try { logs = JSON.parse(JSON.stringify(job.get("logs") || {})); } catch (_) {}
@@ -366,6 +403,16 @@ routerAdd("POST", "/api/lumina/analysis/dramas/{id}/retry-detail", (e) => {
     job.set("logs", {});
     e.app.save(job);
   }
+  const shards = helpers.ensureDetailEpisodeJobs(e.app, dramaId, job);
+  let retriedShards = 0;
+  for (const shard of shards) {
+    if (shard.getString("status") !== "failed") continue;
+    shard.set("status", "queued"); shard.set("progress", 0); shard.set("attempt", 0);
+    shard.set("worker_id", ""); shard.set("lease_token", ""); shard.set("lease_until", ""); shard.set("error", ""); shard.set("error_kind", ""); shard.set("next_attempt_at", "");
+    // Preserve this shard's last checkpoint so only its unfinished chunk is
+    // recomputed; all succeeded sibling checkpoints remain untouched.
+    e.app.save(shard); retriedShards++;
+  }
   drama.set("analysis", null);
   drama.set("detail_status", "queued");
   drama.set("detail_progress", 0);
@@ -374,7 +421,7 @@ routerAdd("POST", "/api/lumina/analysis/dramas/{id}/retry-detail", (e) => {
   drama.set("parse_state", "detail_queued");
   drama.set("analysis_error", "");
   e.app.save(drama);
-  return e.json(200, { id: job.id, drama: dramaId, status: "queued", removed_precision: precisionJobs.length, output_language: "zh-CN" });
+  return e.json(200, { id: job.id, drama: dramaId, status: "queued", detail_shards: shards.length, retried_shards: retriedShards, removed_precision: precisionJobs.length, output_language: "zh-CN" });
 });
 
 routerAdd("POST", "/api/lumina/analysis/dramas/{id}/retry-precision", (e) => {

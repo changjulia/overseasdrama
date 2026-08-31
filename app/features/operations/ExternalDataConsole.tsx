@@ -89,9 +89,9 @@ export function ExternalDataConsole({onNotify}:{onNotify?:(message:string)=>void
     return {data:{queried_at:new Date().toISOString(),upstream:{page:{pageId,pageSize:searchList.length,totalRecords:totalRecord},content:{totalRecord,searchList}}} satisfies MaterialsData,failures};
   };
 
-  const importSeries=async(series:PlaybackData["items"][number],metadata:Record<string,unknown>={})=>{
+  const importSeries=async(series:PlaybackData["items"][number],metadata:Record<string,unknown>={},episodeLimit?:number)=>{
     const key=`${series.platform}:${series.source_id}`;setDramaImporting(key);setNotice("");setError("");
-    try{await saveExternalDramaToPocketBase({name:series.name,platform:series.platform,sourceId:series.source_id,totalEpisodes:series.total_episodes,coverUrl:text(metadata.cover_url,""),sourceMetadata:{...metadata,playback_platform:series.platform},episodes:series.episodes,onProgress:(completed,total)=>setDramaImportProgress(`正在录入分集 ${completed} / ${total}`)});setNotice(`“${series.name}”及 ${series.total_episodes} 集视频已加入剧库；请在剧库详情手动开始分析。`)}catch(reason){setError(reason instanceof Error?reason.message:"加入剧库失败")}finally{setDramaImporting("");setDramaImportProgress("")}
+    try{await saveExternalDramaToPocketBase({name:series.name,platform:series.platform,sourceId:series.source_id,totalEpisodes:series.total_episodes,coverUrl:text(metadata.cover_url,""),sourceMetadata:{...metadata,playback_platform:series.platform},episodes:series.episodes,episodeLimit,onProgress:(completed,total)=>setDramaImportProgress(`正在录入分集 ${completed} / ${total}`)});setNotice(`“${series.name}”的${episodeLimit?`前 ${Math.min(episodeLimit,series.episodes.length)} 集`:`${series.total_episodes} 集`}视频已加入剧库；请在剧库详情手动开始分析。`)}catch(reason){setError(reason instanceof Error?reason.message:"加入剧库失败")}finally{setDramaImporting("");setDramaImportProgress("")}
   };
   const enrichAndImport=async(name:string,metadata:Record<string,unknown>)=>{
     setDramaImporting(name);setNotice("");setError("");
@@ -177,7 +177,7 @@ export function ExternalDataConsole({onNotify}:{onNotify?:(message:string)=>void
 
   const switchMode=(next:QueryMode)=>{setMode(next);setResult(null);setError("")};
   return <section className={styles.console} aria-label="外部短剧数据手动查询">
-    <header><div><small>EXTERNAL OPEN API</small><h2>外部短剧数据 · 查询与入库</h2><p>ADX 广告素材加入灵感大屏；短剧全集加入剧库。两类资产分开管理。</p></div><span className={styles.connected}><i/> 已连接</span></header>
+    <header><div><small>EXTERNAL OPEN API</small><h2>外部短剧数据 · 查询与入库</h2><p>ADX 广告素材加入灵感大屏；短剧全集加入剧库。两类资产分开管理。</p></div><span className={styles.connected}><i/> 查询时验证安全连接</span></header>
     <nav>{([['rankings','月度短剧榜'],['playback','全集播放地址'],['materials','ADX 素材']] as const).map(([key,label])=><button key={key} className={mode===key?styles.active:""} onClick={()=>switchMode(key)}>{label}</button>)}</nav>
     <form onSubmit={run}>
       {mode==="rankings"&&<label><span>榜单月份</span><input type="month" required value={month} onChange={event=>setMonth(event.target.value)}/></label>}
@@ -192,7 +192,7 @@ export function ExternalDataConsole({onNotify}:{onNotify?:(message:string)=>void
   </section>
 }
 
-function Result({mode,data,selectedIds,onSelectedIds,selectedRankingIds,onSelectedRankingIds,importing,autoAnalyze,onAutoAnalyze,dramaImporting,onImportSeries,onEnrichImport,onImportRankedSeries,onQueryRankedMaterials,onImport}:{mode:QueryMode;data:RankingData|PlaybackData|MaterialsData;selectedIds:string[];onSelectedIds:(ids:string[])=>void;selectedRankingIds:number[];onSelectedRankingIds:(ids:number[])=>void;importing:boolean;autoAnalyze:boolean;onAutoAnalyze:(value:boolean)=>void;dramaImporting:string;onImportSeries:(series:PlaybackData["items"][number],metadata?:Record<string,unknown>)=>Promise<void>;onEnrichImport:(name:string,metadata:Record<string,unknown>)=>Promise<void>;onImportRankedSeries:(items:RankingItem[],month:string)=>Promise<void>;onQueryRankedMaterials:(items:RankingItem[])=>Promise<void>;onImport:(items:Array<Record<string,unknown>>)=>Promise<void>}){
+function Result({mode,data,selectedIds,onSelectedIds,selectedRankingIds,onSelectedRankingIds,importing,autoAnalyze,onAutoAnalyze,dramaImporting,onImportSeries,onEnrichImport,onImportRankedSeries,onQueryRankedMaterials,onImport}:{mode:QueryMode;data:RankingData|PlaybackData|MaterialsData;selectedIds:string[];onSelectedIds:(ids:string[])=>void;selectedRankingIds:number[];onSelectedRankingIds:(ids:number[])=>void;importing:boolean;autoAnalyze:boolean;onAutoAnalyze:(value:boolean)=>void;dramaImporting:string;onImportSeries:(series:PlaybackData["items"][number],metadata?:Record<string,unknown>,episodeLimit?:number)=>Promise<void>;onEnrichImport:(name:string,metadata:Record<string,unknown>)=>Promise<void>;onImportRankedSeries:(items:RankingItem[],month:string)=>Promise<void>;onQueryRankedMaterials:(items:RankingItem[])=>Promise<void>;onImport:(items:Array<Record<string,unknown>>)=>Promise<void>}){
   if(mode==="rankings"){
     const value=data as RankingData;
     const allSelected=value.items.length>0&&value.items.every(item=>selectedRankingIds.includes(item.playletId));
@@ -201,7 +201,7 @@ function Result({mode,data,selectedIds,onSelectedIds,selectedRankingIds,onSelect
   }
   if(mode==="playback"){
     const value=data as PlaybackData;
-    return <div className={styles.results}><div className={styles.resultMeta}><b>{value.query_name}</b><span>地址最早失效时间：{new Date(value.expires_at).toLocaleString("zh-CN")}</span></div>{value.items.map(series=><article className={styles.series} key={`${series.platform}-${series.source_id}`}><header><div><b>{series.name}</b><small>{series.platform} · {series.source_id}</small></div><div className={styles.seriesActions}><strong>{series.total_episodes} 集</strong><button disabled={Boolean(dramaImporting)} onClick={()=>void onImportSeries(series,{query_name:value.query_name})}>{dramaImporting===`${series.platform}:${series.source_id}`?"全集加入中…":"全集加入剧库"}</button></div></header><div>{series.episodes.map(episode=><a key={episode.episode} href={episode.url} target="_blank" rel="noreferrer">EP{episode.episode}</a>)}</div></article>)}</div>;
+    return <div className={styles.results}><div className={styles.resultMeta}><b>{value.query_name}</b><span>地址最早失效时间：{new Date(value.expires_at).toLocaleString("zh-CN")}</span></div>{value.items.map(series=><article className={styles.series} key={`${series.platform}-${series.source_id}`}><header><div><b>{series.name}</b><small>{series.platform} · {series.source_id}</small></div><div className={styles.seriesActions}><strong>{series.total_episodes} 集</strong><button disabled={Boolean(dramaImporting)||series.episodes.length<10} onClick={()=>void onImportSeries(series,{query_name:value.query_name,expires_at:value.expires_at,acceptance_scope:"first_10"},10)}>{dramaImporting===`${series.platform}:${series.source_id}`?"前10集加入中…":"前10集验收入库"}</button><button disabled={Boolean(dramaImporting)} onClick={()=>void onImportSeries(series,{query_name:value.query_name,expires_at:value.expires_at})}>{dramaImporting===`${series.platform}:${series.source_id}`?"全集加入中…":"全集加入剧库"}</button></div></header><div>{series.episodes.map(episode=><a key={episode.episode} href={episode.url} target="_blank" rel="noreferrer">EP{episode.episode}</a>)}</div></article>)}</div>;
   }
   const value=data as MaterialsData,items=value.upstream.content.searchList;
   const itemKey=(item:Record<string,unknown>,index:number)=>`${item.rankingPlayletId===undefined?text(item.playletName,"drama"):String(item.rankingPlayletId)}:${text(item.id,String(index))}`;

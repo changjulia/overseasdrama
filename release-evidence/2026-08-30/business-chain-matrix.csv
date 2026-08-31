@@ -1,0 +1,18 @@
+case_id,case_type,station_or_scenario,real_input_ids,ui_api_worker_action,database_expected_or_observed,manual_content_quality_check,evidence_screenshot_log,file_sha256,human_conclusion,defect_id,status
+BC-01,main,"安全接口/本地剧目导入→剧库列表、详情、分集播放","TBD: source/drama/episode IDs","A: 轮换key并恢复HTTPS/受信隧道后走月榜→完整剧名→playback全集，在expires_at前下载校验并经真实入口入库；B: 真实导入UI/API导入已授权本地连续前10集；列表→详情→逐集播放","dramas和drama_episodes顺序/引用/权限正确","剧名、集号、连续性、音画、字幕、拖动播放；远程URL及时落盘且未过期","TBD","TBD","playback契约支持完整全集；当前远程明文HTTP和已使用key构成安全阻塞，须先轮换key并取得安全通道；本地候选也已否决","DATA-001",blocked
+BC-02,main,"前10集任务→粗/细/高光分析→进度/失败重试/回写","TBD: drama/job IDs","UI建任务；真实worker处理；轮询；失败重试","analysis_jobs进度/尝试/结果关联一致","逐集核对时间码、事件、人物、层级一致、高光边界","TBD","TBD","无真实剧目输入，未跑业务链","",not_run
+BC-03,main,"摘要/关系/因果/标签/高光/安全边界人工审核","TBD: analysis/result/review IDs","结果UI修改/批准/驳回并复查版本","审核人/状态/备注/版本可追溯","对照原片核验语义、因果方向、时间码、台词动作及付费边界","TBD","TBD","无真实输出可审核","",not_run
+BC-04,main,"跑量素材入库→灵感大屏→外搭/T1/T2/分析/原型","TBD: source/hook/job/prototype IDs","真实入口提交约40条；大屏筛选查看","素材/证据等级/任务/分析/原型关联一致","8题材分层；来源子类；题材、外搭、T1/T2、完整率及跑量证据","TBD","TBD","hook_assets=0；4条任务不能代替素材主记录","DATA-002",blocked
+BC-05,main,"剧库/灵感大屏→内容工厂→检索匹配/解释/质量分","TBD: drama/hook/match/project IDs","从两入口进入工厂；生成Top3；选择候选","匹配任务/候选/解释/分数/选择持久化","分题材Top3、完整度、留人、承诺兑现、连通性；跨题材正负例","TBD","TBD","无真实数据，未跑业务链","",not_run
+BC-06,main,"过渡诊断→A转场词或B连续解说→真实预览→批准","TBD: real project/transition/narration/review IDs","诊断推荐；B项目级受控上传；真实预览；修改/重生成/批准/驳回","正式production object与assetId/hash/probe evidence齐全；未批准不可渲染","时间因果、可理解、ASS可读、60-100秒、-14 LUFS、动态ducking、acrossfade、关键原声、台词、留人","TBD","TBD","A/B技术组件及B上传→worker→预览→批准→最终渲染隔离E2E 17/17通过；真实素材链和盲评未跑","P0-TRANSITION",component_passed
+BC-07,main,"项目/版本→入队→下载/合成/QC/原子发布→轮询","TBD: project/version/render/job IDs","UI保存和渲染；真实worker；前端轮询","项目/版本/渲染/重试/QC/发布一致","完整成片画面、声音、字幕、过渡、编码和hash对应","tests/e2e_episode_splice/README.md","TBD","隔离PocketBase和合成媒体仅证明组件","",component_passed
+BC-08,main,"预览→人工审核→导出→我的创作/历史版本检索复播","TBD: render/review/export/history IDs","UI完整播放、审核、导出、历史检索复播","审核/导出/历史/产物URL和审计一致","首尾、seek、音画同步、版本、下载hash","tests/e2e_episode_splice/README.md","TBD","夹具覆盖review/export仅为组件证据","",component_passed
+EX-01,exception,"分析失败","TBD","真实入口触发失败；UI查看并重试","失败原因可见；无伪结果；尝试可追踪","错误可理解；既有结果不污染","TBD","N/A","未跑真实链","",not_run
+EX-02,exception,"worker重启/超时","TBD","执行中重启并制造超时","无重复发布；任务回收/重试；终态一致","前端无永久假进度；恢复后产物唯一","failure-injection/result.json","TBD","重试分类仅组件级","",component_passed
+EX-03,exception,"素材404","TBD","生产入口引用不可达验收素材","明确失败且不发布","UI信息可行动；不静默降级","failure-injection/README.md","N/A","离线注入通过；业务反馈待验","",component_passed
+EX-04,exception,"素材损坏","TBD","生产入口提交损坏媒体","探测/解码失败；不发布残缺产物","错误定位正确；替换后可重试","failure-injection/README.md","TBD","离线注入通过；业务反馈待验","",component_passed
+EX-05,exception,"无音轨","TBD","生产入口提交无音轨素材","QC阻断且原因可审计","UI明示音轨缺失和修复方式","failure-injection/README.md","TBD","QC组件通过；真实链待验","",component_passed
+EX-06,exception,"付费范围未确认","TBD","未确认权限时尝试分析或制作","创建/渲染阻断；不越权","提示明确；确认后可继续","TBD","N/A","未跑","",not_run
+EX-07,exception,"过渡未批准","TBD","草稿/驳回状态尝试渲染导出","服务端强制阻断","审核状态与提示一致；无绕过路径","TBD","N/A","未跑","P0-TRANSITION",not_run
+EX-08,exception,"QC失败","TBD","真实任务制造QC不合格产物","失败终态；无临时/部分发布","UI显示具体QC项；修复后形成新版本","failure-injection/README.md","TBD","QC/原子发布仅组件通过","",component_passed
+EX-09,exception,"导出重试","TBD","导出中断后从UI重试","幂等或新尝试清晰；历史不污染","下载可播放；hash对应批准版本","TBD","TBD","未跑","",not_run

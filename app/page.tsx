@@ -32,14 +32,13 @@ const navItems: Array<{
   id: Workspace;
   icon: string;
   label: string;
-  count?: string;
 }> = [
-  { id: "inspiration", icon: "✦", label: "灵感大屏", count: "128" },
-  { id: "library", icon: "▣", label: "剧库", count: "36" },
+  { id: "inspiration", icon: "✦", label: "灵感大屏" },
+  { id: "library", icon: "▣", label: "剧库" },
   { id: "factory", icon: "⇄", label: "内容工厂" },
   { id: "creations", icon: "♡", label: "我的创作" },
-  { id: "sources", icon: "◈", label: "数据源管理", count: "4" },
-  { id: "tasks", icon: "◫", label: "任务中心", count: "8" },
+  { id: "sources", icon: "◈", label: "数据源管理" },
+  { id: "tasks", icon: "◫", label: "任务中心" },
 ];
 
 function resolveFactoryMode(mode: string): FactoryMode {
@@ -78,6 +77,8 @@ export default function Home() {
   const [favorites, setFavorites] = usePersistentState<Favorite[]>("lumina:favorites", favoriteMocks);
   const [tasks, setTasks, tasksReady] = usePersistentState<PipelineTask[]>("lumina:tasks", initialTasks);
   const [toast, setToast] = useState("");
+  const [workspaceCounts, setWorkspaceCounts] = useState({ inspiration: 0, library: 0 });
+  const [dataSync, setDataSync] = useState<{status:"checking"|"connected"|"error";at?:Date}>({status:"checking"});
   const [profileOpen, setProfileOpen] = useState(false);
   const [accountNotifications,setAccountNotifications]=useState(true);
   const [accountAutoSave,setAccountAutoSave]=useState(true);
@@ -126,6 +127,26 @@ export default function Home() {
     const timer = window.setInterval(sync, 3000);
     return () => { controller.abort(); window.clearInterval(timer); };
   }, [setTasks, tasksReady]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const syncCounts = async () => {
+      const [materials, dramas] = await Promise.allSettled([
+        listInspirationMaterials(controller.signal),
+        listPocketBaseDramas(),
+      ]);
+      if (controller.signal.aborted) return;
+      if (materials.status === "fulfilled" && dramas.status === "fulfilled") {
+        setWorkspaceCounts({ inspiration: materials.value.length, library: dramas.value.length });
+        setDataSync({ status: "connected", at: new Date() });
+      } else {
+        setDataSync({ status: "error" });
+      }
+    };
+    void syncCounts();
+    const timer = window.setInterval(syncCounts, 10_000);
+    return () => { controller.abort(); window.clearInterval(timer); };
+  }, []);
 
   useEffect(() => {
     if (!tasksReady) return;
@@ -230,15 +251,15 @@ export default function Home() {
             >
               <i className={`nav-icon${item.id === "factory" ? " factory-icon" : ""}`}>{item.icon}</i>
               <span>{item.label}</span>
-              {(item.count || item.id === "creations" || item.id === "tasks") && (
-                <em>{item.id === "creations" ? drafts.length : item.id === "tasks" ? tasks.length : item.id === "library" ? "" : item.count}</em>
+              {(["inspiration", "library", "creations", "tasks"] as Workspace[]).includes(item.id) && (
+                <em>{item.id === "inspiration" ? workspaceCounts.inspiration : item.id === "library" ? workspaceCounts.library : item.id === "creations" ? drafts.length : tasks.length}</em>
               )}
             </button>
             </div>
           ))}
         </nav>
         <div className="side-bottom">
-          <div className="sync"><span><i /> 数据同步正常</span><small>最后更新 2 分钟前</small></div>
+          <div className="sync"><span><i /> {dataSync.status === "connected" ? "数据连接正常" : dataSync.status === "error" ? "数据连接异常" : "正在检查数据连接"}</span><small>{dataSync.at ? `最后检查 ${dataSync.at.toLocaleTimeString("zh-CN", {hour:"2-digit",minute:"2-digit",second:"2-digit"})}` : "尚未完成首次检查"}</small></div>
           <div className="profile" ref={profileRef}><div>陈</div><span><b>陈佳</b><small>内容负责人</small></span><button type="button" aria-label={profileOpen?"收起个人账号面板":"展开个人账号面板"} aria-expanded={profileOpen} onClick={() => setProfileOpen((value) => !value)}>{profileOpen ? "⌃" : "⌄"}</button>{profileOpen&&<section className="account-panel" aria-label="个人账号面板"><header><div className="account-avatar">陈</div><div><h2>陈佳</h2><p>内容负责人 · Lumina 工作区</p><small>本地工作账号</small></div><span>正常</span></header><div className="account-summary"><div><b>{drafts.length}</b><small>创作草稿</small></div><div><b>{tasks.length}</b><small>处理任务</small></div><div><b>{favorites.length}</b><small>我的收藏</small></div></div><div className="account-section"><h3>账号与工作区</h3><button type="button" onClick={()=>notify("账号资料编辑将在身份系统接入后开放")}><span><b>账号资料</b><small>姓名、头像与联系方式</small></span><em>›</em></button><button type="button" onClick={()=>notify("当前工作区：Lumina 短剧智能工作台")}><span><b>当前工作区</b><small>Lumina · 内容负责人</small></span><em>›</em></button></div><div className="account-section"><h3>个人偏好</h3><label><span><b>任务通知</b><small>任务完成或异常时提醒</small></span><input type="checkbox" checked={accountNotifications} onChange={event=>{setAccountNotifications(event.target.checked);notify(event.target.checked?"任务通知已开启":"任务通知已关闭")}}/><i/></label><label><span><b>自动保存</b><small>编辑草稿时持续保存</small></span><input type="checkbox" checked={accountAutoSave} onChange={event=>{setAccountAutoSave(event.target.checked);notify(event.target.checked?"自动保存偏好已开启":"自动保存偏好已关闭")}}/><i/></label></div><div className="account-service"><i/><span><b>数据服务正常</b><small>PocketBase · 本地连接</small></span><em>在线</em></div><footer><button type="button" onClick={()=>notify("帮助中心将在文档服务接入后开放")}>帮助与反馈</button><button type="button" disabled title="尚未接入账号认证系统">退出登录</button></footer></section>}</div>
         </div>
       </aside>

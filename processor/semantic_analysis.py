@@ -26,7 +26,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Literal
 
-from PIL import Image
+from PIL import Image, ImageChops, ImageStat
 
 try:  # package import in tests/services; direct import for standalone worker execution
     from .calibration import ConfidenceSignals, GateThresholds, deterministic_story_score, item_production_gate
@@ -105,7 +105,7 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def _executable(name: str) -> str:
-    """Resolve PATH tools or the repository's bundled FFmpeg executables."""
+    """Resolve PATH tools or project-pinned FFmpeg executables."""
     resolved = shutil.which(name)
     if resolved:
         return resolved
@@ -114,6 +114,21 @@ def _executable(name: str) -> str:
     matches = sorted(bundled_root.glob(f"**/{name}{suffix}")) if bundled_root.is_dir() else []
     if matches:
         return str(matches[0])
+    project_root = Path(__file__).resolve().parent.parent
+    npm_candidates = (
+        [project_root / "node_modules" / "ffmpeg-static" / f"ffmpeg{suffix}"]
+        if name == "ffmpeg"
+        else sorted(
+            (project_root / "node_modules" / "@ffprobe-installer").glob(
+                f"*/ffprobe{suffix}"
+            )
+        )
+        if name == "ffprobe"
+        else []
+    )
+    for candidate in npm_candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
     raise AnalysisFailed(f"Missing required executable: {name}")
 
 
@@ -912,6 +927,10 @@ def _enrich_material_hooks(creative: dict[str, Any], transcript: list[dict[str, 
                 continue
         elif candidate_duration < 5 or candidate_duration > 60:
             continue
+        shot_points = sorted({point for shot in shots for point in (_timecode(shot.get("timecode") if isinstance(shot, dict) else shot) or ())})
+        snapped_end = _nearest_point(end, shot_points, tolerance=.75)
+        if snapped_end is not None and snapped_end > start + 5 and not any(isinstance(row, dict) and isinstance(row.get("start"), (int, float)) and isinstance(row.get("end"), (int, float)) and float(row["start"]) + .12 < snapped_end < float(row["end"]) - .12 for row in transcript):
+            end = min(duration, snapped_end)
         start_boundary = _material_hook_boundary(start, transcript, shots, "start")
         end_boundary = _material_hook_boundary(end, transcript, shots, "end")
         candidate = {
@@ -982,6 +1001,202 @@ def _enrich_material_hooks(creative: dict[str, Any], transcript: list[dict[str, 
     }}
 
 
+_MATERIAL_CTA_PATTERN = re.compile(
+    r"(?:click|tap|download|install|watch the full|full series|app\b|link below|\u70b9\u51fb|\u4e0b\u8f7d|\u5b89\u88c5|\u5b8c\u6574\u5267\u96c6|\u5168\u96c6|\u94fe\u63a5|\u5e94\u7528)", re.I
+)
+
+
+def _material_claim_text(claim: Any) -> str:
+    if not isinstance(claim, dict):
+        return ""
+    evidence = claim.get("evidence") if isinstance(claim.get("evidence"), list) else []
+    return " ".join([
+        str(claim.get("code") or ""), str(claim.get("label") or ""), str(claim.get("description") or ""),
+        *(str(item.get("sourceText") or item.get("text") or "") for item in evidence if isinstance(item, dict)),
+    ])
+
+
+def _sanitize_material_story_candidates(creative: dict[str, Any], transcript: list[dict[str, Any]], ocr: list[dict[str, Any]], duration: float) -> dict[str, Any]:
+    """Keep promotional CTAs out of story highlights and recover a dialogue-backed reveal candidate."""
+    output = dict(creative)
+    timeline = [dict(item) for item in output.get("timeline", []) if isinstance(item, dict)] if isinstance(output.get("timeline"), list) else []
+    story_timeline: list[dict[str, Any]] = []
+    cta_items = [dict(item) for item in output.get("cta", []) if isinstance(item, dict)] if isinstance(output.get("cta"), list) else []
+    for item in timeline:
+        text = _material_claim_text(item)
+        code = str(item.get("code") or "").lower()
+        if code == "cta" or _MATERIAL_CTA_PATTERN.search(text):
+            cta_items.append({**item, "code": "cta", "label": "\u884c\u52a8\u53f7\u53ec", "storyCandidate": False})
+        else:
+            story_timeline.append(item)
+    output["timeline"] = story_timeline
+    output["cta"] = cta_items
+
+    hooks = [dict(item) for item in output.get("hooks", []) if isinstance(item, dict)] if isinstance(output.get("hooks"), list) else []
+    hooks = [item for item in hooks if not _MATERIAL_CTA_PATTERN.search(_material_claim_text(item))]
+    cta_start = min([
+        float(item.get("start")) for item in transcript
+        if isinstance(item, dict) and isinstance(item.get("start"), (int, float)) and _MATERIAL_CTA_PATTERN.search(str(item.get("text") or ""))
+    ] or [duration])
+    narrative = [item for item in transcript if isinstance(item, dict) and isinstance(item.get("start"), (int, float)) and isinstance(item.get("end"), (int, float)) and float(item["end"]) <= cta_start and not _MATERIAL_CTA_PATTERN.search(str(item.get("text") or ""))]
+    identity_pattern = re.compile(r"(?:champion|queen|king|prince|princess|chief|commander|general|\u51a0\u519b|\u5973\u738b|\u56fd\u738b|\u738b\u5b50|\u516c\u4e3b|\u9886\u8896|\u6307\u6325\u5b98|\u5c06\u519b)", re.I)
+    identity_index = next((index for index, item in enumerate(narrative) if identity_pattern.search(str(item.get("text") or ""))), None)
+    if identity_index is not None and identity_index + 1 < len(narrative):
+        identity, response = narrative[identity_index], narrative[identity_index + 1]
+        start = max(0.0, float(identity["start"]) - 1.7)
+        end = min(cta_start, float(response["end"]) + 1.6)
+        if 5 <= end - start <= 60 and not any(float(item.get("start", -999)) <= start + 1 and float(item.get("end", -999)) >= end - 1 for item in hooks):
+            evidence = [{"source": "transcript", "timecode": {"start": float(row["start"]), "end": float(row["end"])}, "confidence": float(row.get("confidence", 0) or 0), "text": str(row.get("text") or ""), "sourceText": str(row.get("text") or "")} for row in (identity, response)]
+            hooks.append({
+                "code": "identity_reveal_response", "label": "\u8eab\u4efd\u63ed\u793a\u4e0e\u56de\u5e94", "hookType": "\u8eab\u4efd\u53cd\u8f6c", "start": round(start, 3), "end": round(end, 3),
+                "confidence": min(float(identity.get("confidence", 0) or 0), float(response.get("confidence", 0) or 0)), "evidence": evidence,
+                "verification": "needs_review", "reviewRequired": True, "narrativePromise": "\u88ab\u70b9\u540d\u7684\u5f3a\u8005\u4e3a\u4f55\u7acb\u5373\u56de\u5e94\u547d\u4ee4",
+                "informationGap": "\u70b9\u540d\u8005\u4e0e\u5f3a\u8005\u4e4b\u95f4\u7684\u6743\u529b\u5173\u7cfb待剧情承接", "spokenSummary": "\u8eab\u4efd\u79f0\u53f7\u88ab\u63ed\u793a\u540e，紧接着出现服从性\u56de\u5e94。",
+                "visualSummary": "\u9700\u4eba\u5de5\u6838\u5bf9\u8dea地动\u4f5c与旁观者反应后再批准。",
+            })
+    output["hooks"] = hooks
+    return output
+
+
+def _enrich_material_dialogue_entities(content: dict[str, Any], transcript: list[dict[str, Any]], ocr: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build only the command/title/response chain directly supported by text evidence."""
+    output = dict(content)
+    identity_pattern = re.compile(r"(?:champion|queen|king|prince|princess|chief|commander|general|\u51a0\u519b|\u5973\u738b|\u56fd\u738b|\u738b\u5b50|\u516c\u4e3b|\u9886\u8896|\u6307\u6325\u5b98|\u5c06\u519b)", re.I)
+    command_pattern = re.compile(r"(?:command|order|end this|finish|kill|\u547d\u4ee4|\u7ed3束他|\u6740了)", re.I)
+    identity_index = next((i for i, row in enumerate(transcript) if isinstance(row, dict) and identity_pattern.search(str(row.get("text") or ""))), None)
+    command = next((row for row in transcript if isinstance(row, dict) and command_pattern.search(str(row.get("text") or ""))), None)
+    if identity_index is None or identity_index + 1 >= len(transcript) or not command:
+        return output
+    identity, response = transcript[identity_index], transcript[identity_index + 1]
+    if not all(isinstance(row.get("start"), (int, float)) and isinstance(row.get("end"), (int, float)) and float(row["end"]) > float(row["start"]) for row in (command, identity, response)):
+        return output
+    identity_tokens = {token.lower() for token in re.findall(r"[A-Za-z]{5,}", str(identity.get("text") or ""))}
+    title_candidates = [row for row in ocr if isinstance(row, dict) and isinstance(row.get("timecode"), dict) and isinstance(row["timecode"].get("start"), (int, float)) and float(identity["start"]) - 1 <= float(row["timecode"]["start"]) <= float(identity["end"]) + 1 and row.get("framePath")]
+    title_candidates.sort(key=lambda row: (len(identity_tokens.intersection({token.lower() for token in re.findall(r"[A-Za-z]{5,}", str(row.get("text") or ""))})), float(row.get("confidence", 0) or 0)), reverse=True)
+    title_ocr = title_candidates[0] if title_candidates and identity_tokens.intersection({token.lower() for token in re.findall(r"[A-Za-z]{5,}", str(title_candidates[0].get("text") or ""))}) else None
+
+    def transcript_evidence(row: dict[str, Any]) -> dict[str, Any]:
+        return {"source": "transcript", "timecode": {"start": float(row["start"]), "end": float(row["end"])}, "confidence": float(row.get("confidence", 0) or 0), "text": str(row.get("text") or ""), "sourceText": str(row.get("text") or "")}
+
+    identity_evidence = [transcript_evidence(identity)]
+    if title_ocr:
+        point = float(title_ocr["timecode"]["start"])
+        identity_evidence.append({"source": "ocr_frame", "sampleType": "point", "framePath": str(title_ocr.get("framePath")), "timecode": {"start": point, "end": point}, "confidence": float(title_ocr.get("confidence", 0) or 0), "text": str(title_ocr.get("text") or ""), "sourceText": str(title_ocr.get("text") or "")})
+    response_evidence = [transcript_evidence(response)]
+    command_evidence = [transcript_evidence(command)]
+    observations = [dict(item) for item in output.get("observations", []) if isinstance(item, dict)] if isinstance(output.get("observations"), list) else []
+    existing_ids = {str(item.get("factId") or "") for item in observations}
+    additions = [
+        {"factId": "local-dialogue-title", "actorObserved": "身份待核角色", "actionObserved": f"被称为“{str(title_ocr.get('text') if title_ocr else identity.get('text') or '').strip()}”", "resultObserved": "对话中出现身份或称号揭示", "confidence": min(float(identity.get("confidence", 0) or 0), float(title_ocr.get("confidence", 1) or 1) if title_ocr else 1), "evidence": identity_evidence, "verification": "verified"},
+        {"factId": "local-dialogue-response", "actorObserved": "被点名角色", "actionObserved": f"说出“{str(response.get('text') or '').strip()}”", "resultObserved": "对前述命令作出服从性回应", "confidence": float(response.get("confidence", 0) or 0), "evidence": response_evidence, "verification": "verified"},
+    ]
+    observations.extend(item for item in additions if item["factId"] not in existing_ids)
+    output["observations"] = observations
+    title = str(title_ocr.get("text") if title_ocr else identity.get("text") or "").strip(" .")
+    output["characters"] = [
+        {"id": "character-title-speaker", "label": "点名台词说话人（身份待核）", "role": "台词角色候选；缺声纹/唇动归因", "confidence": float(identity.get("confidence", 0) or 0), "evidence": [transcript_evidence(identity)], "basedOnFactIds": ["local-dialogue-title"], "verification": "unverified"},
+        {"id": "character-command-recipient", "label": title or "被点名角色（身份待核）", "role": "台词角色候选；缺声纹/唇动归因", "confidence": min(item["confidence"] for item in additions), "evidence": [*identity_evidence, *response_evidence], "basedOnFactIds": ["local-dialogue-title", "local-dialogue-response"], "verification": "unverified"},
+    ]
+    output["relationships"] = [{"subject": "character-title-speaker", "object": "character-command-recipient", "label": "点名—回应（相邻对白候选）", "type": "mention_response", "confidence": min(float(identity.get("confidence", 0) or 0), float(response.get("confidence", 0) or 0)), "evidence": [transcript_evidence(identity), *response_evidence], "basedOnFactIds": ["local-dialogue-title", "local-dialogue-response"], "verification": "unverified"}]
+    return output
+
+
+def _validate_material_visual_events(result: dict[str, Any], frames: list[dict[str, Any]], interval: dict[str, float]) -> dict[str, Any]:
+    """Accept visual actions only when the provider cites real, ordered samples.
+
+    A point frame can prove a visible state, but never motion, causality, a
+    reaction to another shot, or speaker identity. Those claims remain review
+    items until the corresponding multi-frame or audiovisual evidence exists.
+    """
+    supplied = sorted({round(float((frame.get("timecode") or {}).get("start")), 3) for frame in frames if isinstance((frame.get("timecode") or {}).get("start"), (int, float))})
+    start, end = float(interval["start"]), float(interval["end"])
+
+    def real_times(items: Any) -> list[float]:
+        output: list[float] = []
+        for item in items if isinstance(items, list) else []:
+            raw = (item.get("timecode") or {}).get("start") if isinstance(item, dict) else None
+            if isinstance(raw, (int, float)):
+                value = round(float(raw), 3)
+                if start <= value <= end and any(abs(value - known) <= .011 for known in supplied):
+                    output.append(value)
+        return sorted(set(output))
+
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for raw in result.get("events", []) if isinstance(result.get("events"), list) else []:
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        times = real_times(item.get("evidenceFrames"))
+        action = str(item.get("actionObserved") or "").strip()
+        state = str(item.get("stateObserved") or "").strip()
+        reaction = str(item.get("reactionObserved") or "").strip()
+        inferred = re.search(r"(?:似乎|看起来|可能|推测|说话|回应|服从|震惊|惊讶|害怕|愤怒|由于|因为|导致|seems?|appears?|speaking|responding|shocked|surprised|afraid|angry|because|caused by)", " ".join((state, action, reaction)), re.I)
+        requires_motion = bool(action or reaction)
+        valid = bool(state or action or reaction) and bool(times) and not inferred
+        if requires_motion:
+            valid = valid and len(times) >= 2 and times[-1] - times[0] >= .15
+        if str(item.get("verification") or "") != "verified" or float(item.get("confidence", 0) or 0) < .65:
+            valid = False
+        item["validatedFrameTimes"] = times
+        if valid:
+            item["actorCandidateModel"] = item.get("actorCandidate")
+            item["actorCandidate"] = "可见角色（身份待核）"
+            accepted.append(item)
+        else:
+            item.update({"verification": "unverified", "reviewRequired": True, "rejectionReason": "动作/反应需要至少两个实际、有时序差的帧；且不得含说话人、身份、情绪或因果推断"})
+            rejected.append(item)
+
+    speaker_links: list[dict[str, Any]] = []
+    for raw in result.get("speakerLinks", []) if isinstance(result.get("speakerLinks"), list) else []:
+        if not isinstance(raw, dict):
+            continue
+        item = dict(raw)
+        modalities = {str(value).lower() for value in item.get("evidenceModalities", []) if isinstance(value, str)}
+        strong = bool(modalities.intersection({"diarization", "lip_sync", "visible_speaking_sequence"}))
+        if not strong:
+            item.update({"verification": "unverified", "reviewRequired": True, "rejectionReason": "相邻台词或单帧不能证明说话人身份"})
+        speaker_links.append(item)
+    boundary = dict(result.get("boundaryAssessment") or {})
+    if not accepted:
+        boundary.update({
+            "actionStatus": "unverified", "semanticStatus": "unverified",
+            # The focused request samples 0.6s of context around the actual
+            # hook. Never publish that diagnostic padding as a cut boundary.
+            "recommendedStart": round(min(end, start + .6), 3),
+            "recommendedEnd": round(max(start, end - .6), 3),
+        })
+    boundary["reviewRequired"] = True
+    return {"events": accepted, "rejectedEvents": rejected, "speakerLinks": speaker_links, "boundaryAssessment": boundary, "openQuestions": list(result.get("openQuestions") or []), "reviewRequired": True}
+
+
+def _material_visual_event_verification(payload: dict[str, Any], frames: list[dict[str, Any]], interval: dict[str, float], cache_dir: Path | None, report: Callable[[int, str], None]) -> dict[str, Any]:
+    candidates = [frame for frame in frames if interval["start"] <= float((frame.get("timecode") or {}).get("start", -1)) <= interval["end"]]
+    if len(candidates) > 12:
+        indexes = sorted({round(index * (len(candidates) - 1) / 11) for index in range(12)})
+        candidates = [candidates[index] for index in indexes]
+    request_frames = [{"timecode": frame["timecode"], "mimeType": "image/jpeg", "base64": _semantic_frame_base64(frame["path"], 512, 72)} for frame in candidates]
+    focused_payload = {
+        "interval": interval,
+        "frames": request_frames,
+        "transcript": [row for row in payload.get("transcript", []) if float(row.get("end", 0)) >= interval["start"] and float(row.get("start", 0)) <= interval["end"]],
+        "ocr": [row for row in payload.get("ocr", []) if interval["start"] <= float((row.get("timecode") or {}).get("start", -1)) <= interval["end"]],
+        "shots": [row for row in payload.get("shots", []) if float((row.get("timecode") or {}).get("end", 0)) >= interval["start"] and float((row.get("timecode") or {}).get("start", 0)) <= interval["end"]],
+    }
+    signature = _cache_signature({"version": 1, "task": "paid-ad-material-visual-event-verification", "input": {**focused_payload, "frames": [frame["timecode"] for frame in request_frames]}})
+    cache_path = cache_dir / f"visual-events-v1-{signature[:16]}.json" if cache_dir else None
+    cached = _read_analysis_cache(cache_path, signature) if cache_path else None
+    if cached and len(cached[0]) == 1 and isinstance(cached[0][0], dict):
+        report(95, "钩子视觉事件证据缓存复用")
+        raw = cached[0][0]
+    else:
+        report(95, "钩子视觉事件多帧核验")
+        raw = _semantic_request("paid-ad-material-visual-event-verification", focused_payload)
+        if cache_path:
+            _write_analysis_cache(cache_path, signature, [raw], {"backend": "qwen-visual-events-v1"})
+    return _validate_material_visual_events(raw, candidates, interval)
+
+
 def _read_analysis_cache(path: Path, signature: str) -> tuple[list[dict[str, Any]], dict[str, str]] | None:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -997,6 +1212,94 @@ def _write_analysis_cache(path: Path, signature: str, data: list[dict[str, Any]]
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps({"signature": signature, "data": data, "engine": engine}, ensure_ascii=False), encoding="utf-8")
     temporary.replace(path)
+
+
+_DETAIL_CHECKPOINT_PROMPT_VERSION = "drama-detail-checkpoint-v1-20260831"
+
+
+def _checkpoint_fingerprint(value: Any) -> Any:
+    """Keep cache signatures exact without duplicating large image bytes."""
+    if isinstance(value, list):
+        return [_checkpoint_fingerprint(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        if key == "base64" and isinstance(item, str):
+            result[key] = {"sha256": hashlib.sha256(item.encode("ascii", errors="ignore")).hexdigest(), "characters": len(item)}
+        else:
+            result[key] = _checkpoint_fingerprint(item)
+    return result
+
+
+def _detail_checkpoint_path(
+    cache_dir: Path,
+    task: str,
+    payload: dict[str, Any],
+    model: str,
+    prompt_version: str,
+    chunk_id: str,
+) -> tuple[Path, str, str]:
+    content_hash = _cache_signature({"task": task, "input": _checkpoint_fingerprint(payload)})
+    signature = _cache_signature({"contentHash": content_hash, "model": model, "promptVersion": prompt_version, "task": task})
+    safe_model = re.sub(r"[^A-Za-z0-9._-]+", "_", model) or "unknown-model"
+    safe_prompt = re.sub(r"[^A-Za-z0-9._-]+", "_", prompt_version)
+    safe_chunk = re.sub(r"[^A-Za-z0-9._-]+", "_", chunk_id)
+    path = cache_dir / "drama-detail" / "by-content-hash" / content_hash / safe_model / safe_prompt / f"{safe_chunk}.json"
+    return path, signature, content_hash
+
+
+def _run_detail_checkpoint(
+    task: str,
+    payload: dict[str, Any],
+    cache_dir: Path | None,
+    chunk_id: str,
+    request_result: Callable[[dict[str, Any]], dict[str, Any]],
+    *,
+    prompt_version: str = _DETAIL_CHECKPOINT_PROMPT_VERSION,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Reuse only successful structured chunks keyed by input, model and prompt."""
+    model = _semantic_model_for_task(task)
+    if not model:
+        raise AnalysisFailed("Detail checkpoint requires LUMINA_SEMANTIC_MODEL")
+    started = time.monotonic()
+    path: Path | None = None
+    signature = ""
+    content_hash = _cache_signature({"task": task, "input": _checkpoint_fingerprint(payload)})
+    if cache_dir is not None:
+        path, signature, content_hash = _detail_checkpoint_path(cache_dir, task, payload, model, prompt_version, chunk_id)
+        cached = _read_analysis_cache(path, signature)
+        if cached and len(cached[0]) == 1 and isinstance(cached[0][0], dict):
+            return cached[0][0], {
+                "chunkId": chunk_id,
+                "task": task,
+                "contentHash": content_hash,
+                "promptVersion": prompt_version,
+                "model": model,
+                "cacheHit": True,
+                "requestCount": 0,
+                "wallClockSeconds": round(time.monotonic() - started, 3),
+            }
+    request_diagnostics: dict[str, Any] = {"model": model, "requestCount": 0, "wallClockSeconds": 0.0}
+    result = request_result(request_diagnostics)
+    if not isinstance(result, dict):
+        raise AnalysisFailed(f"Detail checkpoint {chunk_id} returned a non-object result")
+    if path is not None:
+        _write_analysis_cache(path, signature, [result], {"backend": "semantic-checkpoint", "model": model, "promptVersion": prompt_version})
+        persisted = _read_analysis_cache(path, signature)
+        if not persisted or len(persisted[0]) != 1 or not isinstance(persisted[0][0], dict):
+            raise AnalysisFailed(f"Detail checkpoint {chunk_id} could not be verified after persistence")
+        result = persisted[0][0]
+    return result, {
+        "chunkId": chunk_id,
+        "task": task,
+        "contentHash": content_hash,
+        "promptVersion": prompt_version,
+        "model": model,
+        "cacheHit": False,
+        "requestCount": int(request_diagnostics.get("requestCount") or 0),
+        "wallClockSeconds": round(time.monotonic() - started, 3),
+    }
 
 
 def _read_frame_cache(path: Path, signature: str) -> list[dict[str, Any]] | None:
@@ -1034,9 +1337,19 @@ def _material_semantic_analysis(payload: dict[str, Any], duration: float, report
     minimum_duration = max(segment_seconds, float(os.getenv("LUMINA_QWEN_SEGMENT_MIN_DURATION", "75")))
     max_workers = max(1, int(os.getenv("LUMINA_QWEN_SEGMENT_WORKERS", "3")))
     if duration < minimum_duration:
-        report(78, "千问多模态分析")
-        result = _validate_semantic_claims(_semantic_request("paid-ad-material-analysis", payload), duration)
-        return _ensure_material_output_contract(result, payload, duration, report)
+        report(78, "千问短素材紧凑分析")
+        short_payload = {**payload, "segment": {"start": 0.0, "end": duration}}
+        short_cache = cache_dir / "semantic-short-v1.json" if cache_dir else None
+        short_signature = _cache_signature({"version": 1, "task": "paid-ad-material-segment-analysis", "payload": short_payload})
+        cached_short = _read_analysis_cache(short_cache, short_signature) if short_cache else None
+        if cached_short and len(cached_short[0]) == 1 and isinstance(cached_short[0][0], dict):
+            result = cached_short[0][0]
+            report(88, "千问短素材结构缓存复用")
+        else:
+            result = _validate_semantic_claims(_semantic_request("paid-ad-material-segment-analysis", short_payload), duration)
+            if short_cache:
+                _write_analysis_cache(short_cache, short_signature, [result], {"backend": "qwen-short-v1"})
+        return _ensure_material_output_contract(result, short_payload, duration, report)
 
     segments: list[dict[str, Any]] = []
     cursor = 0.0
@@ -1103,6 +1416,16 @@ def _material_semantic_analysis(payload: dict[str, Any], duration: float, report
                         raise
         if semantic_cache:
             _write_analysis_cache(semantic_cache, semantic_signature, results, {"backend": "qwen-segments-v6"})
+    # Providers commonly preserve an OCR point timestamp but omit its local
+    # frame lineage. Reattach it only by an exact measured OCR match, then
+    # re-run strict validation. This also repairs already-cached semantic
+    # results without another paid model call.
+    for index, item in enumerate(results):
+        if isinstance(item, dict):
+            results[index] = _validate_semantic_claims(
+                _relink_material_ocr_evidence(item, segments[index].get("ocr", [])),
+                duration,
+            )
     report(90, "千问全片创意汇总")
     merge_payload = {
         "durationSeconds": duration,
@@ -2151,12 +2474,35 @@ def _aggregate_material_classification(results: list[dict[str, Any]], duration: 
         text = summary.get("value") if isinstance(summary, dict) else None
         if text:
             summaries.append(str(text))
+    observations: list[dict[str, Any]] = []
+    seen_observations: set[str] = set()
+    for segment_index, item in enumerate(results, start=1):
+        content = item.get("content") if isinstance(item.get("content"), dict) else {}
+        for observation_index, observation in enumerate(content.get("observations", []) if isinstance(content.get("observations"), list) else [], start=1):
+            if not isinstance(observation, dict) or observation.get("verification") != "verified":
+                continue
+            evidence_rows = observation.get("evidence") if isinstance(observation.get("evidence"), list) else []
+            if not evidence_rows:
+                continue
+            fingerprint = _cache_signature({
+                "actor": observation.get("actorObserved"),
+                "action": observation.get("actionObserved"),
+                "result": observation.get("resultObserved"),
+                "evidence": evidence_rows,
+            })
+            if fingerprint in seen_observations:
+                continue
+            seen_observations.add(fingerprint)
+            namespaced = dict(observation)
+            original_id = str(observation.get("factId") or f"fact-{observation_index}").strip()
+            namespaced["factId"] = f"segment-{segment_index}:{original_id}"
+            observations.append(namespaced)
     evidence = list(body.get("evidence", []))[:2]
     safety_sanitized = any(item.get("_providerSafetySanitized") is True for item in results)
     review_required = safety_sanitized or hook_source["label"] in {"疑似外搭", "来源未知"} or body["label"] == "未确定"
     empty_claim = {"code": "UNDETERMINED", "label": "未确定", "value": "未确定", "confidence": 0, "evidence": [], "verification": "unverified"}
     return {
-        "content": {"summary": {"value": " ".join(summaries)[:500], "confidence": body["confidence"], "evidence": evidence}, "tags": [], "characters": [], "relationships": [], "segments": [], "completeness": {**empty_claim, "label": "分段证据完整", "value": "分段证据完整", "confidence": 1, "verification": "verified"}},
+        "content": {"summary": {"value": " ".join(summaries)[:500], "confidence": body["confidence"], "evidence": evidence}, "observations": observations, "inferences": [], "tags": [], "characters": [], "relationships": [], "segments": [], "completeness": {**empty_claim, "label": "分段证据完整", "value": "分段证据完整", "confidence": 1, "verification": "verified"}},
         "creative": {"format": empty_claim, "tier": {**empty_claim, "code": "TX", "label": "TX", "value": "TX"}, "hooks": [], "bodyFormat": body, "hookSourceStatus": hook_source, "narrationCoverage": {"value": round(narration, 4), "confidence": body["confidence"], "evidence": evidence, "verification": "verified"}, "timeline": [], "transitions": [], "packaging": {"visual": [], "subtitle": [], "audio": [], "rhythm": []}},
         "value": {"scores": {}, "inspirations": [], "risks": [], "suitableGenres": [], "suitableAudiences": []},
         "review": {"status": "needs_review" if review_required else "ready", "reviewRequired": review_required, "reasons": (["内容安全回退已移除露骨原文与图像字节，结论需人工复核"] if safety_sanitized else []) + ["云端全片汇总截断，已按验证分段进行确定性聚合"]},
@@ -2239,32 +2585,37 @@ def _compact_material_merge_segment(result: dict[str, Any], index: int = 0) -> d
     return compact(selected)
 
 
-def _material_output_contract_valid(result: Any) -> bool:
-    """Return whether a provider result satisfies the independent material-v2 schema."""
+def _material_output_contract_missing_paths(result: Any) -> list[str]:
+    """List actionable missing material-v2 paths without logging source prose."""
     if not isinstance(result, dict):
-        return False
+        return ["$ (object required)"]
     content = result.get("content") if isinstance(result.get("content"), dict) else {}
     summary = content.get("summary") if isinstance(content.get("summary"), dict) else {}
-    return (
-        isinstance(result.get("content"), dict)
-        and isinstance(result.get("creative"), dict)
-        and isinstance(result.get("value"), dict)
-        and isinstance(result.get("review"), dict)
-        and bool(str(summary.get("value") or "").strip())
-        and isinstance(summary.get("evidence"), list)
-        and bool(summary.get("evidence"))
-        and isinstance(summary.get("basedOnFactIds"), list)
-        and bool(summary.get("basedOnFactIds"))
-        and summary.get("verification") == "verified"
-        and isinstance(result["content"].get("observations"), list)
-        and bool(result["content"].get("observations"))
-        and isinstance(result["content"].get("inferences"), list)
-        and isinstance(result["content"].get("tags"), list)
-        and isinstance(result["content"].get("segments"), list)
-        and isinstance(result["creative"].get("hooks"), list)
-        and isinstance(result["creative"].get("timeline"), list)
-        and isinstance(result["value"].get("scores"), (dict, list))
-    )
+    creative = result.get("creative") if isinstance(result.get("creative"), dict) else {}
+    value = result.get("value") if isinstance(result.get("value"), dict) else {}
+    checks = [
+        (isinstance(result.get("content"), dict), "content"),
+        (isinstance(result.get("creative"), dict), "creative"),
+        (isinstance(result.get("value"), dict), "value"),
+        (isinstance(result.get("review"), dict), "review"),
+        (bool(str(summary.get("value") or "").strip()), "content.summary.value"),
+        (isinstance(summary.get("evidence"), list) and bool(summary.get("evidence")), "content.summary.evidence[]"),
+        (isinstance(summary.get("basedOnFactIds"), list) and bool(summary.get("basedOnFactIds")), "content.summary.basedOnFactIds[]"),
+        (summary.get("verification") == "verified", "content.summary.verification=verified"),
+        (isinstance(content.get("observations"), list) and bool(content.get("observations")), "content.observations[]"),
+        (isinstance(content.get("inferences"), list), "content.inferences[]"),
+        (isinstance(content.get("tags"), list), "content.tags[]"),
+        (isinstance(content.get("segments"), list), "content.segments[]"),
+        (isinstance(creative.get("hooks"), list), "creative.hooks[]"),
+        (isinstance(creative.get("timeline"), list), "creative.timeline[]"),
+        (isinstance(value.get("scores"), (dict, list)), "value.scores"),
+    ]
+    return [path for passed, path in checks if not passed]
+
+
+def _material_output_contract_valid(result: Any) -> bool:
+    """Return whether a provider result satisfies the independent material-v2 schema."""
+    return not _material_output_contract_missing_paths(result)
 
 
 def _normalize_material_output_shape(result: Any) -> dict[str, Any]:
@@ -2299,6 +2650,63 @@ def _normalize_material_output_shape(result: Any) -> dict[str, Any]:
     return normalized
 
 
+def _rebuild_material_summary_from_verified_observations(result: dict[str, Any]) -> dict[str, Any]:
+    """Repair only a malformed summary from provider-returned verified facts."""
+    normalized = dict(result)
+    content = dict(normalized.get("content") or {})
+    summary = content.get("summary") if isinstance(content.get("summary"), dict) else {}
+    summary_valid = (
+        bool(str(summary.get("value") or "").strip())
+        and isinstance(summary.get("evidence"), list) and bool(summary.get("evidence"))
+        and isinstance(summary.get("basedOnFactIds"), list) and bool(summary.get("basedOnFactIds"))
+        and summary.get("verification") == "verified"
+    )
+    if summary_valid:
+        return normalized
+    facts = []
+    for item in content.get("observations", []) if isinstance(content.get("observations"), list) else []:
+        if not isinstance(item, dict) or item.get("verification") != "verified":
+            continue
+        fact_id = str(item.get("factId") or "").strip()
+        action = str(item.get("actionObserved") or "").strip()
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), list) else []
+        if fact_id and action and evidence:
+            facts.append(item)
+    if not facts:
+        return normalized
+    selected = facts[:6]
+    clauses = []
+    for fact in selected:
+        actor = str(fact.get("actorObserved") or "").strip()
+        action = str(fact.get("actionObserved") or "").strip()
+        clauses.append(f"{actor}{action}" if actor and actor not in action else action)
+    rebuilt_evidence = []
+    for fact in selected:
+        for evidence in fact.get("evidence", []):
+            if evidence not in rebuilt_evidence:
+                rebuilt_evidence.append(evidence)
+            if len(rebuilt_evidence) >= 8:
+                break
+        if len(rebuilt_evidence) >= 8:
+            break
+    content["summary"] = {
+        "value": "；".join(clauses),
+        "confidence": min(float(fact.get("confidence", 1)) for fact in selected),
+        "evidence": rebuilt_evidence,
+        "basedOnFactIds": [str(fact["factId"]) for fact in selected],
+        "verification": "verified",
+        "repair": "rebuilt_from_verified_observations",
+    }
+    review = dict(normalized.get("review") or {})
+    reasons = list(review.get("reasons") or [])
+    reasons.append("模型摘要契约不完整，已仅用已验证客观事实重建；需人工复核叙事完整性")
+    normalized.update({
+        "content": content,
+        "review": {**review, "status": "needs_review", "reviewRequired": True, "reasons": list(dict.fromkeys(reasons))},
+    })
+    return normalized
+
+
 def _ensure_material_output_contract(
     result: dict[str, Any],
     source_payload: dict[str, Any],
@@ -2306,7 +2714,7 @@ def _ensure_material_output_contract(
     report: Callable[[int, str], None],
 ) -> dict[str, Any]:
     """Repair provider shape once, then fail truthfully instead of persisting empty success."""
-    result = _normalize_material_output_shape(result)
+    result = _rebuild_material_summary_from_verified_observations(_normalize_material_output_shape(result))
     if _material_output_contract_valid(result):
         return result
     report(92, "修复千问素材分析字段")
@@ -2325,9 +2733,10 @@ def _ensure_material_output_contract(
         ],
     }
     repaired = _normalize_material_output_shape(_validate_semantic_claims(_semantic_request("repair-paid-ad-material-output-contract", repair_payload), duration))
+    repaired = _rebuild_material_summary_from_verified_observations(repaired)
     if not _material_output_contract_valid(repaired):
-        keys = ", ".join(sorted(str(key) for key in repaired)) if isinstance(repaired, dict) else type(repaired).__name__
-        raise AnalysisFailed(f"千问素材分析返回字段不完整（收到：{keys}）")
+        missing = ", ".join(_material_output_contract_missing_paths(repaired))
+        raise AnalysisFailed(f"千问素材分析返回字段不完整（缺失或无效：{missing}）")
     return repaired
 
 
@@ -2393,14 +2802,14 @@ def _openai_request_body(provider: str, model: str, task: str, payload: dict[str
                 "This is the cross-episode continuity pass. Resolve one canonical identity for every recurring character and keep source spellings as aliases; never swap speaker identity, gender, role, or relationship between episodes",
                 "Keep the complete JSON below 5000 Chinese characters: at most 6 canonical characters, 6 relationships, 4 core events per episode, 2 relationship changes per episode, 2 emotion signals per episode and 2 foreshadowing items per episode",
                 "Use at most one strongest evidence item for each character, relationship, event, causal link, arc, payoff or question; evidence must stay timecoded but must not repeat transcript passages",
-                "Use all supplied episode transcripts and frames as primary evidence; reconstruct the story independently of any earlier summary",
+                "Use only the supplied episodeCheckpoints as evidence input; every checkpoint is a persisted episode-local structured result with timecoded evidence",
                 "This pass resolves identities and relationships only; do not return episode plots, story summaries, causal chains or highlights",
                 "Distinguish a remembered or flashback parent from the present-day spouse; distinguish what a character says about another person from who is speaking",
             ])
         else:
             rules.extend([
                 "Keep each single-episode JSON below 3500 Chinese characters",
-                "Return at most 5 characters, 5 relationships, 4 core events, 2 relationship changes, 2 emotion signals, 2 foreshadowing items, 8 content tags and 2 highlight candidates",
+                "Return at most 5 characters, 5 relationships, 4 core events, 2 relationship changes, 2 emotion signals, 2 foreshadowing items, 8 content tags and 5 distinct highlight candidates",
                 "Use at most one strongest evidence item per character, relationship, event, tag or candidate; never repeat transcript passages",
                 "The episode summary is 100-180 Chinese characters and every other description is one concise sentence",
                 "Do not return storyGraph, storyOverview or entryPoints in the single-episode pass",
@@ -2463,7 +2872,7 @@ def _openai_request_body(provider: str, model: str, task: str, payload: dict[str
                 "Resolve canonical recurring identities and aliases across all supplied episodes",
                 "Return at most 6 characters and 6 relationships; merge Ash, Ashton, surnames, spelling noise and transliterations when evidence identifies one person",
                 "Distinguish a remembered parent from the present spouse and distinguish the speaker from people mentioned in dialogue",
-                "Use transcripts and frames as primary evidence; isolatedDraft is only a hint and cannot override primary evidence",
+                "Use only persisted episodeCheckpoints and their timecoded evidence; isolatedDraft is only a merge hint and cannot override checkpoint evidence",
                 "Return characters and relationships only; do not return plots, summaries, tags, curves, highlights or story overview",
                 "Keep the complete JSON below 2500 Chinese characters",
             ]
@@ -2548,6 +2957,8 @@ def _openai_request_body(provider: str, model: str, task: str, payload: dict[str
             "Analyze the observable story inside this material only and explicitly label missing context, suspected reordering, cross-segment montage, external hook, or mixed-source content",
             "Classify bodyFormat as 正片主导, 解说主导, 混合, or 未确定; narrationCoverage is the fraction 0..1 of valid content duration occupied by narration that is independent from original character dialogue",
             "Classify source relation and assembly separately: hookSourceStatus says whether the hook is from the same drama, another drama, or unknown; hookAssemblyType says whether a complete opening fragment was deliberately prefaced before the body",
+            "Classify externalHookSubtype separately as 无关人物/场景外搭, 复用原剧人物资产但镜头为新生成/新制作, 混合型, or 来源不确定待复核. Reusing the original drama cast/character assets does not make a newly generated or newly produced shot native episode footage",
+            "External-hook lineage is decided by shot-level matching against complete owned-drama source footage, production provenance and whether the opening is newly produced outside the episode master. Cast, character, scene or visual-style changes are weak clues only and are never necessary or sufficient",
             "同剧高光钩子＋正片 always maps to final format 正片剧集拼接; both external-hook-plus-original-footage and external-hook-plus-narration map to 外搭钩子＋本剧正片",
             "When owned-drama source coverage is incomplete, external origin can never be confirmed: use 疑似外搭, set reviewRequired true, and explain the missing source coverage",
             "Only use 已确认外搭 when source metadata, a match to another source, or a complete owned-drama search provides direct evidence; visual style changes alone support only 疑似外搭",
@@ -2605,6 +3016,15 @@ def _openai_request_body(provider: str, model: str, task: str, payload: dict[str
                 "value": {"scores": {}, "risks": [claim]},
                 "review": {"status": "needs_review|ready", "reviewRequired": "boolean", "reasons": ["Simplified Chinese"]},
             }
+        if task == "paid-ad-material-analysis":
+            rules.extend([
+                "This is one short complete material, not a request to echo every OCR or transcript row",
+                "Keep the complete JSON below 8000 Chinese characters",
+                "Return at most 8 observations, 4 inferences, 6 tags, 4 characters, 4 relationships, 4 content segments, 2 hooks, 5 timeline items, 2 transitions and 5 risks",
+                "Use at most 1 strongest evidence item per claim and at most 45 Simplified Chinese characters per label, description or review reason",
+                "Packaging arrays contain at most 2 items each; value.scores contains at most 8 observable metrics",
+                "Do not repeat the same fact in observations, segments, timeline, packaging and risks",
+            ])
         if task in ("paid-ad-material-analysis-merge", "repair-paid-ad-material-output-contract"):
             rules.extend([
                 "Keep the response compact: at most 8 tags, 6 characters, 6 relationships, 12 content segments, 4 hooks, 12 timeline items, 4 transitions and 5 risks",
@@ -2704,6 +3124,37 @@ def _openai_request_body(provider: str, model: str, task: str, payload: dict[str
             "hookSourceStatus": "无独立钩子|已确认同剧|疑似外搭|已确认外搭|来源未知",
             "hookAssemblyType": "无前置钩子|同剧外搭|跨剧外搭|外搭来源待确认", "confidence": "0..1",
         }
+    if task == "paid-ad-material-visual-event-verification":
+        rules.extend([
+            "Analyze only the supplied interval and frames; this is a visual evidence audit, not a story rewrite or provenance classification",
+            "A visible state may cite one exact supplied frame, but any action or reaction must cite at least two distinct, time-ordered supplied frames that show a state change",
+            "Never infer kneeling, standing up, turning, attacking, submitting or reacting from one pose; describe only the observable before/after change",
+            "Never state that a facial expression was caused by an earlier character or event from shot adjacency alone",
+            "Speaker identity requires diarization, lip synchronization, or a visible speaking sequence. Subtitle placement, shot order and adjacent dialogue are insufficient",
+            "Evidence frame timecodes must exactly match supplied frame timecodes; do not invent intermediate frames or motion",
+            "Boundary assessment must separately report shot, dialogue, action and semantic completion; an observed shot boundary alone does not prove action or semantic completion",
+            "Keep uncertain identities as stable neutral roles, return unresolved questions, and always require human review",
+        ])
+        output_contract = {
+            "events": [{
+                "id": "stable event id", "start": "seconds", "end": "seconds", "actorCandidate": "stable neutral visible role",
+                "stateObserved": "single-frame visible state or empty", "actionObserved": "multi-frame observed state change or empty",
+                "reactionObserved": "multi-frame visible expression/posture change or empty", "resultObserved": "direct visible result or empty",
+                "evidenceFrames": [{"timecode": {"start": "exact supplied frame seconds", "end": "same seconds"}, "observation": "what this frame alone shows"}],
+                "confidence": "0..1", "verification": "verified|unverified", "reviewRequired": "boolean",
+            }],
+            "speakerLinks": [{
+                "utteranceStart": "seconds", "utteranceEnd": "seconds", "speakerCandidate": "stable neutral role",
+                "evidenceModalities": ["diarization|lip_sync|visible_speaking_sequence|adjacency_only"],
+                "confidence": "0..1", "verification": "verified|unverified", "reviewRequired": "boolean",
+            }],
+            "boundaryAssessment": {
+                "candidateStart": "seconds", "candidateEnd": "seconds", "shotStatus": "verified|unverified",
+                "dialogueStatus": "verified|unverified", "actionStatus": "verified|unverified", "semanticStatus": "verified|unverified",
+                "recommendedStart": "seconds", "recommendedEnd": "seconds", "evidenceFrameTimes": ["exact supplied seconds"], "reviewRequired": True,
+            },
+            "openQuestions": ["unresolved visual, speaker, action or boundary question"], "reviewRequired": True,
+        }
     if task == "paid-ad-material-event-ledger":
         rules.extend([
             "Build an evidence-first chronological event ledger; do not write a synopsis, themes, recommendations or ad analysis",
@@ -2782,6 +3233,8 @@ def _openai_request_body(provider: str, model: str, task: str, payload: dict[str
             "bodyFormat must be 正片主导, 解说主导, 混合, or 未确定",
             "hookSourceStatus must be 无独立钩子, 已确认同剧, 疑似外搭, 已确认外搭, or 来源未知",
             "hookAssemblyType must be 无前置钩子, 同剧外搭, 跨剧外搭, or 外搭来源待确认; source relation and editorial assembly are independent dimensions",
+            "externalHookSubtype must be 无关人物/场景外搭, 复用原剧人物资产但镜头为新生成/新制作, 混合型, or 来源不确定待复核. Original-drama characters may appear in a true external hook when its shots were newly generated or produced",
+            "Do not infer lineage from cast identity or appearance. Final external provenance requires shot-level comparison with complete episode masters and/or production provenance; without it use 来源不确定待复核 and require review",
             "When a same-drama high point from another episode is placed before the body, return hookSourceStatus 已确认同剧, hookAssemblyType 同剧外搭, and format 外搭钩子＋本剧正片",
             "bodyTransition must locate the exact end of the complete prefaced fragment; hooks[0] must cover 0 through that boundary",
             "When complete owned-drama source coverage is absent, visual differences can only support 疑似外搭 and reviewRequired=true, never 已确认外搭",
@@ -2791,13 +3244,15 @@ def _openai_request_body(provider: str, model: str, task: str, payload: dict[str
         claim = {"code": "stable enum code", "label": "Simplified Chinese", "value": "enum value", "confidence": "0..1 number", "evidence": evidence, "verification": "verified|unverified"}
         output_contract = {
             "content": {"summary": {"value": "concise Simplified Chinese", "confidence": "0..1 number", "evidence": evidence}, "tags": [], "characters": [], "relationships": [], "segments": [], "completeness": claim},
-            "creative": {"format": claim, "tier": claim, "hooks": [{**claim, "start": "seconds", "end": "seconds", "hookType": "stable hook type", "themes": ["tag"], "contentTags": ["tag"], "characterRoles": ["role"], "relationships": ["relationship"], "conflict": "Simplified Chinese", "emotion": "Simplified Chinese", "narrativePromise": "Simplified Chinese", "informationGap": "Simplified Chinese", "plotSummary": "complete prefaced-fragment summary", "spokenSummary": "Simplified Chinese", "visualSummary": "Simplified Chinese", "qualityScores": {"stopPower": "0..100", "conflict": "0..100", "clarity": "0..100", "reusability": "0..100"}, "reviewRequired": "boolean"}], "bodyFormat": claim, "hookSourceStatus": claim, "hookAssemblyType": claim, "bodyTransition": {**claim, "start": "seconds", "time": "seconds"}, "narrationCoverage": {"value": "0..1 number", "confidence": "0..1 number", "evidence": evidence, "verification": "verified|unverified"}, "timeline": [], "transitions": [], "packaging": {"visual": [], "subtitle": [], "audio": [], "rhythm": []}},
+            "creative": {"format": claim, "tier": claim, "hooks": [{**claim, "start": "seconds", "end": "seconds", "hookType": "stable hook type", "themes": ["tag"], "contentTags": ["tag"], "characterRoles": ["role"], "relationships": ["relationship"], "conflict": "Simplified Chinese", "emotion": "Simplified Chinese", "narrativePromise": "Simplified Chinese", "informationGap": "Simplified Chinese", "plotSummary": "complete prefaced-fragment summary", "spokenSummary": "Simplified Chinese", "visualSummary": "Simplified Chinese", "qualityScores": {"stopPower": "0..100", "conflict": "0..100", "clarity": "0..100", "reusability": "0..100"}, "reviewRequired": "boolean"}], "bodyFormat": claim, "hookSourceStatus": claim, "hookAssemblyType": claim, "externalHookSubtype": claim, "bodyTransition": {**claim, "start": "seconds", "time": "seconds"}, "narrationCoverage": {"value": "0..1 number", "confidence": "0..1 number", "evidence": evidence, "verification": "verified|unverified"}, "timeline": [], "transitions": [], "packaging": {"visual": [], "subtitle": [], "audio": [], "rhythm": []}},
             "value": {"scores": {"hookStrength": {**claim, "score": "0..100 number"}}, "inspirations": [], "risks": [], "suitableGenres": [], "suitableAudiences": []},
             "review": {"status": "needs_review|ready", "reviewRequired": "boolean", "reasons": ["concise Simplified Chinese"]},
         }
     if task == "hook-story-match":
         rules.extend([
-            "Match one verified external_material hook asset to complete story arcs in the supplied episode scope only",
+            "Match one media-available, traceable, verified-boundary hook asset from the paid-material library to complete story arcs in the supplied episode scope only; source_class is an advisory provenance label, never an eligibility filter",
+            "Rank for story completeness and low comprehension cost, hook retention, truthful narrative-promise fulfillment, and understandable character/causal/spatial/emotional continuity",
+            "Initial calibration gates are storyCompleteness >= 80, hookRetention >= 80, promiseFulfillment >= 75, and continuity >= 70. Mark severe factual conflict or false promise as veto=true regardless of aggregate score; diagnose spoiler risk for human review",
             "Never return an episode outside episodeScope and never invent a time range without supplied highlight or transcript evidence",
             "A match must explain setup, escalation, payoff and either resolution or a deliberate cliffhanger",
             "Match theme, relationship, conflict, emotion, narrative promise and information-gap payoff independently",
@@ -2809,7 +3264,9 @@ def _openai_request_body(provider: str, model: str, task: str, payload: dict[str
             "schemaVersion": "hook-match-v1",
             "matches": [{
                 "title": "Simplified Chinese", "topics": ["tag"], "matchScore": "0..100 number",
-                "dimensionScores": {"promise": "0..100", "causal": "0..100", "conflict": "0..100", "relationship": "0..100", "informationGap": "0..100", "emotion": "0..100", "highlight": "0..100", "pacing": "0..100"},
+                "dimensionScores": {"storyCompleteness": "0..100", "hookRetention": "0..100", "promiseFulfillment": "0..100", "continuity": "0..100", "promise": "0..100", "causal": "0..100", "conflict": "0..100", "relationship": "0..100", "informationGap": "0..100", "emotion": "0..100", "highlight": "0..100", "pacing": "0..100"},
+                "sourceCompatibility": {"label": "advisory provenance diagnosis", "score": "0..100", "hardGate": false},
+                "veto": "boolean", "vetoReasons": ["severe factual conflict|false narrative promise"], "spoilerRisk": "low|medium|high",
                 "storyArc": {"setup": "Simplified Chinese", "escalation": "Simplified Chinese", "payoff": "Simplified Chinese", "ending": "Simplified Chinese"},
                 "segments": [{"episode": "integer", "start": "seconds", "end": "seconds", "purpose": "setup|escalation|payoff|ending", "safeStart": {"status": "verified|unverified", "evidence": []}, "safeEnd": {"status": "verified|unverified", "evidence": []}, "evidence": []}],
                 "evidence": [], "risks": [{"description": "Simplified Chinese", "deduction": "non-negative number"}], "reviewRequired": "boolean",
@@ -2842,11 +3299,15 @@ def _openai_request_body(provider: str, model: str, task: str, payload: dict[str
             "paid-ad-material-event-ledger": 7000,
             "paid-ad-material-entity-resolution": 6000,
             "paid-ad-material-segment-analysis": 5000,
+            "paid-ad-material-analysis": 12000,
+            "paid-ad-material-analysis-merge": 12000,
+            "repair-paid-ad-material-output-contract": 12000,
             # Twenty-minute materials can produce >13k characters of valid
             # structured story JSON. Leave enough room for the closing braces
             # and evidence arrays instead of receiving finish_reason=length.
             "paid-ad-material-story-synthesis": 12000,
             "paid-ad-material-story-audit": 6000,
+            "paid-ad-material-visual-event-verification": 4000,
         }
         content = [{"type": "text", "text": prompt}]
         for frame in frames:
@@ -2952,10 +3413,24 @@ def _extract_chat_stream(response: Any) -> dict[str, Any]:
         raise AnalysisFailed(f"{exc}; finish_reason={finish}") from exc
 
 
-def _semantic_request(task: str, payload: dict[str, Any], _safety_retry: int = 0) -> dict[str, Any]:
+def _semantic_model_for_task(task: str) -> str | None:
+    """Route only explicitly low-risk probes to Flash; keep judgments on Max."""
+    if task in {"detail-recall-probe", "detail-frame-probe", "detail-drama-analysis", "repair-detail-output-contract"}:
+        return os.getenv("LUMINA_SEMANTIC_RECALL_MODEL") or os.getenv("LUMINA_SEMANTIC_MODEL")
+    return os.getenv("LUMINA_SEMANTIC_MODEL")
+
+
+def _semantic_request(
+    task: str,
+    payload: dict[str, Any],
+    _safety_retry: int = 0,
+    *,
+    model_override: str | None = None,
+    diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     endpoint = os.getenv("LUMINA_SEMANTIC_ENDPOINT")
     api_key = os.getenv("LUMINA_SEMANTIC_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")
-    model = os.getenv("LUMINA_SEMANTIC_MODEL")
+    model = model_override or _semantic_model_for_task(task)
     if not endpoint or not api_key or not model:
         raise AnalysisFailed("Semantic analysis requires LUMINA_SEMANTIC_ENDPOINT, LUMINA_SEMANTIC_MODEL and an API key in LUMINA_SEMANTIC_API_KEY, DASHSCOPE_API_KEY or OPENAI_API_KEY")
     default_provider = "openai-responses" if endpoint.rstrip("/").endswith("/responses") else "openai-chat-completions" if endpoint.rstrip("/").endswith("/chat/completions") else "generic"
@@ -2972,8 +3447,15 @@ def _semantic_request(task: str, payload: dict[str, Any], _safety_retry: int = 0
     request = urllib.request.Request(endpoint, data=request_data, headers={"authorization": f"Bearer {api_key}", "content-type": "application/json"}, method="POST")
     retry_count = max(1, int(os.getenv("LUMINA_SEMANTIC_REQUEST_ATTEMPTS", "3")))
     result = None
+    if diagnostics is not None:
+        diagnostics["model"] = model
+        diagnostics.setdefault("requestCount", 0)
+        diagnostics.setdefault("wallClockSeconds", 0.0)
     for attempt in range(retry_count):
         request_started = time.monotonic()
+        account_attempt_time = True
+        if diagnostics is not None:
+            diagnostics["requestCount"] += 1
         if os.getenv("LUMINA_SEMANTIC_DEBUG", "false").lower() == "true":
             print(f"[semantic-request] task={task} bytes={len(request_data)} attempt={attempt + 1}/{retry_count} start", file=sys.stderr, flush=True)
         try:
@@ -2996,7 +3478,16 @@ def _semantic_request(task: str, payload: dict[str, Any], _safety_retry: int = 0
                 # first remove explicit phrases, then all free-form prose. The
                 # result remains review-required and never fabricates evidence.
                 sanitized_payload = _sanitize_material_provider_input(payload) if _safety_retry == 0 else _strict_safety_provider_input(payload)
-                sanitized_result = _semantic_request(task, sanitized_payload, _safety_retry + 1)
+                if diagnostics is not None:
+                    diagnostics["wallClockSeconds"] += time.monotonic() - request_started
+                    account_attempt_time = False
+                sanitized_result = _semantic_request(
+                    task,
+                    sanitized_payload,
+                    _safety_retry + 1,
+                    model_override=model,
+                    diagnostics=diagnostics,
+                )
                 sanitized_result["_providerSafetySanitized"] = True
                 review = dict(sanitized_result.get("review") or {})
                 reasons = list(review.get("reasons") or [])
@@ -3015,13 +3506,58 @@ def _semantic_request(task: str, payload: dict[str, Any], _safety_retry: int = 0
             if attempt + 1 >= retry_count:
                 raise AnalysisFailed(f"Semantic provider request failed after {retry_count} attempts: {exc}") from exc
             time.sleep(min(4.0, float(2 ** attempt)))
+        except AnalysisFailed as exc:
+            # Streaming gateways can close after emitting a partial JSON
+            # fragment without an HTTP error. Treat this as a transient
+            # transport failure and retry the same bounded request; semantic
+            # validation errors outside this narrow case still fail closed.
+            if "streaming API returned no complete JSON object" not in str(exc) or attempt + 1 >= retry_count:
+                raise
+            if os.getenv("LUMINA_SEMANTIC_DEBUG", "false").lower() == "true":
+                print(f"[semantic-request] task={task} bytes={len(request_data)} seconds={time.monotonic() - request_started:.1f} incomplete_stream_retry", file=sys.stderr, flush=True)
+            time.sleep(min(4.0, float(2 ** attempt)))
         except Exception as exc:
             raise AnalysisFailed(f"Semantic provider request failed: {exc}") from exc
+        finally:
+            if diagnostics is not None and account_attempt_time:
+                diagnostics["wallClockSeconds"] += time.monotonic() - request_started
     if not (provider == "openai-chat-completions" and body.get("stream")):
         result = _extract_provider_result(provider, result)
     if not isinstance(result, dict):
         raise AnalysisFailed("Semantic provider returned a non-object result")
+    if diagnostics is not None:
+        diagnostics["wallClockSeconds"] = round(float(diagnostics["wallClockSeconds"]), 3)
     return result
+
+
+def _relink_material_ocr_evidence(value: Any, source_ocr: list[dict[str, Any]]) -> Any:
+    """Restore OCR point-sample lineage only when it matches measured source OCR."""
+    if isinstance(value, list):
+        return [_relink_material_ocr_evidence(item, source_ocr) for item in value]
+    if not isinstance(value, dict):
+        return value
+    transformed = {key: _relink_material_ocr_evidence(item, source_ocr) for key, item in value.items()}
+    if str(transformed.get("source") or "").lower() != "ocr" or transformed.get("framePath"):
+        return transformed
+    timecode = transformed.get("timecode") if isinstance(transformed.get("timecode"), dict) else {}
+    start, end = timecode.get("start"), timecode.get("end")
+    if not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or start != end:
+        return transformed
+    evidence_text = str(transformed.get("sourceText") or transformed.get("text") or "").strip()
+    for row in source_ocr:
+        if not isinstance(row, dict):
+            continue
+        row_timecode = row.get("timecode") if isinstance(row.get("timecode"), dict) else {}
+        row_start = row_timecode.get("start")
+        row_text = str(row.get("sourceText") or row.get("text") or "").strip()
+        frame_path = row.get("framePath") or row.get("path")
+        if not frame_path or not isinstance(row_start, (int, float)) or abs(float(row_start) - float(start)) > .05:
+            continue
+        if evidence_text and row_text and evidence_text != row_text:
+            continue
+        transformed["framePath"] = str(frame_path)
+        return transformed
+    return transformed
 
 
 def _validate_semantic_claims(value: Any, duration: float | dict[int, float]) -> Any:
@@ -3046,7 +3582,8 @@ def _validate_semantic_claims(value: Any, duration: float | dict[int, float]) ->
             # A frame is a measured point sample; transcript/OCR evidence must
             # span a real, non-zero interval.  This blocks misleading 20–20s
             # dialogue evidence while preserving exact frame timestamps.
-            if temporal_valid and source != "frame":
+            point_sample = source.lower() in {"frame", "ocr_frame"} or (source.lower() == "ocr" and bool(item.get("framePath")))
+            if temporal_valid and not point_sample:
                 temporal_valid = end > start
             valid = valid and temporal_valid and isinstance(evidence_confidence, (int, float)) and 0 <= evidence_confidence <= 1 and isinstance(source, str) and bool(source)
         transformed["verification"] = "verified" if valid else "unverified"
@@ -3082,7 +3619,8 @@ def _apply_material_evidence_gate(result: dict[str, Any]) -> dict[str, Any]:
             if not source or not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or not isinstance(confidence, (int, float)):
                 continue
             temporal_valid = 0 <= start <= end and (duration_limit is None or end <= duration_limit)
-            if source.lower() != "frame":
+            point_sample = source.lower() in {"frame", "ocr_frame"} or (source.lower() == "ocr" and bool(item.get("framePath")))
+            if not point_sample:
                 temporal_valid = temporal_valid and end > start
             if temporal_valid and 0 <= confidence <= 1:
                 return True
@@ -3130,6 +3668,20 @@ def _apply_material_evidence_gate(result: dict[str, Any]) -> dict[str, Any]:
             label = str(inference.get("statement") or inference.get("label") or "未命名推断")
             downgrade(inference, f"推断“{label}”的证据模态不足以证明 {inference_type}")
 
+    # Unverified claims remain auditable but must not stay in the consumable
+    # fact/inference arrays where downstream matching can treat their IDs as
+    # established truth.
+    rejected_claims = [
+        {"layer": "observation", "claim": dict(item)}
+        for item in observations if isinstance(item, dict) and item.get("verification") != "verified"
+    ] + [
+        {"layer": "inference", "claim": dict(item)}
+        for item in content.get("inferences", []) if isinstance(item, dict) and item.get("verification") != "verified"
+    ]
+    content["observations"] = [item for item in observations if isinstance(item, dict) and item.get("verification") == "verified"]
+    content["inferences"] = [item for item in content.get("inferences", []) if isinstance(item, dict) and item.get("verification") == "verified"]
+    observations = content["observations"]
+
     identity_pattern = re.compile(
         r"(?:queen|princess|emperor|king|prince|duke|doctor|ceo|billionaire|女王|公主|皇帝|国王|王子|公爵|医生|总裁|亿万富翁)",
         re.I,
@@ -3149,6 +3701,86 @@ def _apply_material_evidence_gate(result: dict[str, Any]) -> dict[str, Any]:
     if summary.get("verification") == "verified" and (not observations or not summary_fact_ids or not summary_fact_ids.issubset(verified_fact_ids)):
         downgrade(summary, "剧情摘要没有完整引用已验证客观事实")
 
+    completeness = content.get("completeness") if isinstance(content.get("completeness"), dict) else {}
+    completeness_value = str(completeness.get("value") or completeness.get("label") or completeness.get("code") or "").lower()
+    complete_claim = completeness_value in {"complete", "完整", "story_complete"}
+    completeness_text = evidence_text(completeness)
+    missing_story_entities = not isinstance(content.get("characters"), list) or not content.get("characters") or not isinstance(content.get("relationships"), list) or not content.get("relationships")
+    incomplete_fact_coverage = bool(verified_fact_ids) and summary_fact_ids != verified_fact_ids
+    cta_used_as_resolution = bool(_MATERIAL_CTA_PATTERN.search(completeness_text))
+    if complete_claim and (missing_story_entities or incomplete_fact_coverage or cta_used_as_resolution):
+        rejected_claims.append({"layer": "completeness", "claim": dict(completeness)})
+        summary_evidence = summary.get("evidence") if isinstance(summary.get("evidence"), list) else []
+        completeness.update({
+            "code": "incomplete", "label": "不完整", "value": "不完整", "confidence": min(float(completeness.get("confidence", 0) or 0), .49),
+            "evidence": summary_evidence, "basedOnFactIds": sorted(summary_fact_ids.intersection(verified_fact_ids)),
+            "verification": "unverified", "reviewRequired": True,
+            "diagnosis": "仅保留已验证客观事实；后续人物、因果结果与故事收束仍需复核",
+        })
+        reasons.append("故事完整性缺少人物/关系与全部已验证事实覆盖，且CTA不得作为剧情收束证据")
+
+    def quarantine_dangling(container: dict[str, Any], key: str, layer: str) -> None:
+        values = container.get(key) if isinstance(container.get(key), list) else []
+        accepted: list[dict[str, Any]] = []
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            raw_ids = item.get("basedOnFactIds") if isinstance(item.get("basedOnFactIds"), list) else []
+            fact_ids = {str(value).strip() for value in raw_ids if str(value).strip()}
+            if fact_ids and not fact_ids.issubset(verified_fact_ids):
+                rejected_claims.append({"layer": layer, "claim": dict(item), "rejectionReason": "引用了已拒绝或不存在的客观事实：" + "、".join(sorted(fact_ids - verified_fact_ids))})
+                continue
+            accepted.append(item)
+        container[key] = accepted
+
+    quarantine_dangling(content, "segments", "content.segments")
+    quarantine_dangling(content, "characters", "content.characters")
+    quarantine_dangling(content, "relationships", "content.relationships")
+    quarantine_dangling(creative, "transitions", "creative.transitions")
+    quarantine_dangling(creative, "timeline", "creative.timeline")
+    quarantine_dangling(creative, "hooks", "creative.hooks")
+    value_layer = result.get("value") if isinstance(result.get("value"), dict) else {}
+    quarantine_dangling(value_layer, "risks", "value.risks")
+    quarantine_dangling(value_layer, "inspirations", "value.inspirations")
+    for field in ("bodyFormat", "narrationCoverage", "hookSourceStatus", "hookAssemblyType", "externalHookSubtype", "format", "tier"):
+        claim = creative.get(field)
+        if not isinstance(claim, dict) or not isinstance(claim.get("basedOnFactIds"), list):
+            continue
+        fact_ids = {str(value).strip() for value in claim["basedOnFactIds"] if str(value).strip()}
+        invalid_ids = fact_ids - verified_fact_ids
+        if invalid_ids:
+            rejected_claims.append({"layer": f"creative.{field}", "claim": dict(claim), "rejectionReason": "引用了已拒绝或不存在的客观事实：" + "、".join(sorted(invalid_ids))})
+            claim["basedOnFactIds"] = sorted(fact_ids.intersection(verified_fact_ids))
+            claim["verification"] = "unverified"
+            claim["reviewRequired"] = True
+    # CTA is packaging rather than story truth. Preserve its directly timed
+    # evidence, but remove dangling story-fact edges.
+    for item in creative.get("cta", []) if isinstance(creative.get("cta"), list) else []:
+        if isinstance(item, dict):
+            item["basedOnFactIds"] = [value for value in item.get("basedOnFactIds", []) if str(value) in verified_fact_ids] if isinstance(item.get("basedOnFactIds"), list) else []
+            item["storyCandidate"] = False
+
+    source_attribution = result.get("sourceAttribution") if isinstance(result.get("sourceAttribution"), dict) else result.get("source_attribution") if isinstance(result.get("source_attribution"), dict) else {}
+    source_matches = source_attribution.get("matches") if isinstance(source_attribution.get("matches"), list) else []
+    lineage_verified = str(source_attribution.get("status") or "").lower() in {"verified", "matched"} and bool(source_matches)
+    hook_source = creative.get("hookSourceStatus") if isinstance(creative.get("hookSourceStatus"), dict) else {}
+    hook_source_value = str(hook_source.get("value") or hook_source.get("label") or hook_source.get("code") or "")
+    if hook_source_value in {"已确认同剧", "已确认外搭", "SAME_DRAMA", "CONFIRMED_EXTERNAL"} and not lineage_verified:
+        creative["hookSourceStatus"] = {
+            **hook_source,
+            "code": "UNKNOWN", "label": "来源未知", "value": "来源未知",
+            "verification": "unverified", "reviewRequired": True,
+        }
+        reasons.append("素材来源缺少原剧镜头匹配或制作血缘，不能确认同剧或外搭来源")
+        assembly = creative.get("hookAssemblyType") if isinstance(creative.get("hookAssemblyType"), dict) else {}
+        assembly_value = str(assembly.get("value") or assembly.get("label") or assembly.get("code") or "")
+        if assembly_value in {"同剧外搭", "跨剧外搭", "SAME_DRAMA_PREFACE", "CROSS_DRAMA_PREFACE"}:
+            creative["hookAssemblyType"] = {
+                **assembly,
+                "code": "UNKNOWN_PREFACE", "label": "外搭来源待确认", "value": "外搭来源待确认",
+                "verification": "unverified", "reviewRequired": True,
+            }
+
     tier = creative.get("tier")
     if isinstance(tier, dict) and tier.get("verification") == "verified" and not source_names(tier).intersection({"adx", "performance", "metrics", "manual_review"}):
         downgrade(tier, "素材 T 层级缺少投放数据或人工评分证据")
@@ -3160,14 +3792,22 @@ def _apply_material_evidence_gate(result: dict[str, Any]) -> dict[str, Any]:
             downgrade(claim, "音频结论缺少可测量的音频证据")
 
     review = result.get("review") if isinstance(result.get("review"), dict) else {}
+    if rejected_claims:
+        review = {**review, "rejectedClaims": rejected_claims}
     if review.get("reviewRequired") is True or str(review.get("status") or "").lower() in {"needs_review", "review_required"}:
-        reasons.extend(str(reason) for reason in review.get("reasons", []) if str(reason).strip())
+        reasons.extend(
+            str(reason) for reason in review.get("reasons", [])
+            if str(reason).strip() and not re.search(r"^(?:所有结论均|时间码和置信度准确|无虚构或推测)", str(reason).strip())
+        )
         if not review.get("reasons"):
             reasons.append("分析结果仍包含待复核结论")
 
     if reasons:
         existing = review.get("reasons") if isinstance(review.get("reasons"), list) else []
-        unique_reasons = list(dict.fromkeys([*existing, *reasons]))
+        unique_reasons = list(dict.fromkeys(
+            reason for reason in [*existing, *reasons]
+            if not re.search(r"^(?:所有结论均|时间码和置信度准确|无虚构或推测)", str(reason).strip())
+        ))
         result["review"] = {**review, "status": "needs_review", "reviewRequired": True, "reasons": unique_reasons}
         result["qualityGate"] = {"passed": False, "status": "review_required", "reasons": unique_reasons}
     else:
@@ -3276,11 +3916,33 @@ def _precision_candidates(value: Any, durations: dict[int, float], transcripts: 
                 expanded_start = max(0.0, center - target / 2)
                 expanded_end = min(float(durations[episode]), expanded_start + target)
                 expanded_start = max(0.0, expanded_end - target)
-            checked["start"], checked["end"] = round(expanded_start, 3), round(expanded_end, 3)
+            event_interval = {"start": round(original_start, 3), "end": round(original_end, 3)}
+            precision_interval = {"start": round(expanded_start, 3), "end": round(expanded_end, 3)}
+            checked["start"], checked["end"] = precision_interval["start"], precision_interval["end"]
             normalized = _normalize_highlight_candidate(checked, float(durations[episode]), len(candidates_by_episode[episode]))
             if normalized is not None:
+                # Preserve the atomic event separately from the wider context
+                # window used by the precision worker.
+                normalized["eventInterval"] = event_interval
+                normalized["precisionInterval"] = precision_interval
                 normalized.update(_highlight_quality_projection(normalized))
-                normalized["reviewRequired"] = bool(normalized.get("reviewRequired")) or not normalized["scoreContractComplete"]
+                # Detail discovers evidence-backed intervals; precision is the
+                # tier that densely samples them and produces the attraction /
+                # production score contract. Requiring those scores before a
+                # precision job exists is circular and previously suppressed
+                # every real candidate.
+                discovery_reasons = []
+                if float(normalized.get("confidence") or 0) < .75:
+                    discovery_reasons.append("候选证据置信度低于 0.75")
+                if not str(normalized.get("audienceQuestion") or "").strip():
+                    discovery_reasons.append("缺少明确观众问题")
+                if not str(normalized.get("narrativePromise") or "").strip():
+                    discovery_reasons.append("缺少可兑现叙事承诺")
+                normalized["precisionEligible"] = not discovery_reasons
+                normalized["precisionDiscoveryGate"] = {"passed": not discovery_reasons, "reasons": discovery_reasons}
+                # Discovery candidates are never production-ready before the
+                # precision worker verifies boundaries and three score groups.
+                normalized["reviewRequired"] = True
                 candidates_by_episode[episode].append(normalized)
     candidates: list[dict[str, Any]] = []
     for episode in durations:
@@ -3292,6 +3954,74 @@ def _precision_candidates(value: Any, durations: dict[int, float], transcripts: 
             distinct.append(item)
         candidates.extend(distinct[:5])
     return candidates
+
+
+def _detail_recall_probes(visual_frames: list[dict[str, Any]], durations: dict[int, float], existing: list[dict[str, Any]], measured_intervals: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Create evidence-only Precision probes for motion bursts and uncovered endings.
+
+    These are not narrative claims and never become production assets directly.
+    They exist so Detail model omissions can still receive the dense Precision
+    pass that is capable of deciding whether a real highlight exists.
+    """
+    probes: list[dict[str, Any]] = []
+    def frame_timestamp(frame: dict[str, Any]) -> float | None:
+        value = frame.get("timecode")
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, dict) and isinstance(value.get("start"), (int, float)):
+            return float(value["start"])
+        return None
+    for episode, duration in sorted(durations.items()):
+        owned = [frame for frame in visual_frames if int(frame.get("episode") or 0) == episode and frame_timestamp(frame) is not None]
+        groups: list[tuple[str, list[dict[str, Any]]]] = []
+        sequence_ids = sorted({str(frame.get("sequenceId")) for frame in owned if frame.get("sequenceId")})
+        for sequence_id in sequence_ids:
+            groups.append(("motion", [frame for frame in owned if str(frame.get("sequenceId") or "") == sequence_id]))
+        ending = sorted((frame for frame in owned if frame.get("selectionReason") in ("endpoint", "endpoint_context")), key=lambda frame: frame_timestamp(frame) or 0)[-3:]
+        if ending:
+            groups.append(("ending", ending))
+        for kind, frames in groups[:2]:
+            timestamps = sorted(float(frame_timestamp(frame) or 0) for frame in frames)
+            event_start = max(0.0, timestamps[0] - 1.5)
+            event_end = min(duration, timestamps[-1] + 1.5)
+            if event_end - event_start < 1:
+                continue
+            target = min(60.0, max(18.0, event_end - event_start + 24.0))
+            center = (event_start + event_end) / 2
+            precision_start = max(0.0, center - target / 2)
+            precision_end = min(duration, precision_start + target)
+            precision_start = max(0.0, precision_end - target)
+            candidate_range = {"start": precision_start, "end": precision_end}
+            if any(int(item.get("episode") or 0) == episode and _interval_overlap_ratio({"start": event_start, "end": event_end}, item.get("eventInterval") if isinstance(item.get("eventInterval"), dict) else {"start": float(item.get("start") or 0), "end": float(item.get("end") or 0)}) >= .5 for item in [*existing, *probes]):
+                continue
+            evidence = [{"episode": episode, "source": "frame", "timecode": {"start": timestamp, "end": timestamp}, "confidence": 1.0} for timestamp in timestamps]
+            probes.append({
+                "id": f"recall-probe-{episode}-{kind}-{len(probes) + 1}", "episode": episode,
+                "start": round(precision_start, 3), "end": round(precision_end, 3),
+                "timecode": {"start": round(precision_start, 3), "end": round(precision_end, 3)},
+                "eventInterval": {"start": round(event_start, 3), "end": round(event_end, 3)},
+                "precisionInterval": {"start": round(precision_start, 3), "end": round(precision_end, 3)},
+                "confidence": .8, "verification": "verified", "evidence": evidence,
+                "candidateKind": "motion_recall_probe" if kind == "motion" else "ending_recall_probe",
+                "title": "运动事件待精析" if kind == "motion" else "片尾事件待精析",
+                "audienceQuestion": "", "narrativePromise": "", "precisionEligible": True,
+                "precisionDiscoveryGate": {"passed": True, "reasons": ["实测运动/片尾证据触发召回探针；叙事价值待 Precision 判定"]},
+                "reviewRequired": True, "qualityGate": {"passed": False, "reasons": ["召回探针不是已验证高光"]},
+                "productionGate": {"status": "unverified", "reviewRequired": True},
+            })
+        owned_intervals = [item for item in (measured_intervals or []) if int(item.get("episode") or 0) == episode and isinstance(item.get("eventInterval"), dict)]
+        for item in sorted(owned_intervals, key=lambda value: int(value.get("quartile") or 0)):
+            event_start, event_end = float(item["eventInterval"]["start"]), float(item["eventInterval"]["end"])
+            event_range = {"start": event_start, "end": event_end}
+            if any(int(candidate.get("episode") or 0) == episode and _interval_overlap_ratio(event_range, candidate.get("eventInterval") if isinstance(candidate.get("eventInterval"), dict) else candidate) >= .5 for candidate in [*existing, *probes]):
+                continue
+            center = (event_start + event_end) / 2
+            target = min(60.0, max(27.0, event_end - event_start))
+            precision_start = max(0.0, center - target / 2)
+            precision_end = min(duration, precision_start + target)
+            precision_start = max(0.0, precision_end - target)
+            probes.append({"id": f"recall-probe-{episode}-quartile-{int(item.get('quartile') or 0)}", "episode": episode, "start": round(precision_start, 3), "end": round(precision_end, 3), "timecode": {"start": round(precision_start, 3), "end": round(precision_end, 3)}, "eventInterval": {"start": round(event_start, 3), "end": round(event_end, 3)}, "precisionInterval": {"start": round(precision_start, 3), "end": round(precision_end, 3)}, "confidence": .8, "verification": "verified", "evidence": list(item.get("evidence") or []), "candidateKind": "motion_quartile_probe", "title": "分段运动事件待精析", "audienceQuestion": "", "narrativePromise": "", "precisionEligible": True, "precisionDiscoveryGate": {"passed": True, "reasons": ["分段实测运动证据触发召回探针；叙事价值待 Precision 判定"]}, "reviewRequired": True, "qualityGate": {"passed": False, "reasons": ["召回探针不是已验证高光"]}, "productionGate": {"status": "unverified", "reviewRequired": True}})
+    return probes
 
 
 def _normalize_precision_hooks(value: Any, interval_start: float, interval_end: float, transcript: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
@@ -3358,6 +4088,55 @@ def _semantic_frame_base64(path: str | Path, max_side: int = 640, quality: int =
         buffer = BytesIO()
         image.save(buffer, format="JPEG", quality=quality, optimize=True)
     return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def _select_precision_evidence_frames(frames: list[dict[str, Any]], limit: int = 16) -> list[dict[str, Any]]:
+    """Keep endpoints, motion bursts and broad coverage inside a hard frame cap."""
+    if len(frames) <= limit:
+        return list(frames)
+    scores: list[tuple[float, int]] = []
+    previous = None
+    for index, frame in enumerate(frames):
+        with Image.open(frame["path"]) as image:
+            thumb = image.convert("L").resize((32, 32), Image.Resampling.BILINEAR)
+        if previous is not None:
+            scores.append((float(ImageStat.Stat(ImageChops.difference(previous, thumb)).mean[0]), index))
+        previous = thumb
+    selected = {0, len(frames) - 1}
+    peaks: list[int] = []
+    for _, index in sorted(scores, reverse=True):
+        if any(abs(index - existing) < 4 for existing in peaks):
+            continue
+        peaks.append(index)
+        selected.update(candidate for candidate in (index - 1, index, index + 1) if 0 <= candidate < len(frames))
+        if len(peaks) >= 3 or len(selected) >= limit:
+            break
+    while len(selected) < limit:
+        remaining = [index for index in range(len(frames)) if index not in selected]
+        if not remaining:
+            break
+        selected.add(max(remaining, key=lambda index: min(abs(index - chosen) for chosen in selected)))
+    if len(selected) > limit:
+        protected = {0, len(frames) - 1, *peaks}
+        removable = sorted((index for index in selected if index not in protected), reverse=True)
+        while len(selected) > limit and removable:
+            selected.remove(removable.pop(0))
+    return [frames[index] for index in sorted(selected)]
+
+
+def _bounded_precision_frames(frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Encode precision evidence within reproducible count and request budgets."""
+    limit = max(2, int(os.getenv("LUMINA_PRECISION_MAX_FRAMES", "16")))
+    budget = max(20_000, int(os.getenv("LUMINA_PRECISION_MAX_BASE64_CHARS", "240000")))
+    selected = _select_precision_evidence_frames(frames, limit)
+    for max_side, quality in ((320, 60), (256, 55), (192, 50)):
+        encoded = [{"episode": frame.get("episode"), "timecode": frame["timecode"], "mimeType": "image/jpeg", "base64": _semantic_frame_base64(frame["path"], max_side=max_side, quality=quality)} for frame in selected]
+        while len(encoded) > 2 and sum(len(item["base64"]) for item in encoded) > budget:
+            # Preserve both interval endpoints while shedding interior evidence.
+            encoded.pop(1 + (len(encoded) - 2) // 2)
+        if sum(len(item["base64"]) for item in encoded) <= budget:
+            return encoded
+    raise AnalysisFailed("Precision visual evidence exceeds the configured request budget")
 
 
 def analyze_coarse(path: Path, episode: int, workspace: Path) -> AnalysisEnvelope:
@@ -3588,6 +4367,20 @@ def _claim_confidences(value: Any) -> list[float]:
     return scores + [score for item in value.values() for score in _claim_confidences(item)]
 
 
+def _material_publish_confidence(semantic: dict[str, Any]) -> int:
+    """Score publishability, not merely the provider's strongest claim."""
+    raw = round(100 * max(_claim_confidences(semantic) or [0.0]))
+    content = semantic.get("content") if isinstance(semantic.get("content"), dict) else {}
+    creative = semantic.get("creative") if isinstance(semantic.get("creative"), dict) else {}
+    value = semantic.get("value") if isinstance(semantic.get("value"), dict) else {}
+    required = (bool(content.get("characters")), bool(content.get("relationships")), bool(creative.get("hooks")), bool(value.get("scores")))
+    confidence = round(raw * (0.5 + 0.5 * sum(required) / len(required)))
+    gate = semantic.get("qualityGate") if isinstance(semantic.get("qualityGate"), dict) else {}
+    if gate.get("passed") is not True:
+        confidence = min(confidence, 49)
+    return max(0, min(100, confidence))
+
+
 def _review_reason_conflicts_with_source_claim(reason: Any, hook_source: str) -> bool:
     """Reject review text that directly contradicts a verified source claim."""
     text = str(reason or "")
@@ -3671,6 +4464,13 @@ def _normalize_material_format(creative: dict[str, Any], review: dict[str, Any])
         "外搭来源待确认": "外搭来源待确认", "unknown_preface": "外搭来源待确认", "UNKNOWN_PREFACE": "外搭来源待确认",
         "无前置钩子": "无前置钩子", "none": "无前置钩子", "NONE": "无前置钩子",
     }, "无前置钩子")
+    subtype_claim = creative.get("externalHookSubtype") if isinstance(creative.get("externalHookSubtype"), dict) else {}
+    external_hook_subtype = _verified_taxonomy_value(subtype_claim, {
+        "无关人物/场景外搭": "无关人物/场景外搭", "unrelated_cast_scene": "无关人物/场景外搭", "UNRELATED_CAST_SCENE": "无关人物/场景外搭",
+        "复用原剧人物资产但镜头为新生成/新制作": "复用原剧人物资产但镜头为新生成/新制作", "reused_cast_new_production": "复用原剧人物资产但镜头为新生成/新制作", "REUSED_CAST_NEW_PRODUCTION": "复用原剧人物资产但镜头为新生成/新制作",
+        "混合型": "混合型", "mixed": "混合型", "MIXED": "混合型",
+        "来源不确定待复核": "来源不确定待复核", "unknown_review": "来源不确定待复核", "UNKNOWN_REVIEW": "来源不确定待复核",
+    }, "来源不确定待复核")
     # An external hook is an opening construct. End cards and CTAs are not
     # source evidence for an external opening, even when their visual style is
     # very different from the body.
@@ -3733,7 +4533,20 @@ def _normalize_material_format(creative: dict[str, Any], review: dict[str, Any])
         "value": normalized_tier,
         "verification": tier_claim.get("verification", "unverified"),
     }
-    creative = {**creative, "format": format_claim, "tier": normalized_tier_claim}
+    if final_format == "外搭钩子＋本剧正片":
+        subtype_claim = {
+            **subtype_claim,
+            "code": {
+                "无关人物/场景外搭": "UNRELATED_CAST_SCENE",
+                "复用原剧人物资产但镜头为新生成/新制作": "REUSED_CAST_NEW_PRODUCTION",
+                "混合型": "MIXED",
+                "来源不确定待复核": "UNKNOWN_REVIEW",
+            }[external_hook_subtype],
+            "label": external_hook_subtype,
+            "value": external_hook_subtype,
+            "verification": subtype_claim.get("verification", "unverified"),
+        }
+    creative = {**creative, "format": format_claim, "tier": normalized_tier_claim, **({"externalHookSubtype": subtype_claim} if final_format == "外搭钩子＋本剧正片" else {})}
     return creative, review
 
 
@@ -3875,14 +4688,70 @@ def analyze_material_v2(path: Path, workspace: Path, on_progress: Callable[[int,
         ],
     }
     semantic = _material_semantic_analysis(payload, duration, report, cache_dir)
+    # Apply the same deterministic OCR lineage recovery to both the short-path
+    # single request and the long-path segment merge. This is deliberately
+    # performed before the evidence gate and never accepts an unmatched point.
+    semantic = _validate_semantic_claims(
+        _relink_material_ocr_evidence(semantic, ocr),
+        duration,
+    )
     report(94, "校验 material-v2 结构化结果")
 
     content = semantic.get("content", {})
     creative = semantic.get("creative", {})
     value = semantic.get("value", {})
     review = semantic.get("review", {})
+    # Source lineage must be downgraded before format normalization and hook
+    # boundary enrichment; otherwise a provider-only "confirmed external"
+    # claim can incorrectly force a later native reveal into a 0s preface.
+    raw_creative = dict(creative) if isinstance(creative, dict) else {}
+    semantic = _apply_material_evidence_gate({**semantic, "durationSeconds": duration})
+    content = semantic.get("content", {})
+    gated_creative = semantic.get("creative", {}) if isinstance(semantic.get("creative"), dict) else {}
+    creative = raw_creative
+    for field in ("hookSourceStatus", "hookAssemblyType", "tier", "bodyFormat", "narrationCoverage", "format"):
+        if field in gated_creative:
+            creative[field] = gated_creative[field]
+    semantic = {**semantic, "creative": creative}
+    value = semantic.get("value", {})
+    review = semantic.get("review", {})
     creative, review = _normalize_material_format(creative if isinstance(creative, dict) else {}, review if isinstance(review, dict) else {})
+    content = _enrich_material_dialogue_entities(content if isinstance(content, dict) else {}, transcript, ocr)
+    semantic = {**semantic, "content": content}
+    creative = _sanitize_material_story_candidates(creative, transcript, ocr, duration)
     creative = _enrich_material_hooks(creative, transcript, shots, duration)
+    hooks = [item for item in creative.get("hooks", []) if isinstance(item, dict)] if isinstance(creative.get("hooks"), list) else []
+    if hooks and isinstance(hooks[0].get("start"), (int, float)) and isinstance(hooks[0].get("end"), (int, float)):
+        interval = {
+            "start": max(0.0, round(float(hooks[0]["start"]) - .6, 3)),
+            "end": min(duration, round(float(hooks[0]["end"]) + .6, 3)),
+        }
+        visual_verification = _material_visual_event_verification(payload, frames, interval, cache_dir, report)
+        observations = [dict(item) for item in content.get("observations", []) if isinstance(item, dict)] if isinstance(content.get("observations"), list) else []
+        existing_ids = {str(item.get("factId") or "") for item in observations}
+        for index, event in enumerate(visual_verification.get("events", []), start=1):
+            fact_id = f"visual-event-{str(event.get('id') or index)}"
+            if fact_id in existing_ids:
+                continue
+            frame_times = event.get("validatedFrameTimes", [])
+            evidence = [{
+                "source": "frame",
+                "timecode": {"start": float(timecode), "end": float(timecode)},
+                "confidence": float(event.get("confidence", 0) or 0),
+                "text": str(event.get("stateObserved") or event.get("actionObserved") or event.get("reactionObserved") or "可见状态"),
+            } for timecode in frame_times]
+            observations.append({
+                "factId": fact_id,
+                "start": float(event.get("start", frame_times[0] if frame_times else interval["start"])),
+                "end": float(event.get("end", frame_times[-1] if frame_times else interval["end"])),
+                "actorObserved": str(event.get("actorCandidate") or "可见角色（身份待核）"),
+                "actionObserved": str(event.get("actionObserved") or event.get("stateObserved") or event.get("reactionObserved") or ""),
+                "resultObserved": str(event.get("resultObserved") or ""),
+                "confidence": float(event.get("confidence", 0) or 0), "evidence": evidence, "verification": "verified",
+            })
+        content = {**content, "observations": observations}
+        semantic = {**semantic, "content": content, "visualEventVerification": visual_verification}
+        review = {**review, "status": "needs_review", "reviewRequired": True}
     expected_hook_format = _verified_claim_value(creative.get("format")) in {"外搭钩子＋本剧正片", "正片剧集解说"}
     if expected_hook_format and not creative.get("hooks"):
         review_items = review.get("items") if isinstance(review.get("items"), list) else []
@@ -3898,7 +4767,11 @@ def analyze_material_v2(path: Path, workspace: Path, on_progress: Callable[[int,
                 "confidence": 1,
             }],
         }
-    semantic = _apply_material_evidence_gate({**semantic, "creative": creative, "review": review})
+    semantic = _apply_material_evidence_gate({**semantic, "creative": creative, "review": review, "durationSeconds": duration})
+    # The evidence gate may correctly downgrade a provider summary whose fact
+    # lineage is dangling. Rebuild once from the observations that survived
+    # that gate before enforcing the terminal summary requirement.
+    semantic = _rebuild_material_summary_from_verified_observations(semantic)
     content = semantic.get("content", {})
     creative = semantic.get("creative", {})
     value = semantic.get("value", {})
@@ -3960,7 +4833,7 @@ def analyze_material_v2(path: Path, workspace: Path, on_progress: Callable[[int,
     transitions = creative.get("transitions", []) if isinstance(creative.get("transitions"), list) else []
     inspirations = value.get("inspirations", []) if isinstance(value.get("inspirations"), list) else []
     timeline = creative.get("timeline", []) if isinstance(creative.get("timeline"), list) else []
-    confidence = round(100 * max(_claim_confidences(semantic) or [0.0]))
+    confidence = _material_publish_confidence(semantic)
     detected_language = _material_language_name(asr_engine, transcript, ocr)
     material_fields = {
         "analysis": "分析完成", "analysisStatus": "succeeded",
@@ -3975,6 +4848,7 @@ def analyze_material_v2(path: Path, workspace: Path, on_progress: Callable[[int,
         "structure": [item for item in timeline if isinstance(item, dict) and item.get("verification") == "verified"],
         "review": "待人工复核" if review.get("status") != "ready" else "可进入人工确认",
         "confidence": confidence,
+        "productionStatus": "eligible" if semantic.get("qualityGate", {}).get("passed") is True else "blocked",
     }
     evidence_frames = [{key: value for key, value in frame.items() if key != "path"} for frame in frames]
     result = {
@@ -3985,7 +4859,8 @@ def analyze_material_v2(path: Path, workspace: Path, on_progress: Callable[[int,
         # semantic copy is retained for backwards-compatible inspection, but
         # queue audits and the frontend consume this stable top-level field.
         "qualityGate": semantic.get("qualityGate", {"passed": False, "status": "review_required", "reasons": ["缺少素材证据质量门禁"]}),
-        "sourceAttribution": {"status": "not_required", "matches": []},
+        "sourceAttribution": {"status": "pending", "matches": []},
+        "visualEventVerification": semantic.get("visualEventVerification", {"events": [], "rejectedEvents": [], "speakerLinks": [], "boundaryAssessment": {}, "openQuestions": ["未形成视觉事件核验对象"], "reviewRequired": True}),
         "semanticSegments": semantic_segments,
         "semantic": semantic,
         "materialFields": material_fields,
@@ -4127,8 +5002,6 @@ def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> Analy
     drama = payload.get("drama") if isinstance(payload.get("drama"), dict) else {}
     episodes = payload.get("episodes") if isinstance(payload.get("episodes"), list) else []
     scope = {int(value) for value in (payload.get("episode_scope") or []) if str(value).isdigit()}
-    if hook.get("source_class") != "external_material":
-        raise AnalysisFailed("external-hook matching requires an external_material hook asset")
     if hook.get("boundary_status") != "verified":
         raise AnalysisFailed("hook asset boundaries must be verified before story matching")
     if not episodes or not scope:
@@ -4611,7 +5484,94 @@ def _merge_episode_detail_results(parts: list[dict[str, Any]]) -> dict[str, Any]
     return merged
 
 
-def analyze_detail(episodes: list[AnalysisEnvelope], visual_frames: list[dict[str, Any]] | None = None, on_progress: Callable[[int, str], None] | None = None) -> AnalysisEnvelope:
+def _bounded_detail_frames(frames: list[dict[str, Any]], max_frames: int, max_base64_chars: int) -> list[dict[str, Any]]:
+    """Evenly retain visual evidence while enforcing a hard request-size budget."""
+    candidates = [frame for frame in frames if isinstance(frame, dict)]
+    if len(candidates) > max_frames:
+        if max_frames == 1:
+            candidates = [candidates[len(candidates) // 2]]
+        else:
+            candidates = [candidates[round(index * (len(candidates) - 1) / (max_frames - 1))] for index in range(max_frames)]
+    while len(candidates) > 1 and sum(len(str(frame.get("base64") or "")) for frame in candidates) > max_base64_chars:
+        target = len(candidates) - 1
+        if target == 1:
+            candidates = [candidates[len(candidates) // 2]]
+        else:
+            candidates = [candidates[round(index * (len(candidates) - 1) / (target - 1))] for index in range(target)]
+    return candidates
+
+
+def _drama_claim_safety_issue(claim: dict[str, Any]) -> str | None:
+    """Reject relationship/causal claims contradicted or not entailed by quotes."""
+    evidence = [item for item in (claim.get("evidence") or []) if isinstance(item, dict)]
+    source = " ".join(str(item.get("sourceText") or "") for item in evidence).strip()
+    conclusion = " ".join(str(claim.get(key) or "") for key in ("description", "summary", "type", "value"))
+    if re.search(r"\b(no|not|never|isn't|wasn't|aren't|weren't|don't|doesn't|didn't|can't|cannot|won't|wouldn't)\b", source, re.IGNORECASE) and not re.search(r"不|未|没有|并非|否认|排除|拒绝|无法|不能", conclusion):
+        return "结论未保留原始证据中的否定极性"
+    if re.search(r"母亲|母子|母女|父亲|父子|父女|亲生|儿子|女儿|血缘|父母", conclusion):
+        kinship_source = re.search(r"\b(mother|father|mom|dad|son|daughter|child|parent)\b", source, re.IGNORECASE)
+        named_entities = {token for token in re.findall(r"\b[A-Z][a-z]{2,}\b", source) if token.casefold() not in {"she", "he", "his", "her", "they", "the", "this", "that"}}
+        if not kinship_source or len(named_entities) < 2:
+            return "血缘/亲属结论缺少同时指向双方身份的明确引文"
+    return None
+
+
+def _sanitize_drama_detail_semantics(semantic: dict[str, Any], episode_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Keep unsafe inferences auditable without publishing them as facts."""
+    no_audio_episodes = {int(row["episode"]) for row in episode_rows if not (row.get("transcript") or [])}
+    rejected_relationships: list[dict[str, Any]] = []
+    published_relationships: list[dict[str, Any]] = []
+    for relationship in semantic.get("relationships") or []:
+        if not isinstance(relationship, dict):
+            continue
+        episodes = {int(value) for value in (relationship.get("episodes") or []) if isinstance(value, (int, float))}
+        issue = _drama_claim_safety_issue(relationship)
+        if episodes & no_audio_episodes:
+            issue = issue or "无音轨集不能仅凭静态画面确认人物关系或意图"
+        if relationship.get("verification") != "verified":
+            issue = issue or "关系缺少可验证的时间码证据"
+        if issue:
+            rejected_relationships.append({**relationship, "verification": "unverified", "reviewRequired": True, "validationReason": issue})
+        else:
+            published_relationships.append(relationship)
+    semantic["relationships"] = published_relationships
+    semantic["relationshipCandidates"] = rejected_relationships
+
+    rejected_characters: list[dict[str, Any]] = []
+    published_characters: list[dict[str, Any]] = []
+    for character in semantic.get("characters") or []:
+        if not isinstance(character, dict):
+            continue
+        evidence = [item for item in (character.get("evidence") or []) if isinstance(item, dict)]
+        frame_only_no_audio = bool(evidence) and all(item.get("source") == "frame" and int(item.get("episode") or 0) in no_audio_episodes for item in evidence)
+        if frame_only_no_audio or character.get("verification") != "verified":
+            rejected_characters.append({**character, "verification": "unverified", "reviewRequired": True, "validationReason": "人物身份缺少可验证的对白/OCR归属证据"})
+        else:
+            published_characters.append(character)
+    semantic["characters"] = published_characters
+    semantic["characterCandidates"] = rejected_characters
+    semantic["reviewRequired"] = bool(rejected_relationships or rejected_characters or semantic.get("reviewRequired"))
+    return semantic
+
+
+def _episode_owned_core_facts(facts: Any, episode: int) -> list[dict[str, Any]]:
+    """Reject local plot facts whose evidence belongs to another episode."""
+    return [
+        fact for fact in (facts or [])
+        if isinstance(fact, dict)
+        and isinstance(fact.get("evidence"), list)
+        and bool(fact["evidence"])
+        and all(isinstance(item, dict) and int(item.get("episode") or 0) == episode for item in fact["evidence"])
+    ]
+
+
+def analyze_detail(
+    episodes: list[AnalysisEnvelope],
+    visual_frames: list[dict[str, Any]] | None = None,
+    on_progress: Callable[[int, str], None] | None = None,
+    recall_intervals: list[dict[str, Any]] | None = None,
+    cache_dir: Path | None = None,
+) -> AnalysisEnvelope:
     if not episodes or any(item.tier != "coarse" or item.status != "succeeded" or not item.result for item in episodes):
         raise AnalysisFailed("Detail analysis requires succeeded coarse results for every episode")
     episode_rows: list[dict[str, Any]] = []
@@ -4628,62 +5588,73 @@ def analyze_detail(episodes: list[AnalysisEnvelope], visual_frames: list[dict[st
             raise AnalysisFailed("Coarse result duration must be positive")
         durations[episode_number] = episode_duration
         episode_rows.append({"episode": episode_number, "durationSeconds": episode_duration, "transcript": result.get("transcript") or result.get("words") or [], "ocr": result.get("ocr") or result.get("subtitles") or []})
-    payload = {"episodes": episode_rows, "frames": visual_frames or [], "scope": "free episodes only", "requirements": ["complete dialogue with speaker aliases", "episode-isolated plot and evidence", "emotion curve", "use supplied visual frames together with transcript and OCR to recall dialogue, action, reaction, reveal, threat, relationship-shift, cliffhanger and payoff triggers", "never infer an observed action or visual impact from dialogue alone", "produce evidence-backed contentTags using only the fixed dimensions genre, theme, character, relationship, emotion, conflict, plot, scene, audience, and adUse", "each content tag contains dimension, value, confidence, episodes, and evidence", "return zero to two distinct evidence-supported highlightCandidates per supplied episode; zero is valid", "never create filler candidates merely to reach a quota", "a candidate is a complete 12-60 second event with cause, trigger and reaction, not an isolated quote", "require audienceQuestion and narrativePromise for every candidate", "never return a candidate outside the supplied episode", "cite evidence with timecode and confidence", "mark unobserved dialogue/actions/shots unverified"]}
+    payload = {"episodes": episode_rows, "frames": visual_frames or [], "scope": "free episodes only", "requirements": ["complete dialogue with speaker aliases", "episode-isolated plot and evidence", "emotion curve", "use supplied visual frames together with transcript and OCR to recall dialogue, action, reaction, reveal, threat, relationship-shift, cliffhanger and payoff triggers", "selectionReason=endpoint_context and a shared sequenceId identify temporal evidence that must be evaluated as a sequence, not isolated stills", "never infer an observed action or visual impact from dialogue alone", "produce evidence-backed contentTags using only the fixed dimensions genre, theme, character, relationship, emotion, conflict, plot, scene, audience, and adUse", "each content tag contains dimension, value, confidence, episodes, and evidence", "return zero to five distinct evidence-supported highlightCandidates per supplied episode; zero is valid", "never create filler candidates merely to reach a quota", "a candidate is a complete 12-60 second event with cause, trigger and reaction, not an isolated quote", "require audienceQuestion and narrativePromise for every candidate", "never return a candidate outside the supplied episode", "cite evidence with timecode and confidence", "mark unobserved dialogue/actions/shots unverified"]}
     # Analyze one episode per request. This prevents a high-confidence fact from
     # episode N being copied into episode N-1 while still allowing deterministic
     # character/tag merging after all episode-local facts have owners.
-    semantic_parts: list[dict[str, Any]] = []
+    semantic_parts_by_episode: dict[int, dict[str, Any]] = {}
+    chunk_diagnostics: list[dict[str, Any]] = []
     total_episode_rows = max(1, len(episode_rows))
 
-    def analyze_episode_row(episode_row: dict[str, Any]) -> dict[str, Any]:
+    def analyze_episode_row(episode_row: dict[str, Any]) -> tuple[int, dict[str, Any], dict[str, Any]]:
         episode_number = int(episode_row["episode"])
-        episode_payload = {**payload, "episodes": [episode_row], "frames": [frame for frame in (visual_frames or []) if int(frame.get("episode") or 0) == episode_number]}
-        part = _semantic_request("detail-drama-analysis", episode_payload)
-        if not isinstance(part.get("highlightCandidates"), list):
-            repaired = _semantic_request("repair-detail-output-contract", {"resultToRepair": part, "instruction": f"Preserve only episode {episode_number} facts. Add all required arrays. Never move facts from another episode."})
-            part = {**part, **repaired}
-        # Fail closed on provider ownership mistakes.
-        part["episodePlots"] = [item for item in (part.get("episodePlots") or []) if isinstance(item, dict) and item.get("episode") == episode_number]
-        part["highlightCandidates"] = [item for item in (part.get("highlightCandidates") or []) if isinstance(item, dict) and item.get("episode") == episode_number]
-        return part
+        episode_frames = [frame for frame in (visual_frames or []) if int(frame.get("episode") or 0) == episode_number]
+        episode_payload = {**payload, "episodes": [episode_row], "frames": _bounded_detail_frames(episode_frames, 8, 80_000)}
+
+        def request_episode(request_diagnostics: dict[str, Any]) -> dict[str, Any]:
+            part = _semantic_request("detail-drama-analysis", episode_payload, diagnostics=request_diagnostics)
+            if not isinstance(part.get("highlightCandidates"), list):
+                repaired = _semantic_request(
+                    "repair-detail-output-contract",
+                    {"resultToRepair": part, "instruction": f"Preserve only episode {episode_number} facts. Add all required arrays. Never move facts from another episode."},
+                    diagnostics=request_diagnostics,
+                )
+                part = {**part, **repaired}
+            # Persist only fail-closed episode-owned output. A future cache hit
+            # must never revive provider leakage from an adjacent episode.
+            part["episodePlots"] = [item for item in (part.get("episodePlots") or []) if isinstance(item, dict) and item.get("episode") == episode_number]
+            part["highlightCandidates"] = [item for item in (part.get("highlightCandidates") or []) if isinstance(item, dict) and item.get("episode") == episode_number]
+            return part
+
+        part, diagnostics = _run_detail_checkpoint(
+            "detail-drama-analysis",
+            episode_payload,
+            cache_dir,
+            f"episode-{episode_number:03d}",
+            request_episode,
+        )
+        diagnostics.update({"phase": "episode_detail", "episode": episode_number})
+        return episode_number, part, diagnostics
 
     # Episode ownership is isolated, so these provider requests are safely
     # parallelizable. A small bounded pool cuts wall time without flooding the
     # multimodal endpoint or increasing per-request token volume.
-    detail_workers = max(1, min(total_episode_rows, int(os.getenv("LUMINA_DETAIL_SEMANTIC_WORKERS", "2"))))
+    detail_workers = max(1, min(total_episode_rows, int(os.getenv("LUMINA_DETAIL_SEMANTIC_WORKERS", "4"))))
     completed_rows = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=detail_workers) as executor:
         futures = {executor.submit(analyze_episode_row, row): int(row["episode"]) for row in episode_rows}
         for future in concurrent.futures.as_completed(futures):
             episode_number = futures[future]
-            semantic_parts.append(future.result())
+            _completed_episode, part, diagnostics = future.result()
+            semantic_parts_by_episode[_completed_episode] = part
+            chunk_diagnostics.append(diagnostics)
             completed_rows += 1
             if on_progress:
                 on_progress(40 + round(completed_rows / total_episode_rows * 42), f"完成第 {episode_number} 集证据归属校验（{completed_rows}/{total_episode_rows}）")
+    semantic_parts = [semantic_parts_by_episode[episode] for episode in sorted(semantic_parts_by_episode)]
     semantic = _merge_episode_detail_results(semantic_parts)
     if on_progress:
         on_progress(83, "统一跨集人物身份并校正因果故事线")
     reconciliation_payload = {
-        "episodes": episode_rows,
-        # Rebuild continuity from primary evidence.  Feeding the isolated draft
-        # back here anchored the continuity model to confident episode-local
-        # mistakes (for example a rhetorical father comparison becoming the
-        # present spouse's identity).
-        "frames": visual_frames or [],
+        "episodeScope": [{"episode": number, "durationSeconds": durations[number]} for number in sorted(durations)],
+        # Cross-episode work is intentionally downstream of durable episode
+        # checkpoints. It never replays raw transcripts/frames and therefore
+        # cannot silently recompute successful chunks after a later failure.
+        "episodeCheckpoints": semantic_parts,
         "isolatedDraft": {field: semantic.get(field, []) for field in ("characters", "relationships", "episodePlots")},
-        "episodeBoundaryAnchors": [
-            {
-                "episode": row["episode"],
-                "openingLines": [item.get("text") for item in (row.get("transcript") or [])[:3] if isinstance(item, dict)],
-                "closingLines": [item.get("text") for item in (row.get("transcript") or [])[-3:] if isinstance(item, dict)],
-            }
-            for row in episode_rows
-        ],
         "requirements": [
             "resolve canonical recurring characters and aliases across all episodes",
-            "correct speaker, subject, object and relationship ownership using transcript and frame evidence",
-            "return one evidence-backed episode plot per supplied episode",
-            "return a causal whole-drama storyOverview with character arcs, resolved payoffs and unresolved questions",
+            "correct speaker, subject, object and relationship ownership using only timecoded evidence inside episodeCheckpoints",
             "never move an event to a different episode and never invent missing actions",
             "a question or hypothetical such as do you expect me to kneel is not an observed action; negation, refusal and rhetorical questions must never be rewritten as completed actions",
             "a comparison such as you are just like my father keeps you and father as different people; a remembered parent never replaces the present spouse",
@@ -4692,8 +5663,8 @@ def analyze_detail(episodes: list[AnalysisEnvelope], visual_frames: list[dict[st
             "copy concrete object and medical facts faithfully: allergy is not poisoning, a locket is not a watch, and a hearing aid is not generic medical expense",
             "include explicit reveals and deadlines that alter the relationship, including who actually performed a past rescue, who took credit, and any stated divorce countdown",
             "do not invent rain, street injury, locations, physical actions or outcomes without transcript or frame evidence",
-            "episodeBoundaryAnchors are hard ownership boundaries; a line or event belongs only to the episode whose transcript contains it",
-            "use isolatedDraft episode plots as ownership hints, correct unsupported wording, and never move their supported facts to a neighboring episode",
+            "checkpoint episode ownership is a hard boundary; never move supported facts to a neighboring episode",
+            "use isolatedDraft only as a merge hint; checkpoint evidence remains authoritative",
         ],
     }
     if len(episode_rows) > 1:
@@ -4752,26 +5723,51 @@ def analyze_detail(episodes: list[AnalysisEnvelope], visual_frames: list[dict[st
         canonical_characters = semantic.get("characters") or []
         grounded_plots: list[dict[str, Any]] = []
 
-        def ground_episode(index: int, row: dict[str, Any]) -> dict[str, Any]:
+        def ground_episode(index: int, row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
             episode_number = int(row["episode"])
             prior = episode_rows[index - 1] if index > 0 else None
             following = episode_rows[index + 1] if index + 1 < len(episode_rows) else None
-            grounded = _semantic_request("ground-drama-episode", {
+            ground_payload = {
                 "episode": row,
-                "frames": [frame for frame in (visual_frames or []) if int(frame.get("episode") or 0) == episode_number],
+                "frames": _bounded_detail_frames([frame for frame in (visual_frames or []) if int(frame.get("episode") or 0) == episode_number], 8, 80_000),
                 "canonicalCharacters": canonical_characters,
                 "canonicalRelationships": semantic.get("relationships") or [],
                 "continuityContext": {
                     "previousClosingLines": [item.get("text") for item in ((prior or {}).get("transcript") or [])[-3:] if isinstance(item, dict)],
                     "nextOpeningLines": [item.get("text") for item in ((following or {}).get("transcript") or [])[:3] if isinstance(item, dict)],
                 },
-            })
+            }
+            grounded, diagnostics = _run_detail_checkpoint(
+                "ground-drama-episode",
+                ground_payload,
+                cache_dir,
+                f"ground-episode-{episode_number:03d}",
+                lambda request_diagnostics: _semantic_request("ground-drama-episode", ground_payload, diagnostics=request_diagnostics),
+            )
+            diagnostics.update({"phase": "episode_grounding", "episode": episode_number})
             plot = grounded.get("episodePlot") if isinstance(grounded.get("episodePlot"), dict) else None
             if not plot or int(plot.get("episode") or 0) != episode_number:
                 raise AnalysisFailed(f"Grounded episode repair returned the wrong owner for episode {episode_number}")
             plot = _validate_semantic_claims(plot, {episode_number: durations[episode_number]})
+            if not (row.get("transcript") or []):
+                ocr_rows = [item for item in (row.get("ocr") or []) if isinstance(item, dict) and str(item.get("text") or "").strip()]
+                visible_text = "；".join(str(item.get("text") or "").strip() for item in ocr_rows[:3])
+                plot = {
+                    "episode": episode_number,
+                    "summary": f"本集无音轨；现有画面与OCR不足以验证人物关系、预言、意图、情绪或因果。{f'可见OCR：{visible_text}。' if visible_text else ''}需人工复核。",
+                    "carryIn": "无音轨，待人工复核",
+                    "cause": "未验证",
+                    "action": "仅保留可观察画面，不推断意图",
+                    "result": "未验证",
+                    "relationshipChange": "未验证",
+                    "carryOut": "待人工复核",
+                    "coreFacts": [],
+                    "verification": "unverified",
+                    "reviewRequired": True,
+                }
+                return plot, diagnostics
             facts = []
-            for fact in plot.get("coreFacts") or []:
+            for fact in _episode_owned_core_facts(plot.get("coreFacts"), episode_number):
                 if not isinstance(fact, dict):
                     continue
                 evidence = [item for item in (fact.get("evidence") or []) if isinstance(item, dict)]
@@ -4780,7 +5776,8 @@ def analyze_detail(episodes: list[AnalysisEnvelope], visual_frames: list[dict[st
                 # weather/injury outcome from it.  Such evidence is malformed
                 # and cannot support a plot fact.
                 malformed_visual_only = bool(evidence) and all(item.get("source") == "frame" for item in evidence) and any(str(item.get("sourceText") or "").strip() for item in evidence)
-                if not malformed_visual_only:
+                safety_issue = _drama_claim_safety_issue(fact)
+                if not malformed_visual_only and not safety_issue:
                     facts.append(fact)
             transcript_rows = [item for item in (row.get("transcript") or []) if isinstance(item, dict)]
             transcript_source = " ".join(str(item.get("text") or "") for item in transcript_rows).lower()
@@ -4822,12 +5819,25 @@ def analyze_detail(episodes: list[AnalysisEnvelope], visual_frames: list[dict[st
                 action_candidates = [text for text in descriptions if any(word in text for word in ("决定", "拒绝", "揭露", "接下", "强迫", "宣布", "归还", "拍摄", "离开"))]
                 plot["action"] = action_candidates[0] if action_candidates else descriptions[min(1, len(descriptions) - 1)]
                 plot["result"] = str(facts[-1].get("description") or plot.get("result") or "").strip()
-            return plot
+                # These fields are consumable by matching. Rebuild them only
+                # from episode-owned facts instead of retaining unsupported
+                # provider prose (including adjacent-episode contamination).
+                plot["carryOut"] = plot["result"]
+                relationship_facts = [text for text in descriptions if any(word in text for word in ("关系", "信任", "背叛", "离婚", "拒绝", "合作", "冲突"))]
+                plot["relationshipChange"] = relationship_facts[-1] if relationship_facts else "未验证"
+            else:
+                plot["summary"] = "本集未提取到可验证的剧情事实，需人工复核。"
+                plot["cause"] = plot["action"] = plot["result"] = plot["relationshipChange"] = plot["carryOut"] = "未验证"
+                plot["verification"] = "unverified"
+                plot["reviewRequired"] = True
+            return plot, diagnostics
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=detail_workers) as executor:
             futures = [executor.submit(ground_episode, index, row) for index, row in enumerate(episode_rows)]
             for future in futures:
-                grounded_plots.append(future.result())
+                grounded_plot, diagnostics = future.result()
+                grounded_plots.append(grounded_plot)
+                chunk_diagnostics.append(diagnostics)
         grounded_plots.sort(key=lambda item: int(item["episode"]))
         semantic["episodePlots"] = grounded_plots
         overview_result = _semantic_request("synthesize-drama-overview", {
@@ -4854,9 +5864,12 @@ def analyze_detail(episodes: list[AnalysisEnvelope], visual_frames: list[dict[st
     # that looked precise but had no stopping power.
     raw_candidates = initial_candidates
     semantic = _validate_semantic_claims(semantic, durations)
+    semantic = _sanitize_drama_detail_semantics(semantic, episode_rows)
     candidates = _precision_candidates(raw_candidates, durations, transcripts)
     # PocketBase consumes highlightCandidates; precisionCandidates is a stable
     # semantic alias for downstream clients. Both reference the same validated list.
+    recall_probes = _detail_recall_probes(visual_frames or [], durations, candidates, recall_intervals)
+    candidates = [*candidates, *recall_probes]
     semantic["highlightCandidates"] = candidates
     semantic["precisionCandidates"] = candidates
     story_graph = _reconstruct_storyline(semantic, payload["episodes"])
@@ -4867,7 +5880,130 @@ def analyze_detail(episodes: list[AnalysisEnvelope], visual_frames: list[dict[st
         on_progress(86, "合并人物、标签与单集故事结构")
     if story_graph.get("reviewRequired"):
         semantic["reviewRequired"] = True
-    return AnalysisEnvelope("1.0.0", str(uuid.uuid4()), "detail", "succeeded", {"episodes": sorted(durations)}, {"semantic": os.getenv("LUMINA_SEMANTIC_MODEL", "not-required")}, semantic)
+    existing_diagnostics = dict(semantic.get("diagnostics") or {})
+    existing_diagnostics["detailCheckpoints"] = {
+        "promptVersion": _DETAIL_CHECKPOINT_PROMPT_VERSION,
+        "chunks": sorted(chunk_diagnostics, key=lambda item: (str(item.get("phase") or ""), int(item.get("episode") or 0))),
+    }
+    semantic["diagnostics"] = existing_diagnostics
+    return AnalysisEnvelope("1.0.0", str(uuid.uuid4()), "detail", "succeeded", {"episodes": sorted(durations)}, {"semantic": os.getenv("LUMINA_SEMANTIC_MODEL", "not-required"), "recallSemantic": os.getenv("LUMINA_SEMANTIC_RECALL_MODEL", os.getenv("LUMINA_SEMANTIC_MODEL", "not-required")), "detailChunkWorkers": detail_workers, "detailPromptVersion": _DETAIL_CHECKPOINT_PROMPT_VERSION}, semantic)
+
+
+def analyze_detail_reconcile(
+    episode_checkpoints: list[dict[str, Any]],
+    on_progress: Callable[[int, str], None] | None = None,
+) -> AnalysisEnvelope:
+    """Fan-in persisted episode outputs without accepting raw media evidence.
+
+    This is intentionally separate from ``analyze_detail``: the queue parent is
+    allowed to see structured child checkpoints only, which makes accidental
+    media downloads or successful-episode recomputation impossible.
+    """
+    parts: list[dict[str, Any]] = []
+    durations: dict[int, float] = {}
+    checkpoint_inputs: list[dict[str, Any]] = []
+    for wrapper in episode_checkpoints:
+        if not isinstance(wrapper, dict):
+            continue
+        raw = wrapper.get("result") or wrapper.get("checkpoint") or wrapper
+        if not isinstance(raw, dict):
+            continue
+        envelope = raw
+        root = envelope.get("result") if isinstance(envelope.get("result"), dict) else envelope
+        source = envelope.get("source") if isinstance(envelope.get("source"), dict) else {}
+        checkpoint_meta = envelope.get("checkpoint") if isinstance(envelope.get("checkpoint"), dict) else {}
+        episode_number = int(wrapper.get("episode_number") or checkpoint_meta.get("episode") or source.get("episode") or 0)
+        source_episodes = source.get("episodes") if isinstance(source.get("episodes"), list) else []
+        if episode_number <= 0 and len(source_episodes) == 1:
+            episode_number = int(source_episodes[0])
+        plot = next((item for item in (root.get("episodePlots") or []) if isinstance(item, dict) and int(item.get("episode") or 0) == episode_number), None)
+        duration = float((plot or {}).get("durationSeconds") or checkpoint_meta.get("durationSeconds") or source.get("durationSeconds") or root.get("durationSeconds") or 0)
+        if duration <= 0:
+            candidates = [item for item in (root.get("highlightCandidates") or []) if isinstance(item, dict) and int(item.get("episode") or 0) == episode_number]
+            duration = max([float(item.get("end") or 0) for item in candidates] + [1.0])
+        if episode_number <= 0:
+            raise AnalysisFailed("Detail checkpoint is missing episode ownership")
+        durations[episode_number] = duration
+        owned = {
+            "characters": list(root.get("characters") or []),
+            "relationships": list(root.get("relationships") or []),
+            "episodePlots": [item for item in (root.get("episodePlots") or []) if isinstance(item, dict) and int(item.get("episode") or 0) == episode_number],
+            "emotionCurve": [item for item in (root.get("emotionCurve") or []) if not isinstance(item, dict) or int(item.get("episode") or episode_number) == episode_number],
+            "contentTags": list(root.get("contentTags") or []),
+            "highlightCandidates": [item for item in (root.get("highlightCandidates") or []) if isinstance(item, dict) and int(item.get("episode") or 0) == episode_number],
+        }
+        parts.append(owned)
+        checkpoint_inputs.append({"episode": episode_number, "durationSeconds": duration, "checkpoint": owned})
+    if not parts:
+        raise AnalysisFailed("Detail reconciliation requires succeeded episode checkpoints")
+    if len(parts) != len(durations):
+        raise AnalysisFailed("Detail reconciliation received duplicate episode checkpoints")
+    checkpoint_inputs.sort(key=lambda item: item["episode"])
+    semantic = _merge_episode_detail_results(parts)
+    diagnostics: list[dict[str, Any]] = []
+
+    def max_request(task: str, payload: dict[str, Any]) -> dict[str, Any]:
+        request_diagnostics: dict[str, Any] = {"model": _semantic_model_for_task(task), "requestCount": 0, "wallClockSeconds": 0.0}
+        started = time.monotonic()
+        result = _semantic_request(task, payload, diagnostics=request_diagnostics)
+        diagnostics.append({"phase": task, "model": request_diagnostics.get("model"), "requestCount": request_diagnostics.get("requestCount", 0), "cacheHit": False, "wallClockSeconds": round(time.monotonic() - started, 3)})
+        return result
+
+    if on_progress:
+        on_progress(91, "使用已缓存分集结果统一人物与因果")
+    reconciled = _validate_semantic_claims(max_request("reconcile-drama-storyline", {
+        "episodeCheckpoints": checkpoint_inputs,
+        "requirements": ["only use checkpoint evidence", "preserve episode ownership", "resolve aliases and cross-episode relationships", "never invent facts"],
+    }), durations)
+    for field in ("characters", "relationships", "emotionCurve", "contentTags"):
+        if isinstance(reconciled.get(field), list):
+            semantic[field] = reconciled[field]
+    grounded_plots: list[dict[str, Any]] = []
+    for item in checkpoint_inputs:
+        grounded = max_request("ground-drama-episode", {
+            "episodeCheckpoint": item,
+            "canonicalCharacters": semantic.get("characters") or [],
+            "canonicalRelationships": semantic.get("relationships") or [],
+            "requirements": ["ground only against this persisted checkpoint", "preserve evidence timecodes and episode ownership"],
+        })
+        plot = grounded.get("episodePlot") if isinstance(grounded.get("episodePlot"), dict) else None
+        if plot is None:
+            plot = next(iter(item["checkpoint"].get("episodePlots") or []), {"episode": item["episode"], "summary": "", "coreEvents": []})
+        plot["episode"] = item["episode"]
+        grounded_plots.append(plot)
+    grounded_plots.sort(key=lambda item: int(item.get("episode") or 0))
+    semantic["episodePlots"] = grounded_plots
+    overview = max_request("synthesize-drama-overview", {
+        "canonicalCharacters": semantic.get("characters") or [],
+        "relationships": semantic.get("relationships") or [],
+        "groundedEpisodePlots": grounded_plots,
+        "requirements": ["use only supplied grounded checkpoint facts", "do not invent missing connective events"],
+    })
+    if not isinstance(overview.get("storyOverview"), dict):
+        raise AnalysisFailed("Checkpoint reconciliation is missing storyOverview")
+    semantic["storyOverview"] = overview["storyOverview"]
+    episode_rows = [{"episode": episode, "durationSeconds": duration, "transcript": [], "ocr": []} for episode, duration in sorted(durations.items())]
+    semantic = _validate_semantic_claims(semantic, durations)
+    candidates = _precision_candidates(semantic.get("highlightCandidates") or [], durations, {})
+    semantic["highlightCandidates"] = candidates
+    semantic["precisionCandidates"] = candidates
+    story_graph = _reconstruct_storyline(semantic, episode_rows)
+    semantic["storyGraph"] = story_graph; semantic["storyline"] = story_graph; semantic["entryPoints"] = candidates
+    semantic["diagnostics"] = {
+        **dict(semantic.get("diagnostics") or {}),
+        "detailReconcile": {
+            "checkpointOnly": True,
+            "checkpointCount": len(checkpoint_inputs),
+            "modelCalls": sum(int(item.get("requestCount") or 0) for item in diagnostics),
+            "cacheHits": len(checkpoint_inputs),
+            "cacheHitRate": 1.0,
+            "wallClockSeconds": round(sum(float(item.get("wallClockSeconds") or 0) for item in diagnostics), 3),
+            "phases": diagnostics,
+        },
+    }
+    if on_progress:
+        on_progress(99, "完成 checkpoint-only 跨集归一化")
+    return AnalysisEnvelope("1.0.0", str(uuid.uuid4()), "detail", "succeeded", {"episodes": sorted(durations), "checkpointOnly": True}, {"semantic": os.getenv("LUMINA_SEMANTIC_MODEL", "not-required"), "detailPromptVersion": _DETAIL_CHECKPOINT_PROMPT_VERSION}, semantic)
 
 
 def analyze_precision(path: Path, episode: int, start: float, end: float, coarse: AnalysisEnvelope, workspace: Path) -> AnalysisEnvelope:
@@ -4883,8 +6019,9 @@ def analyze_precision(path: Path, episode: int, start: float, end: float, coarse
         raise AnalysisFailed("Precision analysis requires the matching succeeded coarse result")
     interval = float(os.getenv("LUMINA_PRECISION_FRAME_INTERVAL", "0.5"))
     frames = extract_frames(path, workspace / f"precision-{episode}-{start:.3f}-{end:.3f}", interval, start, end)
+    shots = detect_shots(path, duration)
     transcript = [item for item in (coarse.result or {}).get("transcript", []) if item["end"] >= start and item["start"] <= end]
-    multimodal_frames = [{"episode": episode, "timecode": frame["timecode"], "mimeType": "image/jpeg", "base64": _semantic_frame_base64(frame["path"])} for frame in frames]
+    multimodal_frames = _bounded_precision_frames([{**frame, "episode": episode} for frame in frames])
     payload = {"episode": episode, "interval": {"start": start, "end": end}, "frames": multimodal_frames, "transcript": transcript, "requirements": ["shot semantics", "audio-visual rhythm", "continuity", "explainable highlight scores", "every claim cites timecode/confidence", "unseen dialogue/actions/shots are unverified", "return hookCandidates as every independently reusable naturally bounded 10-60 second subinterval inside this highlight; never force the minimum duration and one highlight may produce multiple hooks", "each hookCandidate must preserve complete cause, dialogue, action, reaction and shot boundaries and contain safeStart/safeEnd, hookType, themes, contentTags, characterRoles, relationships, conflict, emotion, narrativePromise, informationGap, spokenSummary, visualSummary, qualityScores and evidence"]}
     semantic = _validate_semantic_claims(_semantic_request("precision-highlight-analysis", payload), duration)
     analysis = semantic.get("highlightAnalysis") if isinstance(semantic.get("highlightAnalysis"), dict) else {}
@@ -4892,13 +6029,26 @@ def analyze_precision(path: Path, episode: int, start: float, end: float, coarse
     normalized_hooks = _normalize_precision_hooks(semantic.get("hookCandidates"), start, end, transcript)
     eligible_hooks: list[dict[str, Any]] = []
     for hook in normalized_hooks:
+        # Provider-declared safeStart/safeEnd are proposals only. Production
+        # status is derived from measured ASR and FFmpeg shot boundaries; no
+        # action-safe claim is upgraded without independent action evidence.
+        hook["safeStart"] = _material_hook_boundary(float(hook["start"]), transcript, shots, "start", frames=frames)
+        hook["safeEnd"] = _material_hook_boundary(float(hook["end"]), transcript, shots, "end", frames=frames)
+        boundary_verified = hook["safeStart"]["status"] == "verified" and hook["safeEnd"]["status"] == "verified"
+        hook["productionGate"] = {
+            "status": "verified" if boundary_verified else "unverified",
+            "dialogue": {"status": "verified" if all(boundary["dialogue"]["status"] != "crosses_dialogue" for boundary in (hook["safeStart"], hook["safeEnd"])) else "unverified"},
+            "action": {"status": "verified" if boundary_verified else "requires_review"},
+            "shot": {"status": "verified" if all(boundary["shot"]["status"] == "safe_point" for boundary in (hook["safeStart"], hook["safeEnd"])) else "unverified"},
+            "semantic": {"status": "unverified"},
+            "reviewRequired": not boundary_verified,
+        }
         scores = hook.get("qualityScores") if isinstance(hook.get("qualityScores"), dict) else {}
         audience_question = str(hook.get("audienceQuestion") or "").strip()
         narrative_promise = str(hook.get("narrativePromise") or "").strip()
         stop_power = _numeric_score(scores.get("stopPower"))
         clarity = _numeric_score(scores.get("coldAudienceClarity", scores.get("clarity")))
         usability = _numeric_score(scores.get("productionUsability", scores.get("reusability")))
-        boundary_verified = hook.get("safeStart", {}).get("status") == "verified" and hook.get("safeEnd", {}).get("status") == "verified"
         gate_passed = stop_power >= 90 and clarity >= 85 and usability >= 85 and bool(audience_question and narrative_promise)
         hook["hookPotentialScore"] = stop_power
         hook["productionUsabilityScore"] = usability

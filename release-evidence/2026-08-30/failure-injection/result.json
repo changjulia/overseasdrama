@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "lumina-release-failure-injection-v1",
+  "generatedAt": "2026-08-30T13:01:25.900676+00:00",
+  "command": [
+    "/Library/Frameworks/Python.framework/Versions/3.14/bin/python3",
+    "-m",
+    "unittest",
+    "-v",
+    "tests.failure_injection.test_release_failure_injection"
+  ],
+  "offline": true,
+  "productionMutation": false,
+  "exitCode": 0,
+  "passed": true,
+  "cases": [
+    {
+      "name": "test_corrupt_media_is_rejected (tests.failure_injection.test_release_failure_injection.ReleaseFailureInjection.test_corrupt_media_is_rejected)",
+      "status": "ok"
+    },
+    {
+      "name": "test_failed_qc_never_publishes_staged_or_partial_output (tests.failure_injection.test_release_failure_injection.ReleaseFailureInjection.test_failed_qc_never_publishes_staged_or_partial_output)",
+      "status": "ok"
+    },
+    {
+      "name": "test_missing_or_http_failed_source_is_not_silently_accepted (tests.failure_injection.test_release_failure_injection.ReleaseFailureInjection.test_missing_or_http_failed_source_is_not_silently_accepted)",
+      "status": "ok"
+    },
+    {
+      "name": "test_qc_rejects_duration_drift_and_codec_mismatch (tests.failure_injection.test_release_failure_injection.ReleaseFailureInjection.test_qc_rejects_duration_drift_and_codec_mismatch)",
+      "status": "ok"
+    },
+    {
+      "name": "test_transient_failure_retries_but_permanent_media_failure_does_not (tests.failure_injection.test_release_failure_injection.ReleaseFailureInjection.test_transient_failure_retries_but_permanent_media_failure_does_not)",
+      "status": "ok"
+    },
+    {
+      "name": "test_video_without_audio_is_rejected_by_qc (tests.failure_injection.test_release_failure_injection.ReleaseFailureInjection.test_video_without_audio_is_rejected_by_qc)",
+      "status": "ok"
+    }
+  ],
+  "rawOutput": "test_corrupt_media_is_rejected (tests.failure_injection.test_release_failure_injection.ReleaseFailureInjection.test_corrupt_media_is_rejected) ... ok\ntest_failed_qc_never_publishes_staged_or_partial_output (tests.failure_injection.test_release_failure_injection.ReleaseFailureInjection.test_failed_qc_never_publishes_staged_or_partial_output) ... 127.0.0.1 - - [30/Aug/2026 21:01:25] \"GET /api/files/episodes/ep1/episode.mp4 HTTP/1.1\" 200 -\nok\ntest_missing_or_http_failed_source_is_not_silently_accepted (tests.failure_injection.test_release_failure_injection.ReleaseFailureInjection.test_missing_or_http_failed_source_is_not_silently_accepted) ... 127.0.0.1 - - [30/Aug/2026 21:01:25] code 404, message File not found\n127.0.0.1 - - [30/Aug/2026 21:01:25] \"GET /absent.mp4 HTTP/1.1\" 404 -\nok\ntest_qc_rejects_duration_drift_and_codec_mismatch (tests.failure_injection.test_release_failure_injection.ReleaseFailureInjection.test_qc_rejects_duration_drift_and_codec_mismatch) ... ok\ntest_transient_failure_retries_but_permanent_media_failure_does_not (tests.failure_injection.test_release_failure_injection.ReleaseFailureInjection.test_transient_failure_retries_but_permanent_media_failure_does_not) ... ok\ntest_video_without_audio_is_rejected_by_qc (tests.failure_injection.test_release_failure_injection.ReleaseFailureInjection.test_video_without_audio_is_rejected_by_qc) ... ok\n\n----------------------------------------------------------------------\nRan 6 tests in 0.907s\n\nOK"
+}

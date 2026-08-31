@@ -1,0 +1,119 @@
+{
+  "caseId": "QS-MAT-LYCAN-13",
+  "comparisonVersion": "v3",
+  "golden": {
+    "version": "v1",
+    "status": "frozen_blind",
+    "sha256": "ca2c502069a14088d018beddc959555d9cd080f75f184933be2efe18da1e1c7d",
+    "unchanged": true
+  },
+  "system": {
+    "materialId": "zmzrljhnwl4uxw5",
+    "jobId": "30wqqaz0u3vav09",
+    "snapshotSha256": "d928235e6b6ad4cb4ea96152a453bd080ee62e1e3e7ffa4c7c6e2f2bd2d491f8",
+    "terminalStatus": "succeeded",
+    "progress": 100,
+    "terminalStage": "completed",
+    "finalResultPresent": true,
+    "semanticModel": "qwen-vl-max",
+    "semanticPromptVersion": "material-v2-20260830.1",
+    "hookCount": 1,
+    "materialConfidence": 49,
+    "productionStatus": "blocked",
+    "sourceAttribution": "pending",
+    "qualityGatePassed": false
+  },
+  "verdict": {
+    "engineeringExecution": "PASS",
+    "contentQuality": "IMPROVED_BUT_BELOW_GATE",
+    "productionSafety": "PASS_BLOCKING_BEHAVIOR",
+    "hardGate": "NO-GO",
+    "reason": "The target hook and safety downgrades now exist, but rejected/dangling facts still leak into consumable segments/transitions and the full story model remains too sparse for release."
+  },
+  "scores": {
+    "factAndEvidenceAccuracy": 55,
+    "highlightLocalization": 78,
+    "hookRetention": 72,
+    "storyCompleteness": 60,
+    "hookMainMatch": null,
+    "transitionNarration": null,
+    "engineeringReliability": 80,
+    "fullWeightedTotal": null,
+    "scopeNormalizedScore": 66,
+    "scopeNormalizedDenominatorWeight": 75,
+    "priorScopeNormalizedScores": {"v1": 22, "v2": 28}
+  },
+  "requestedChecks": [
+    {"check": "CTA removed from cliffhanger/highlight and archived separately", "result": "pass", "evidence": "timeline contains only 0–2.86 emotional_peak; CTA remains a distinct 29.367–34.504 content segment and is not a highlight."},
+    {"check": "15.1–23.46 reversal hook", "result": "pass_with_review_gate", "evidence": "hooks[0] and entryPoints[0] are identity_reveal_response, 15.1–23.46, with Killian title and At your command evidence; boundaryStatus unverified and reviewRequired=true."},
+    {"check": "completeness downgraded", "result": "pass_with_evidence_wording_residual", "evidence": "code/value/label are incomplete/不完整, verification unverified, reviewRequired=true; however evidence text still says the segment contains a complete flow."},
+    {"check": "confidence=49 and production blocked", "result": "pass", "evidence": "materialFields.confidence=49 and materialFields.productionStatus=blocked; production gate passed=false."},
+    {"check": "root source attribution pending", "result": "pass", "evidence": "sourceAttribution.status=pending and hookSourceStatus=UNKNOWN/unverified/reviewRequired."},
+    {"check": "zero-duration/dangling facts quarantined", "result": "partial", "evidence": "Unverified observations fact-001/fact-003 and identity inference fact-004 moved to review.rejectedClaims, but consumable content.segments still references fact-003/fact-004 and creative.transitions references fact-003/fact-006 with point timecodes."},
+    {"check": "positive assertions removed from failure reasons", "result": "pass", "evidence": "The prior three positive statements are absent; reasons now identify contract, evidence, lineage and completeness failures."}
+  ],
+  "hardGates": {
+    "result": "NO-GO",
+    "triggered": [
+      "rejected_or_dangling_facts_still_referenced_by_consumable_claims",
+      "critical_character_relationship_story_model_incomplete"
+    ],
+    "clearedSinceV2": [
+      "false_story_completeness",
+      "cta_misclassified_as_cliffhanger",
+      "degraded_fallback_published_with_false_confidence",
+      "source_attribution_root_status_inconsistent",
+      "positive_assertions_in_failure_reasons"
+    ]
+  },
+  "priorGapRetest": [
+    {"id": "QS-L13-P0-001", "status": "fixed", "evidence": "succeeded/100/completed with final result."},
+    {"id": "QS-L13-P0-002", "status": "partially_fixed_not_failure_injected", "evidence": "Current result is safely blocked and confidence-limited; atomic isolation under a new terminal failure is still not proven."},
+    {"id": "QS-L13-P0-003", "status": "fixed", "evidence": "Both hook source and root source attribution are unknown/pending rather than verified lineage."},
+    {"id": "QS-L13-P0-004", "status": "partially_fixed", "evidence": "Hook now captures title/At your command and correctly defers visual confirmation; characters/relationships and the full caller→kneel→reaction chain remain absent."},
+    {"id": "QS-L13-P0-005", "status": "mostly_fixed", "evidence": "Completeness is incomplete and the exact reversal hook exists; end/action/semantic boundaries remain unverified and require human approval."},
+    {"id": "QS-L13-P1-001", "status": "partially_fixed", "evidence": "Invalid observations/inference are quarantined, but dependent segments/transitions still reference rejected/dangling facts and point ranges."},
+    {"id": "QS-L13-P1-002", "status": "partially_fixed", "evidence": "Tier is TX; episode-splice format remains verified from generic full-duration dialogue/action."},
+    {"id": "QS-L13-P1-003", "status": "mostly_fixed", "evidence": "Model/prompt/runtime/retry lineage persists; immutable failed predecessor history remains absent."},
+    {"id": "QS-L13-P2-001", "status": "fixed", "evidence": "Review and gate reasons now contain only actionable failure conditions."},
+    {"id": "QS-L13-P0-006", "status": "fixed", "evidence": "Confidence is 49, productionStatus blocked and qualityGate=false instead of confidence 100."},
+    {"id": "QS-L13-P1-004", "status": "fixed", "evidence": "CTA is no longer a cliffhanger/highlight and remains separately classified as CTA."}
+  ],
+  "developmentItems": [
+    {
+      "id": "QS-L13-V3-P0-001",
+      "severity": "P0",
+      "module": "processor/semantic_analysis.py final evidence graph reconciliation",
+      "task": "After rejecting observations/inferences, recursively remove or downgrade every dependent segment, timeline item, transition, summary and basedOnFactId edge before publishing consumable layers.",
+      "regression": "For this exact output, no consumable claim may reference fact-001/fact-003/fact-004/fact-006 unless the fact exists in verified observations; rejectedClaims remain audit-only."
+    },
+    {
+      "id": "QS-L13-V3-P1-001",
+      "severity": "P1",
+      "module": "processor/semantic_analysis.py entity and causal synthesis",
+      "task": "Fuse OCR/ASR/frame evidence into characters and relationships and capture purple caller → Killian kneels/obeys → observers react without inventing identity.",
+      "regression": "Golden intervals 16.1–25.2 must appear as one causal chain; exact roles beyond observable command/obedience stay uncertain."
+    },
+    {
+      "id": "QS-L13-V3-P1-002",
+      "severity": "P1",
+      "module": "processor/semantic_analysis.py completeness evidence normalization",
+      "task": "Make evidence wording consistent with incomplete code and cite the unresolved command/action rather than saying the full flow is complete.",
+      "regression": "completeness.code=incomplete cannot coexist with evidence text asserting a complete flow."
+    },
+    {
+      "id": "QS-L13-V3-P1-003",
+      "severity": "P1",
+      "module": "processor/semantic_analysis.py hook boundary verification",
+      "task": "Add frame/action/semantic end evidence near 23.46 while retaining manual review if a safe end is not observable.",
+      "regression": "Hook stays production blocked until safeEnd has valid positive-duration evidence and no cut dialogue/action."
+    },
+    {
+      "id": "QS-L13-V3-P1-004",
+      "severity": "P1",
+      "module": "processor/semantic_analysis.py format classifier and PocketBase projection",
+      "task": "Do not verify/project EPISODE_SPLICE from generic drama dialogue; require observable assembly/boundary evidence or persist 未确定.",
+      "regression": "This isolated 34.5s ad without source/body comparison cannot receive verified episode-splice format solely from full-duration transcript evidence."
+    }
+  ]
+}

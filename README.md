@@ -83,9 +83,12 @@ python3 -m processor.batch_transcribe "/path/to/dramas" --free-episodes 10 --wor
 ## 验证
 
 ```bash
+npm run runtime:check
 python3 -m unittest tests/test_processor.py
 npm run build
 ```
+
+本地、预发运行、队列恢复和上线阻塞项见 [`docs/外搭钩子与正片剧集运行手册.md`](docs/外搭钩子与正片剧集运行手册.md)。
 
 ## 外部短剧数据接口
 
@@ -93,7 +96,7 @@ npm run build
 
 ```powershell
 $env:EXTERNAL_OPEN_API_KEY = "由服务方提供的 API Key"
-$env:EXTERNAL_OPEN_API_BASE_URL = "http://121.41.8.142:3000/api/open/v1"
+$env:EXTERNAL_OPEN_API_BASE_URL = "https://由服务方提供的安全地址/api/open/v1"
 npm run dev
 ```
 
@@ -103,7 +106,7 @@ npm run dev
 - `GET /api/external-data/playback?name=完整剧名`
 - `POST /api/external-data/materials`
 
-生产环境必须把 `EXTERNAL_OPEN_API_BASE_URL` 换成服务方提供的 HTTPS 地址。
+`EXTERNAL_OPEN_API_BASE_URL` 必须是服务方 HTTPS 地址；开发环境也只额外允许 `localhost` / `127.0.0.1` / `::1` 受信隧道。远程明文 HTTP 会在发送 API Key 前被拒绝。
 
 ## 安全
 

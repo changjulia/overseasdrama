@@ -1,0 +1,27 @@
+{
+  "caseId": "QS-DRAMA-LYCAN-DW-EP01-10",
+  "goldenVersion": "v1",
+  "attestation": "The golden was produced before any system episode analysis was started or read.",
+  "systemOutputsRead": false,
+  "analysisJobsRead": false,
+  "episodeAnalysisResultRead": false,
+  "implementationPromptsRead": false,
+  "allowedInputs": [
+    "The ten MP4 paths enumerated in input-manifest.json",
+    "Temporary frames, contact sheets, audio probes, OCR and local non-diarized ASR derived only from those MP4 files",
+    "The two isolated draft and access-attestation files produced from those inputs"
+  ],
+  "forbiddenInputs": [
+    "analysis_jobs and all analysis job tables",
+    "episode analysis_result fields",
+    "system-generated episode summaries, facts, highlights or scores",
+    "implementation prompts and analysis implementation source",
+    "prior episode golden answers"
+  ],
+  "limitations": [
+    "EP2 has zero audio tracks and was evaluated visual-only.",
+    "EP1, EP3, EP4 and EP5 lacked reliable local word-level transcription; dialogue, speakers and audio-safe edit boundaries remain pending.",
+    "EP6–EP10 ASR is non-diarized; it supports provisional utterance content and coarse timing, not speaker identity or word-accurate cut approval.",
+    "EP5-to-EP6 direct continuity is not established."
+  ]
+}

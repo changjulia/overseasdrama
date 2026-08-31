@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import type { OperationsSection, PipelineTask, SourceRecord } from "./types";
-import { deletePocketBaseAnalysisTask, pausePocketBaseAnalysisTask, resumePocketBaseAnalysisTask } from "../../lib/pocketbase-analysis-store";
+import { deletePocketBaseAnalysisTask, pausePocketBaseAnalysisTask, resumePocketBaseAnalysisTask, retryPocketBaseAnalysisTask, retryPocketBaseWorkflowTask } from "../../lib/pocketbase-analysis-store";
 import ExternalDataConsole from "./ExternalDataConsole";
 import styles from "./operations.module.css";
 
@@ -417,9 +417,9 @@ export function OperationsWorkspace({
         />
         <div className={styles.metricGrid}>
           <Metric label="处理中" value={String(processingCount)} hint={`并发 ${processingCount} / 12`} />
-          <Metric label="排队中" value={String(queuedCount)} hint="预计 18 分钟" />
-          <Metric label="需要人工处理" value={String(reviewCount)} hint="复核 SLA 4 小时" />
-          <Metric label="今日模型成本" value="$68.42" hint="预算使用 54%" />
+          <Metric label="排队中" value={String(queuedCount)} hint={queuedCount > 0 ? "等待 worker 领取" : "当前无排队任务"} />
+          <Metric label="需要人工处理" value={String(reviewCount)} hint={reviewCount > 0 ? "需人工处理" : "当前无待复核"} />
+          <Metric label="今日模型成本" value="未接入" hint="暂无真实成本数据" />
         </div>
         <div className={styles.toolbar}>
           <label className={styles.search}>
@@ -475,47 +475,22 @@ export function OperationsWorkspace({
           {selectedTask ? <aside className={styles.taskDetail}>
             <small>{selectedTask.id} · EXECUTION TRACE</small>
             <h2>{selectedTask.title}</h2>
-            <p>任务状态、处理证据和异常均会保留；失败节点可从当前阶段重试。</p>
+            <p>任务状态、处理证据和异常均会保留；仅在服务端提供安全重试入口时允许重新入队。</p>
             <div className={styles.detailProgress} role="progressbar" aria-label={`${selectedTask.title} 分析进度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0,Math.min(100,selectedTask.progress))} data-status={selectedTask.status}>
               <div><span>分析进度</span><b>{Math.max(0,Math.min(100,selectedTask.progress))}%</b></div>
               <i><em style={{width:`${Math.max(0,Math.min(100,selectedTask.progress))}%`}}/></i>
               <small>{selectedTask.status}</small>
             </div>
             <div className={styles.pipeline}>
-              {[
-                "已抓取",
-                "转码",
-                "文本提取",
-                "来源匹配",
-                "基础分析",
-                "深度分析",
-              ].map((stage, i) => (
-                <div
-                  className={
-                    i < Math.ceil(selectedTask.progress / 18)
-                      ? styles.finished
-                      : i === Math.ceil(selectedTask.progress / 18)
-                        ? styles.running
-                        : ""
-                  }
-                  key={stage}
-                >
-                  <i>
-                    {i < Math.ceil(selectedTask.progress / 18) ? "✓" : i + 1}
-                  </i>
-                  <span>
-                    <b>{stage}</b>
-                    <small>
-                      {i < Math.ceil(selectedTask.progress / 18)
-                        ? "已完成"
-                        : i === Math.ceil(selectedTask.progress / 18)
-                          ? "处理中"
-                          : "等待前序任务"}
-                    </small>
-                  </span>
-                </div>
-              ))}
+              <div className={selectedTask.status === "已完成" ? styles.finished : selectedTask.status === "处理中" ? styles.running : ""}>
+                <i>{selectedTask.status === "已完成" ? "✓" : "•"}</i>
+                <span>
+                  <b>{selectedTask.currentStage || "服务端尚未报告处理阶段"}</b>
+                  <small>真实 current_stage · 不根据百分比推断阶段完成</small>
+                </span>
+              </div>
             </div>
+            {selectedTask.error ? <p className={styles.taskError} role="alert"><b>失败原因：</b>{selectedTask.error}</p> : null}
             <dl className={styles.taskFacts}>
               <div>
                 <dt>负责人</dt>
@@ -533,6 +508,14 @@ export function OperationsWorkspace({
                 <dt>输出</dt>
                 <dd>分析结果 + 证据帧</dd>
               </div>
+              <div>
+                <dt>尝试次数</dt>
+                <dd>{selectedTask.attempt ?? "—"} / {selectedTask.maxAttempts ?? "—"}</dd>
+              </div>
+              <div>
+                <dt>错误分类 / 下次尝试</dt>
+                <dd>{selectedTask.errorKind || "—"} / {selectedTask.nextAttemptAt || "—"}</dd>
+              </div>
             </dl>
             <footer>
               <button
@@ -547,18 +530,9 @@ export function OperationsWorkspace({
                 查看日志
               </button>
               <button
-                disabled={Boolean(selectedTask.backendId)}
-                title={selectedTask.backendId ? "真实任务重试由服务端 Worker 鉴权接口执行" : undefined}
-                onClick={() => {
-                  setTasks((current) =>
-                    current.map((t) =>
-                      t.id === selectedTask.id
-                        ? { ...t, status: "排队中", progress: 0 }
-                        : t,
-                    ),
-                  );
-                  notify("任务已重新进入队列");
-                }}
+                disabled={taskActionPending || selectedTask.status !== "失败" || !selectedTask.backendId || (selectedTask.category !== "剧集解析" && !["hook_match","supplemental_highlight","entry_precision"].includes(selectedTask.stage ?? ""))}
+                title={selectedTask.status !== "失败" ? "仅失败终态可人工重试，活动任务不会被抢占" : undefined}
+                onClick={() => { const reason=window.prompt("请填写重试原因（将记入服务端审计）：","已确认失败根因已修复");if(!reason?.trim())return;const nonRetryable=["permanent","media","validation"].includes(selectedTask.errorKind??"");if(nonRetryable&&!window.confirm(`该任务为 ${selectedTask.errorKind} 非自动重试类型。\n\n确认使用人工 override 吗？`))return;void (async()=>{setTaskActionPending(true);try{if(selectedTask.category==="剧集解析")await retryPocketBaseAnalysisTask(selectedTask.backendId!);else await retryPocketBaseWorkflowTask(selectedTask,{reason:reason.trim(),idempotencyKey:globalThis.crypto?.randomUUID?.()??`manual-retry-${Date.now()}`,overrideNonRetryable:nonRetryable,overrideReason:nonRetryable?reason.trim():undefined});const next={...selectedTask,status:"排队中" as const,backendStatus:"queued" as const,progress:0,error:undefined,errorKind:undefined,nextAttemptAt:undefined,attempt:0,currentStage:"queued"};setTasks(current=>current.map(t=>t.id===selectedTask.id?next:t));setSelectedTask(next);notify("任务已通过可追溯服务端接口重新入队")}catch(error){notify(error instanceof Error?error.message:"任务重试失败")}finally{setTaskActionPending(false)}})()}}
               >
                 从失败点重试
               </button>
@@ -645,10 +619,10 @@ export function OperationsWorkspace({
         onAction={() => setInviteModal(true)}
       />
       <div className={styles.metricGrid}>
-        <Metric label="团队成员" value="12" hint="8 人本周活跃" />
-        <Metric label="待处理邀请" value="2" hint="7 天后过期" />
-        <Metric label="复核 SLA" value="3.2h" hint="目标 ≤ 4h" />
-        <Metric label="高风险覆盖" value="2" hint="本月质检人工覆盖" />
+        <Metric label="团队成员" value={String(members.length)} hint="按当前成员列表统计" />
+        <Metric label="待处理邀请" value="未接入" hint="暂无真实邀请数据" />
+        <Metric label="复核 SLA" value="未接入" hint="暂无真实时效数据" />
+        <Metric label="高风险覆盖" value="未接入" hint="暂无真实质检统计" />
       </div>
       <section className={styles.panel}>
         <PanelTitle

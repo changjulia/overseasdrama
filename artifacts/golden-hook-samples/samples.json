@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-30T20:55:00+08:00",
+  "classificationPolicy": {
+    "externalHookDecisionMustNotRequireCharacterChange": true,
+    "primaryEvidence": [
+      "shot_origin",
+      "shot_level_match_against_source_episode",
+      "production_lineage",
+      "newly_produced_outside_main_episode"
+    ],
+    "subtypes": {
+      "unrelated_people_or_scenes": "① 无关人物/场景外搭",
+      "reused_drama_assets_new_shots": "② 复用原剧人物资产但镜头为新生成/新制作",
+      "mixed": "③ 混合型",
+      "unknown_pending_review": "④ 来源不确定待复核"
+    }
+  },
+  "analysis": {
+    "ffmpeg": "node_modules/ffmpeg-static/ffmpeg (ffmpeg-static 5.3.0)",
+    "ffprobe": "node_modules/@ffprobe-installer/darwin-arm64/ffprobe (@ffprobe-installer/ffprobe 2.1.2)",
+    "sceneFilter": "select='gt(scene,0.35)'",
+    "limitations": [
+      "No source-episode media was supplied for shot-level matching.",
+      "No production-lineage records were supplied.",
+      "Candidate subtype is visual triage only; final status remains unknown_pending_review."
+    ]
+  },
+  "samples": [
+    {
+      "id": "1786532318_t7aTaPzDXJ_H264_720",
+      "path": "/Users/julia_chen/Downloads/1786532318_t7aTaPzDXJ_H264_720.mp4",
+      "sha256": "406ba710e25778f3f59b8881d058807e1aa266d97c40ee2c54eb0da3980c003b",
+      "sizeBytes": 217425769,
+      "durationSeconds": 1184.244,
+      "video": {"codec": "h264", "profile": "High", "width": 720, "height": 1280, "pixelFormat": "yuv420p", "fps": "25/1", "bitRate": 1334089},
+      "audio": {"codec": "aac", "profile": "LC", "sampleRate": 44100, "channels": 2, "layout": "stereo", "bitRate": 127999},
+      "sceneCandidateCountAt035": 527,
+      "businessLabel": "external_hook_positive",
+      "candidateSubtype": "mixed",
+      "candidateConfidence": "medium",
+      "finalReviewStatus": "unknown_pending_review"
+    },
+    {
+      "id": "1784805656_QTi3ycwhxA_H264_720",
+      "path": "/Users/julia_chen/Downloads/1784805656_QTi3ycwhxA_H264_720.mp4",
+      "sha256": "eddfbf807420e9995222c3e65dad9a4c8db8c6eca69774305e75113bdcc186c1",
+      "sizeBytes": 256917994,
+      "durationSeconds": 1223.927,
+      "video": {"codec": "h264", "profile": "High", "width": 720, "height": 1280, "pixelFormat": "yuv420p", "fps": "25/1", "bitRate": 1544586},
+      "audio": {"codec": "aac", "profile": "LC", "sampleRate": 44100, "channels": 2, "layout": "stereo", "bitRate": 128003},
+      "sceneCandidateCountAt035": 300,
+      "businessLabel": "external_hook_positive",
+      "candidateSubtype": "reused_drama_assets_new_shots",
+      "candidateConfidence": "business_prior_only",
+      "hardPositive": true,
+      "regressionPurpose": "Visual and character continuity must not cause a non-external-hook decision.",
+      "finalReviewStatus": "unknown_pending_review"
+    },
+    {
+      "id": "1785148210_3shFMGB3nT_H264_720",
+      "path": "/Users/julia_chen/Downloads/1785148210_3shFMGB3nT_H264_720.mp4",
+      "sha256": "0b82e9fc0bceab6b5883496c7861e78808a09c4327f0b2301a9f68deab4a9e32",
+      "sizeBytes": 209089942,
+      "durationSeconds": 1003.29,
+      "video": {"codec": "h264", "profile": "High", "width": 720, "height": 1280, "pixelFormat": "yuv420p", "fps": "25/1", "bitRate": 1532549},
+      "audio": {"codec": "aac", "profile": "LC", "sampleRate": 44100, "channels": 2, "layout": "stereo", "bitRate": 127999},
+      "sceneCandidateCountAt035": 579,
+      "businessLabel": "external_hook_positive",
+      "candidateSubtype": ["mixed", "reused_drama_assets_new_shots"],
+      "candidateConfidence": "low",
+      "finalReviewStatus": "unknown_pending_review"
+    }
+  ]
+}

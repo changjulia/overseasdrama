@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "caseId": "QS-GH-002",
+  "goldenVersion": "v2",
+  "status": "draft_blind",
+  "frozenAt": null,
+  "input": {"path": "/Users/julia_chen/Downloads/1784805656_QTi3ycwhxA_H264_720.mp4", "sha256": "eddfbf807420e9995222c3e65dad9a4c8db8c6eca69774305e75113bdcc186c1", "durationSeconds": 1223.9245487528344},
+  "blindness": {
+    "systemOutputSeenBeforeFreeze": false,
+    "allowedInputs": ["the named source video and independently generated frames", "/Users/julia_chen/Documents/ChatGPT/短剧/release-evidence/quality-supervision/protocol.schema.json", "business priors: external_hook_positive and reused drama character assets with newly produced shots"],
+    "knownBusinessPriors": ["external_hook_positive", "GH-002 is a difficult positive: reused drama character assets but newly produced shots", "Character and visual continuity must not be used to negate an external hook."],
+    "limitations": ["No original-drama source video was available for frame-to-frame lineage verification.", "Hook boundary remains candidate-only.", "Audio was not independently transcribed; visible action and embedded captions are used." ]
+  },
+  "expertAnswer": {
+    "genre": ["family melodrama", "orphan rescue", "hidden-identity wealth fantasy"],
+    "sourceClassification": {
+      "businessLabel": "external_hook_positive",
+      "externalSubtype": "reused_drama_assets_new_shots",
+      "sourceEvidenceStatus": "business_prior_only",
+      "t1t2": {"value": "candidate_external_hook_with_asset_continuity", "status": "pending_boundary_source_comparison"}
+    },
+    "hook": {
+      "boundaryStatus": "candidate_only",
+      "candidateRanges": [{"startSeconds": 0, "endSeconds": 30, "confidence": 0.69, "basis": "Dense street-persecution and hunger setup appears to settle into a longer café/rescue interaction around 25-35s."}],
+      "events": [
+        {"statement": "A well-dressed adult man humiliates a visibly poor boy in a busy city street, including taking or controlling a money-filled wallet and knocking the boy down.", "evidence": [{"startSeconds": 0, "endSeconds": 9, "confidence": 0.95, "basis": "Street shots, wallet cash, insult captions, and physical domination."}], "confidence": 0.95},
+        {"statement": "The hungry boy scavenges discarded bread and is noticed by nearby adults.", "evidence": [{"startSeconds": 10, "endSeconds": 22, "confidence": 0.94, "basis": "Bread on pavement, boy eating/drinking, and pity captions."}], "confidence": 0.94},
+        {"statement": "A café worker or bystander begins helping the boy, creating a rescue and hidden-connection trajectory.", "evidence": [{"startSeconds": 22, "endSeconds": 39, "confidence": 0.83, "basis": "Adults approach, interact, and give food in the street-side café setting."}], "confidence": 0.83}
+      ]
+    },
+    "entities": [
+      {"statement": "A hungry, apparently parentless boy is the vulnerable focal character.", "evidence": [{"startSeconds": 0, "endSeconds": 22, "confidence": 0.94, "basis": "Repeated boy shots and insult/hunger captions."}], "confidence": 0.94},
+      {"statement": "An aggressive suited man functions as the immediate antagonist.", "evidence": [{"startSeconds": 0, "endSeconds": 9, "confidence": 0.93, "basis": "Pursuit, insults, wallet, and knockdown."}], "confidence": 0.93},
+      {"statement": "Café-side adults become potential protectors and connectors to a larger family/wealth plot.", "evidence": [{"startSeconds": 22, "endSeconds": 39, "confidence": 0.78, "basis": "Intervention and food-help sequence."}], "confidence": 0.78}
+    ],
+    "conflict": [{"statement": "Street abuse and extreme hunger are opposed by emerging adult compassion and protection.", "evidence": [{"startSeconds": 0, "endSeconds": 39, "confidence": 0.92, "basis": "Persecution-to-aid progression."}], "confidence": 0.92}],
+    "emotion": [{"statement": "Shock, indignation, and pity transition into relief and hope.", "evidence": [{"startSeconds": 0, "endSeconds": 39, "confidence": 0.9, "basis": "Aggression, scavenged food, and intervention."}], "confidence": 0.9}],
+    "suspense": [{"statement": "The viewer is asked who the boy really is, why he is alone, and whether the helpers will discover a hidden family connection.", "evidence": [{"startSeconds": 0, "endSeconds": 70, "confidence": 0.82, "basis": "Parentless insult, rescue setup, and sustained focus on the boy."}], "confidence": 0.82}],
+    "narrativePromise": [{"statement": "A mistreated child will be rescued and reconnected to a powerful or affluent family, reversing his status.", "evidence": [{"startSeconds": 0, "endSeconds": 39, "confidence": 0.79, "basis": "Orphan-rescue setup plus later formal wealthy-household imagery in distributed samples."}], "confidence": 0.79}],
+    "retention": {"score": 91, "reasoning": ["Conflict begins in the first frame.", "A child-in-danger premise generates immediate moral emotion.", "Money, hunger, rescue, and identity questions stack quickly.", "Asset continuity could make the external hook look deceptively native, which increases its practical difficulty."]},
+    "highlightCandidates": [
+      {"id": "GH002-H1", "range": {"startSeconds": 0, "endSeconds": 9, "confidence": 0.93, "basis": "Wallet and assault setup."}, "description": "Immediate antagonist and child peril.", "boundarySafety": "needs_frame_review", "confidence": 0.93},
+      {"id": "GH002-H2", "range": {"startSeconds": 10, "endSeconds": 22, "confidence": 0.92, "basis": "Scavenged bread/hunger escalation."}, "description": "Maximum sympathy beat.", "boundarySafety": "needs_frame_review", "confidence": 0.92},
+      {"id": "GH002-H3", "range": {"startSeconds": 22, "endSeconds": 39, "confidence": 0.8, "basis": "Adult intervention and aid."}, "description": "Rescue pivot.", "boundarySafety": "needs_frame_review", "confidence": 0.8}
+    ],
+    "matching": {
+      "recommended": "Match by the boy's identity, adult protector roles, and the rescue-to-family causal chain. Treat matching faces/wardrobe as supporting entity continuity, not proof that the opening shots are native episode footage.",
+      "confidence": 0.83,
+      "requiredChecks": ["Compare shot composition and exact action against the original drama, not only character appearance.", "Locate the first episode scene that continues the boy's rescue or identity reveal."]
+    },
+    "transitionRecommendations": {
+      "direct": "Preferred when the episode continues the café intervention; cut on the first stable conversational exchange after roughly 25-35s, after frame/audio boundary review.",
+      "A": "If the episode begins at the boy's rescue, bridge with the final hunger shot and one-line context card/recap.",
+      "B": "If the episode begins at the affluent household or identity investigation, bridge from the intervention to that location with a short causal recap.",
+      "avoid": "Do not use visual continuity as a reason to classify the hook as non-external."
+    },
+    "rejectOrDegradeConditions": [
+      "Reject a proposed episode match if it lacks the same boy and rescue/identity causal thread.",
+      "Degrade exact boundary confidence until frame-accurate and audio transition review is available.",
+      "Degrade source evidence from verified to business-prior-only unless original source comparison confirms newly produced shots.",
+      "Never reject external-hook status solely because character assets, faces, wardrobe, or overall visual style are continuous."
+    ]
+  },
+  "evaluationReadiness": {"systemComparison": "ready_after_draft_review", "episodeMatch": "pending_original_source", "renderModes": ["direct", "A", "B"]},
+  "freeze": {"canonicalSha256": null}
+}

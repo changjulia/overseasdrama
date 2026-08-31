@@ -1,0 +1,175 @@
+{
+  "caseId": "QS-MAT-LYCAN-13",
+  "comparisonVersion": "v7",
+  "golden": {
+    "version": "v1",
+    "status": "frozen_blind",
+    "sha256": "ca2c502069a14088d018beddc959555d9cd080f75f184933be2efe18da1e1c7d",
+    "unchanged": true
+  },
+  "system": {
+    "materialId": "zmzrljhnwl4uxw5",
+    "jobId": "30wqqaz0u3vav09",
+    "snapshotSha256": "9f3b0c8c31c0f0b8834902111e92d8bef92e173f05142d2de3494dcd3171b558",
+    "terminalStatus": "succeeded",
+    "progress": 100,
+    "terminalStage": "completed",
+    "materialAnalysisStatus": "succeeded",
+    "materialReviewStatus": "needs_review",
+    "materialConfidence": 49,
+    "productionStatus": "blocked",
+    "qualityGatePassed": false
+  },
+  "visualEventVerification": {
+    "acceptedComputed": 0,
+    "rejectedComputed": 4,
+    "speakerVerifiedComputed": 0,
+    "reviewRequired": true,
+    "expectedCountsMatch": true,
+    "rejectedEventLeakIds": [],
+    "speakerLinks": [
+      {"start": 16.8, "end": 20.04, "verification": "unverified", "modalities": ["adjacency_only"]},
+      {"start": 20.9, "end": 21.86, "verification": "unverified", "modalities": ["adjacency_only"]}
+    ]
+  },
+  "verdict": {
+    "engineeringExecution": "PASS",
+    "visualInferenceIsolation": "PASS_WITH_SCHEMA_RESIDUALS",
+    "contentQuality": "BELOW_GATE",
+    "productionSafety": "PASS_BLOCKING_BEHAVIOR",
+    "hardGate": "NO-GO",
+    "reason": "All four visual candidates and both speaker links are safely isolated, but no visual event is accepted, so the golden kneeling/obedience and observer-reaction payoff remain absent. Rejected event records and boundaryAssessment also contain contradictory verification labels that must not become consumable."
+  },
+  "scores": {
+    "factAndEvidenceAccuracy": 72,
+    "highlightLocalization": 84,
+    "hookRetention": 79,
+    "storyCompleteness": 72,
+    "hookMainMatch": null,
+    "transitionNarration": null,
+    "engineeringReliability": 92,
+    "fullWeightedTotal": null,
+    "scopeNormalizedScore": 77,
+    "scopeNormalizedDenominatorWeight": 75,
+    "priorScopeNormalizedScores": {"v1": 22, "v2": 28, "v3": 66, "v4": 70, "v5": 69, "v6": 77}
+  },
+  "requestedChecks": [
+    {
+      "check": "formal API/worker persistence state",
+      "result": "pass",
+      "evidence": "Job 30wqqaz0u3vav09 is succeeded/100/completed; material is analysis succeeded and review_status=needs_review; qualityGate=false, confidence=49 and productionStatus=blocked."
+    },
+    {
+      "check": "accepted/rejected/speaker counts",
+      "result": "pass",
+      "evidence": "events.length=0, rejectedEvents.length=4, verified speakerLinks=0, reviewRequired=true."
+    },
+    {
+      "check": "single-frame and short-pair action isolation",
+      "result": "pass_with_metadata_residual",
+      "evidence": "No candidate is promoted into visual events or content observations. Four candidates remain under rejectedEvents. However, each rejected record internally says verification=verified, which is semantically contradictory."
+    },
+    {
+      "check": "emotion and causal inference isolation",
+      "result": "pass",
+      "evidence": "Shock, concern, attention and response-to-prior-event language appears only inside rejectedEvents; none leaks into consumable facts, characters, relationships, segments or hooks."
+    },
+    {
+      "check": "speaker and identity inference isolation",
+      "result": "pass_with_existing_character_residual",
+      "evidence": "Both speakerLinks are unverified, adjacency_only and reviewRequired. Visual candidates do not verify a speaker. Existing content character-title-speaker remains verified from dialogue rather than speaker evidence, an earlier P1 residual."
+    },
+    {
+      "check": "golden visual events",
+      "result": "not_yet_recovered",
+      "evidence": "Golden kneeling/obedience and observer shock at 20.9–25.2 are not accepted; this is safe but leaves the central reversal incomplete."
+    },
+    {
+      "check": "hook boundary and production block",
+      "result": "pass_with_contract_conflict",
+      "evidence": "Published hook remains 15.1–23.9, boundaryStatus=unverified, action=shot_boundary_only, semantic/frame=unverified and reviewRequired=true. visualEventVerification.boundaryAssessment separately reports action/semantic verified for 14.5–24.5 despite accepted=0; it did not override the safe hook gate."
+    }
+  ],
+  "goldenTimecodeComparison": [
+    {"golden": "16.1–20.4 title/naming", "system": "dialogue/OCR fact retained; speaker link unverified", "result": "safe_partial_match"},
+    {"golden": "20.9–21.5 kneeling and spoken response", "system": "spoken response verified; visual candidate rejected", "result": "dialogue_match_visual_missing"},
+    {"golden": "21.5–25.2 observer shock", "system": "22.133–22.483 and 24–24.25 candidates rejected", "result": "safe_rejection_story_missing"},
+    {"golden": "15.1–23.5 strongest highlight", "system": "published hook 15.1–23.9 remains review-gated", "result": "high_match_safe"},
+    {"golden": "visual-safe direct cut before CTA", "system": "visual boundary suggestion 14.5–24.5 is not applied; hook remains 15.1–23.9", "result": "no_unsafe_override"}
+  ],
+  "isolationAudit": {
+    "acceptedVisualFacts": [],
+    "rejectedCandidateIds": [
+      "character-introduction-killian",
+      "character-introduction-shadow-pack-warrior",
+      "character-reaction-to-announcement",
+      "character-response-to-event"
+    ],
+    "leakedIntoConsumableLayers": [],
+    "unsafeClaimsContainedOnlyInRejected": [
+      "appears to be speaking/responding",
+      "identity revealed from subtitle",
+      "shock/surprise emotion",
+      "reaction caused by prior event",
+      "worry/attention inferred from gaze"
+    ],
+    "fullPublishedFactClosure": "pass"
+  },
+  "contractResiduals": [
+    {
+      "severity": "P1",
+      "field": "visualEventVerification.rejectedEvents[*].verification",
+      "actual": "verified",
+      "expected": "rejected/unverified or omitted",
+      "risk": "A consumer filtering only on verification could mistakenly treat quarantined claims as approved."
+    },
+    {
+      "severity": "P1",
+      "field": "visualEventVerification.boundaryAssessment",
+      "actual": "actionStatus=verified and semanticStatus=verified with accepted events=0; recommends 14.5–24.5",
+      "expected": "action/semantic unverified or evidence-backed independent boundary result",
+      "risk": "A future consumer could bypass the correctly blocked hook gate if it trusts this nested assessment."
+    }
+  ],
+  "hardGates": {
+    "result": "NO-GO",
+    "triggered": ["central_reversal_story_chain_materially_incomplete"],
+    "notTriggered": [
+      "single_frame_action_promoted",
+      "emotion_or_causality_promoted",
+      "speaker_identity_promoted",
+      "unsafe_hook_boundary_published",
+      "unapproved_asset_entered_production"
+    ]
+  },
+  "developmentItems": [
+    {
+      "id": "QS-L13-V7-P1-001",
+      "severity": "P1",
+      "module": "visual event verification contract",
+      "task": "Change rejectedEvents records to verification=rejected/unverified, or remove verification; preserve model confidence separately.",
+      "regression": "No object inside rejectedEvents can satisfy a generic verification==verified consumer query."
+    },
+    {
+      "id": "QS-L13-V7-P1-002",
+      "severity": "P1",
+      "module": "visual boundary assessment reconciliation",
+      "task": "Derive action/semantic boundary status only from accepted visual events or a separately evidenced boundary algorithm; never report verified solely from rejected candidates.",
+      "regression": "When accepted=0, boundaryAssessment action/semantic cannot be verified unless explicit independent positive evidence is stored; published hook gate must remain authoritative."
+    },
+    {
+      "id": "QS-L13-V7-P1-003",
+      "severity": "P1",
+      "module": "multi-frame visual event extraction",
+      "task": "Collect enough temporally separated frames or short clips to verify kneeling/obedience and observer reactions without inferring speaker identity, emotion or causality beyond observable motion/state.",
+      "regression": "Golden 20.9–25.2 is represented by replayable positive-duration visual facts or remains explicitly pending; no single-frame shortcut."
+    },
+    {
+      "id": "QS-L13-V7-P1-004",
+      "severity": "P1",
+      "module": "speaker/entity projection",
+      "task": "Downgrade character-title-speaker to pending until diarization, lip-sync or frame speaker evidence exists.",
+      "regression": "speakerLinks verified count remains zero and no character identity is marked verified from adjacency-only dialogue."
+    }
+  ]
+}

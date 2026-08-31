@@ -8,28 +8,133 @@ function authorizeWorker(e) {
     throw new UnauthorizedError("Invalid analysis worker token");
 }
 
+function constantTimeTextEqual(left, right) {
+  const leftText = String(left || "");
+  const rightText = String(right || "");
+  let difference = leftText.length ^ rightText.length;
+  const length = Math.max(leftText.length, rightText.length);
+  for (let index = 0; index < length; index += 1) {
+    difference |=
+      (leftText.charCodeAt(index) || 0) ^ (rightText.charCodeAt(index) || 0);
+  }
+  return difference === 0;
+}
+
 function authorizeUi(e) {
+  const expectedGatewayToken = $os.getenv("LUMINA_UI_GATEWAY_TOKEN");
+  const suppliedGatewayToken = String(
+    e.requestInfo().headers.authorization || "",
+  ).replace(/^Bearer\s+/i, "");
+  if (
+    expectedGatewayToken &&
+    constantTimeTextEqual(suppliedGatewayToken, expectedGatewayToken)
+  )
+    return;
   const origin = String(e.requestInfo().headers.origin || "");
   const host = String(e.requestInfo().headers.host || "");
   const headers = e.requestInfo().headers;
   const localUiHeader = String(
-    headers["x-lumina-ui"] || headers["X-Lumina-Ui"] || "",
+    headers["x-lumina-ui"] ||
+      headers["X-Lumina-Ui"] ||
+      (e.request && e.request.header
+        ? e.request.header.get("x-lumina-ui")
+        : "") ||
+      "",
   );
   const browserOriginAllowed =
     /^https?:\/\/(localhost|127\.0\.0\.1):(300[01]|8090)$/i.test(origin);
-  // Vite's same-origin /pb proxy may omit Origin after proxying. In that case
-  // only accept a request that still terminates on the local PocketBase host.
-  // Requests without Origin come from the local reverse proxy or CLI. The
-  // PocketBase process itself is bound to loopback by the launcher.
-  const localProxyAllowed = !origin;
-  if (!browserOriginAllowed && !localProxyAllowed && localUiHeader !== "local")
-    throw new ForbiddenError("Local UI only");
+  // PocketBase's requestInfo header map omits the HTTP Host pseudo-header.
+  // When present, still reject non-loopback hosts; when absent, the explicit
+  // local mode is safe only together with the loopback bind in our launcher.
+  const localHostAllowed =
+    !host || /^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(host);
+  const localModeEnabled = $os.getenv("LUMINA_UI_MODE") === "local-loopback";
+  // This is an explicit local-workstation trust boundary, not user identity.
+  // Hosted/shared deployments must keep this mode disabled and put these
+  // operations behind an authenticated server-side gateway.
+  if (
+    !localModeEnabled ||
+    !localHostAllowed ||
+    localUiHeader !== "local" ||
+    (origin && !browserOriginAllowed)
+  )
+    throw new ForbiddenError("Authenticated UI gateway required");
 }
 
 // Human review is a workspace operation, not an administrator operation.
 // Every user who can reach the local Lumina UI receives the same review access.
 function authorizeReviewUi(e) {
   authorizeUi(e);
+}
+
+function manualRetryRequest(e, record, activeStatuses) {
+  const body = e.requestInfo().body || {};
+  const reason = String(body.reason || "").trim();
+  const retryKey = String(body.idempotency_key || "").trim();
+  const expectedStatus = String(body.expected_status || "").trim();
+  const expectedUpdated = String(body.expected_updated || "").trim();
+  if (!reason) throw new BadRequestError("manual retry reason is required");
+  if (!retryKey || retryKey.length > 240)
+    throw new BadRequestError("a valid manual retry idempotency_key is required");
+  if (!expectedStatus || !expectedUpdated)
+    throw new BadRequestError("expected_status and expected_updated are required");
+  if (record.getString("last_manual_retry_key") === retryKey)
+    return { duplicate: true, body, retryKey };
+  const status = record.getString("status");
+  if (status !== expectedStatus || record.getString("updated") !== expectedUpdated)
+    throw new ApiError(409, "job changed since it was inspected");
+  if ((activeStatuses || []).includes(status))
+    throw new ApiError(409, "active or queued job cannot be manually retried");
+  if (status !== "failed")
+    throw new ApiError(409, "only failed jobs can be manually retried");
+  const errorKind = record.getString("error_kind");
+  if (["permanent", "media", "validation"].includes(errorKind)) {
+    const overrideReason = String(body.override_reason || "").trim();
+    if (body.override_non_retryable !== true || !overrideReason)
+      throw new BadRequestError(
+        "non-retryable failure requires override_non_retryable and override_reason",
+      );
+  }
+  return { duplicate: false, body, reason, retryKey };
+}
+
+function resetFailedJobForManualRetry(record, request, actor, clearFields) {
+  const audit = jsonValue(record.get("manual_retry_audit"), []);
+  const history = Array.isArray(audit) ? audit.slice(-49) : [];
+  history.push({
+    at: new Date().toISOString(),
+    by: String(actor || "local-workstation").slice(0, 500),
+    reason: request.reason.slice(0, 2000),
+    overrideNonRetryable: request.body.override_non_retryable === true,
+    overrideReason: String(request.body.override_reason || "").slice(0, 2000),
+    previousStatus: record.getString("status"),
+    previousErrorKind: record.getString("error_kind"),
+    previousAttempt: record.getInt("attempt"),
+    idempotencyKey: request.retryKey,
+  });
+  record.set("status", "queued");
+  record.set("progress", 0);
+  record.set("current_stage", "queued");
+  record.set("attempt", 0);
+  record.set("error", "");
+  record.set("error_kind", "");
+  record.set("next_attempt_at", "");
+  record.set("worker_id", "");
+  record.set("lease_token", "");
+  record.set("lease_until", "");
+  (clearFields || []).forEach((field) =>
+    record.set(
+      field,
+      field === "logs"
+        ? []
+        : ["result", "diagnostics", "validation", "boundary_ledger"].includes(field)
+          ? {}
+          : "",
+    ),
+  );
+  record.set("manual_retry_audit", history);
+  record.set("last_manual_retry_key", request.retryKey);
+  return history[history.length - 1];
 }
 
 function decodeUtf8(bytes) {
@@ -1036,6 +1141,7 @@ function generateStorylinePlans(
     });
   });
   const semanticallyUnique = [];
+  const semanticRoutesByMode = new Set();
   [...unique.values()]
     .sort((left, right) => right.acquisitionScore - left.acquisitionScore)
     .forEach((plan) => {
@@ -1056,9 +1162,14 @@ function generateStorylinePlans(
       const mode = String(
         (plan.scriptPlan && plan.scriptPlan.mode) || "sequential",
       );
-      // `unique` already removes identical direction + source route pairs.
-      // Similar plot text is expected when different high points share the
-      // same sequential episodes; it must not erase distinct opening choices.
+      // Keep different opening routes when they carry different story beats,
+      // but do not multiply the same semantic route merely because an
+      // identical highlight was detected at another timestamp or episode.
+      // The four script modes remain intentionally distinct because each mode
+      // expresses a different acquisition promise and edit strategy.
+      const semanticRouteKey = `${mode}|${[...signature].sort().join("|")}`;
+      if (semanticRoutesByMode.has(semanticRouteKey)) return;
+      semanticRoutesByMode.add(semanticRouteKey);
       semanticallyUnique.push(plan);
     });
   return semanticallyUnique.slice(0, 10);
@@ -2006,7 +2117,10 @@ function summarizeHookMatch(job, supplementalJobs, matches) {
 module.exports = {
   authorizeWorker,
   authorizeUi,
+  constantTimeTextEqual,
   authorizeReviewUi,
+  manualRetryRequest,
+  resetFailedJobForManualRetry,
   jsonValue,
   jsonArray,
   jsonObject,

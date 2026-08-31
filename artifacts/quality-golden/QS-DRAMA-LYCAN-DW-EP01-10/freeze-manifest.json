@@ -1,0 +1,10 @@
+{
+  "caseId": "QS-DRAMA-LYCAN-DW-EP01-10",
+  "goldenVersion": "v1",
+  "status": "frozen_blind",
+  "frozenAt": "2026-08-31T01:12:00+08:00",
+  "goldenPath": "artifacts/quality-golden/QS-DRAMA-LYCAN-DW-EP01-10/golden-v1.json",
+  "goldenSha256": "4f36c1df4593442974ac25ee9a3cec64ac10cff537894035eee1633389c96872",
+  "systemAnalysisMayStart": true,
+  "immutableRule": "Never rewrite golden-v1.json. Future corrections require a new golden version with explicit provenance; system output must never be used to backfill this version."
+}

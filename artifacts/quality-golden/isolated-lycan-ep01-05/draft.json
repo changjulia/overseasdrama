@@ -1,0 +1,451 @@
+{
+  "schemaVersion": "isolated-blind-review-draft-v1",
+  "scope": "EP1-EP5",
+  "language": "zh-CN",
+  "method": {
+    "isolation": "仅审阅五个指定原始 MP4 及本次自行生成的临时抽帧/短音频；未使用数据库、既有 analysis_result、golden、监督报告、推进文档、实现代码或项目提示词。",
+    "temporalCoverage": "全片每 5 秒抽帧扫描；候选高光与关键转折段再按 1 秒抽帧复核。",
+    "audioAndTranscript": "EP1/EP3/EP4/EP5 容器有音轨，但本地可靠转写不可用且画面无持续烧录字幕，故不记录对白内容或说话人；EP2 容器无音轨。",
+    "confidenceScale": {
+      "high": "直接可见或容器级事实",
+      "medium": "连续镜头中的动作链或跨镜头视觉延续",
+      "low": "仅时间邻接或造型相似，未据此冻结身份/因果"
+    }
+  },
+  "pendingVerification": [
+    "EP1/EP3/EP4/EP5 的对白原文、说话人及词级音频边界：pending，需可靠转写后验证。",
+    "EP2 的对白与音画同步：not_verifiable，源 MP4 没有音轨。",
+    "所有仅凭跨集外观连续性沿用的姓名：pending，若需逐集独立高置信命名，必须由本集字幕/对白补证。"
+  ],
+  "episodes": [
+    {
+      "episode": "EP1",
+      "sourcePath": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/ed6gkt0rs143m9i/ep001_l3c0uq7oty.mp4",
+      "sha256": "388276dacbc5c600df5597f2b08f820e1bc5319f5c17979b199ad9919c18268e",
+      "durationSeconds": 182.95,
+      "media": {
+        "displayWidth": 720,
+        "displayHeight": 1280,
+        "nominalFrameRate": 24.979501724243164,
+        "videoTracks": 1,
+        "audioTracks": 1
+      },
+      "observableFacts": [
+        {
+          "statement": "月夜的圆形石台周围聚集大量人群，台上有发光晶体与火盆。",
+          "evidence": {"start": 0.0, "end": 13.0, "basis": "全景与中景连续可见"},
+          "confidence": "high"
+        },
+        {
+          "statement": "一名黑发、穿华丽黑金毛领服装的成年男子站在高处面向人群并做手势。",
+          "evidence": {"start": 13.0, "end": 39.0, "basis": "多组正反打与全景；未使用其对白内容"},
+          "confidence": "high"
+        },
+        {
+          "statement": "金发紫黑服饰女子的画面名卡写有“Cora / Elena's handmaid”。",
+          "evidence": {"start": 23.5, "end": 27.5, "basis": "画面烧录英文名卡，24.5 秒原尺寸抽帧可清晰读取"},
+          "confidence": "high"
+        },
+        {
+          "statement": "天空中的月亮由白色画面切换为红色，随后出现人群仰视的镜头。",
+          "evidence": {"start": 36.0, "end": 48.0, "basis": "月亮颜色变化与人群反应镜头连续出现"},
+          "confidence": "high"
+        },
+        {
+          "statement": "室内的黑发白裙女子被 Cora 近身照料，其下腹区域出现白色发光效果。",
+          "evidence": {"start": 52.0, "end": 66.0, "basis": "室内近景、手部接触及可见光效；未推断医学状态"},
+          "confidence": "high"
+        },
+        {
+          "statement": "仪式场地中，黑发白裙女子抱着一名以白布和紫色腰带包裹的婴儿，周围站有人群与白袍长者。",
+          "evidence": {"start": 67.0, "end": 126.0, "basis": "多组全景与抱持近景"},
+          "confidence": "high"
+        },
+        {
+          "statement": "黑金毛领男子从黑发白裙女子附近接过/抱起婴儿；黑发白裙女子随后倒在石地上。",
+          "evidence": {"start": 127.0, "end": 148.0, "basis": "抱婴近景后接倒地镜头；“接过”仅指可见持有转移，不推断亲属关系"},
+          "confidence": "medium"
+        },
+        {
+          "statement": "Cora 站在倒地女子旁约 148-166 秒；167 秒后切到黑金毛领男子抱着婴儿，178 秒起将婴儿举高，持续至片尾。",
+          "evidence": {"start": 148.0, "end": 182.95, "basis": "关键段逐秒抽帧"},
+          "confidence": "high"
+        }
+      ],
+      "characters": [
+        {
+          "id": "ep1_cora_blonde_purple",
+          "description": "金发、紫黑服饰成年女子",
+          "name": "Cora",
+          "nameEvidence": {"start": 23.5, "end": 27.5, "text": "Cora / Elena's handmaid", "basis": "画面名卡"},
+          "confidence": "high"
+        },
+        {
+          "id": "series_darkhaired_woman_white_fur",
+          "description": "黑发、白裙与毛领服饰成年女子；后段抱婴儿",
+          "name": null,
+          "nameEvidence": null,
+          "confidence": "high"
+        },
+        {
+          "id": "series_darkhaired_man_ornate_fur",
+          "description": "黑发、黑金华服与毛领成年男子",
+          "name": null,
+          "nameEvidence": null,
+          "confidence": "high"
+        },
+        {
+          "id": "series_infant_white_purple_wrap",
+          "description": "白色襁褓、紫色腰带婴儿",
+          "name": null,
+          "nameEvidence": null,
+          "confidence": "high"
+        }
+      ],
+      "relationships": [
+        {
+          "subjectId": "ep1_cora_blonde_purple",
+          "objectId": "unresolved_person_named_elena",
+          "statement": "Cora 被画面名卡标注为 Elena 的 handmaid；Elena 未被可靠绑定到具体画面人物。",
+          "evidence": {"start": 23.5, "end": 27.5, "basis": "画面名卡原文"},
+          "confidence": "high"
+        },
+        {
+          "subjectId": "ep1_cora_blonde_purple",
+          "objectId": "series_darkhaired_woman_white_fur",
+          "statement": "Cora 对黑发白裙女子实施近身照料，并在其倒地后站在旁边。",
+          "evidence": {"start": 23.5, "end": 27.5, "basis": "室内接触"},
+          "confidence": "high"
+        },
+        {
+          "subjectId": "series_darkhaired_woman_white_fur",
+          "objectId": "series_infant_white_purple_wrap",
+          "statement": "女子在仪式中抱持并贴身保护婴儿；不据此判定亲属关系。",
+          "evidence": {"start": 67.0, "end": 126.0, "basis": "持续抱持画面"},
+          "confidence": "high"
+        },
+        {
+          "subjectId": "series_darkhaired_man_ornate_fur",
+          "objectId": "series_infant_white_purple_wrap",
+          "statement": "男子后段抱持并举高婴儿；不据此判定亲属关系。",
+          "evidence": {"start": 127.0, "end": 182.95, "basis": "抱持和举起画面"},
+          "confidence": "high"
+        }
+      ],
+      "causalLinks": [
+        {
+          "cause": "男子面向天空做手势",
+          "effect": "随后镜头出现红月与人群仰视",
+          "evidence": {"start": 28.0, "end": 48.0, "basis": "剪辑上的时间邻接，未直接证明男子造成月色变化"},
+          "confidence": "low"
+        },
+        {
+          "cause": "黑发白裙女子倒地后不再抱婴儿",
+          "effect": "黑金毛领男子成为婴儿的持有者并将其举高",
+          "evidence": {"start": 142.0, "end": 182.95, "basis": "连续可见的持有状态变化"},
+          "confidence": "medium"
+        }
+      ],
+      "summary": "月夜仪式先展示黑金毛领男子、晶体、人群和红月；画面中唯一被名卡直接命名的是 Cora。黑发白裙女子在室内被照料，随后在仪式中抱着白紫襁褓婴儿。后段女子倒地，黑金毛领男子抱起并在片尾举高婴儿。未冻结任何对白内容、亲属身份或超自然因果。",
+      "continuityOut": "片尾停在黑金毛领男子将白紫襁褓婴儿举高；EP2 开头出现外观一致的黑发白裙女子抱着同样白紫襁褓婴儿进入雪林，形成强视觉衔接，但中间如何转移未展示。",
+      "highlightCandidates": [
+        {
+          "start": 36.0,
+          "end": 48.0,
+          "boundarySafety": {"visualStart": "safe_on_shot_transition", "visualEnd": "safe_before_next_scene", "audio": "unverified_no_transcript"},
+          "reason": "白月转红与人群仰视构成清晰、短促的视觉揭示。",
+          "confidence": "high"
+        },
+        {
+          "start": 167.0,
+          "end": 182.95,
+          "boundarySafety": {"visualStart": "safe_on_cut_to_man_and_infant", "visualEnd": "safe_source_end", "audio": "unverified_no_transcript"},
+          "reason": "从男子抱婴儿到举高婴儿的动作完整，并以片尾收束。",
+          "confidence": "high"
+        }
+      ],
+      "rejectOrDegrade": [
+        "拒绝把黑发白裙女子命名为 Elena：画面名卡只直接命名 Cora 并提到 Elena，未把 Elena 可靠绑定到具体人物。",
+        "拒绝推断婴儿与任一成年人的亲属关系。",
+        "拒绝冻结对白、说话人、心理状态或男子导致红月的强因果。",
+        "任何需要词级边界的高光均降级为视觉边界候选，须有可靠转写后再做音频安全确认。"
+      ]
+    },
+    {
+      "episode": "EP2",
+      "sourcePath": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/umuu90pueb51pcd/ep002_jsawtaxblt.mp4",
+      "sha256": "c26e8d94ab9e02f371a8028fd1a598f44013aaa8f479fd681cf65e76fb82fbf1",
+      "durationSeconds": 115.749,
+      "media": {"displayWidth": 720, "displayHeight": 1280, "nominalFrameRate": 25.0, "videoTracks": 1, "audioTracks": 0},
+      "observableFacts": [
+        {
+          "statement": "黑发白裙女子抱着白紫襁褓婴儿穿行雪林。",
+          "evidence": {"start": 0.0, "end": 14.0, "basis": "开场连续画面"},
+          "confidence": "high"
+        },
+        {
+          "statement": "女子在雪林中移动，画面随后出现靠近她与婴儿的灰狼；女子之后倒在雪地，皮肤和衣物可见划痕与血迹。",
+          "evidence": {"start": 14.0, "end": 50.0, "basis": "追逐/狼/倒地/伤痕的连续剪辑"},
+          "confidence": "high"
+        },
+        {
+          "statement": "黑金毛领男子到场并面对抱婴女子，Cora 与男子同框；男子手部/胸前出现红色发光效果。",
+          "evidence": {"start": 50.0, "end": 74.0, "basis": "中近景与光效"},
+          "confidence": "high"
+        },
+        {
+          "statement": "老年白发女性的画面名卡写有“Amelia / High Priestess”。",
+          "evidence": {"start": 78.0, "end": 82.0, "basis": "逐秒抽帧可清晰读取名卡"},
+          "confidence": "high"
+        },
+        {
+          "statement": "Amelia 名卡后出现发光符文圆环、由多只狼形轮廓环绕的橙色狼头意象，随后 Amelia 的双眼发白光。",
+          "evidence": {"start": 83.0, "end": 98.0, "basis": "连续特效镜头"},
+          "confidence": "high"
+        },
+        {
+          "statement": "末段转到明亮室内，抱婴女子、黑金毛领男子与 Amelia 同场。",
+          "evidence": {"start": 99.0, "end": 115.749, "basis": "室内群像"},
+          "confidence": "high"
+        },
+        {
+          "statement": "该 MP4 有 1 条视频轨、0 条音轨。",
+          "evidence": {"start": 0.0, "end": 115.749, "basis": "AVFoundation 容器级轨道读取"},
+          "confidence": "high"
+        }
+      ],
+      "characters": [
+        {"id": "series_darkhaired_woman_white_fur", "description": "黑发、白裙与毛领服饰成年女子；抱婴儿", "name": null, "nameEvidence": null, "confidence": "high"},
+        {"id": "series_darkhaired_man_ornate_fur", "description": "黑发、黑金华服与毛领成年男子", "name": null, "nameEvidence": null, "confidence": "high"},
+        {"id": "ep2_cora_blonde_purple", "description": "金发、紫黑服饰成年女子；与 EP1 的 Cora 外观一致", "name": "Cora", "nameEvidence": {"start": 23.5, "end": 27.5, "episode": "EP1", "basis": "跨集沿用 EP1 画面名卡与外观连续性"}, "confidence": "medium"},
+        {"id": "ep2_amelia_high_priestess", "description": "白发、鹿角/骨饰头冠老年女性", "name": "Amelia", "nameEvidence": {"start": 78.0, "end": 82.0, "text": "Amelia / High Priestess", "basis": "本集画面名卡"}, "confidence": "high"},
+        {"id": "series_infant_white_purple_wrap", "description": "白色襁褓、紫色腰带婴儿", "name": null, "nameEvidence": null, "confidence": "high"},
+        {"id": "ep2_gray_wolf", "description": "雪林中出现的灰狼", "name": null, "nameEvidence": null, "confidence": "high"}
+      ],
+      "relationships": [
+        {
+          "subjectId": "series_darkhaired_woman_white_fur",
+          "objectId": "series_infant_white_purple_wrap",
+          "statement": "女子全程抱持、遮护并带着婴儿移动；不判定亲属关系。",
+          "evidence": {"start": 0.0, "end": 50.0, "basis": "持续抱持与遮护动作"},
+          "confidence": "high"
+        },
+        {
+          "subjectId": "ep2_amelia_high_priestess",
+          "objectId": "series_darkhaired_woman_white_fur",
+          "statement": "Amelia 与抱婴女子在末段室内同场；具体社会关系不可由无声画面确定。",
+          "evidence": {"start": 99.0, "end": 115.749, "basis": "同场画面"},
+          "confidence": "high"
+        }
+      ],
+      "causalLinks": [
+        {
+          "cause": "狼在雪林中靠近/追随抱婴女子",
+          "effect": "后续女子倒地并出现伤痕",
+          "evidence": {"start": 14.0, "end": 50.0, "basis": "时间邻接，但攻击接触未被明确完整展示"},
+          "confidence": "low"
+        },
+        {
+          "cause": "Amelia 名卡后出现符文与狼群意象",
+          "effect": "Amelia 眼睛发白光",
+          "evidence": {"start": 78.0, "end": 98.0, "basis": "特效蒙太奇顺序；不据此解释能力机制"},
+          "confidence": "medium"
+        }
+      ],
+      "summary": "抱着白紫襁褓婴儿的黑发白裙女子进入雪林，之后遭遇灰狼并带伤倒地。黑金毛领男子与 Cora 到场，随后片中以名卡直接介绍 Amelia 为 High Priestess，并展示符文、狼形意象和发光眼睛。末段人物转至室内。该源文件完全没有音轨，因此本集只能作为画面序列盲评。",
+      "continuityOut": "末段把抱婴女子、黑金毛领男子与 Amelia 集合到室内；EP3 开头重新把相同外观的人物和白紫襁褓婴儿置于悬崖雪地场景，关系与去向仍未由对白证实。",
+      "highlightCandidates": [
+        {
+          "start": 14.0,
+          "end": 50.0,
+          "boundarySafety": {"visualStart": "safe_on_forest_action_transition", "visualEnd": "safe_before_new_character_arrival", "audio": "not_applicable_source_has_no_audio"},
+          "reason": "雪林移动、狼现身、倒地与伤痕组成完整视觉威胁链。",
+          "confidence": "medium"
+        },
+        {
+          "start": 78.0,
+          "end": 99.0,
+          "boundarySafety": {"visualStart": "safe_on_amelia_title_card", "visualEnd": "safe_before_interior_cut", "audio": "not_applicable_source_has_no_audio"},
+          "reason": "人物名卡、符文、狼群意象与发光眼睛构成完整的超自然视觉展示。",
+          "confidence": "high"
+        }
+      ],
+      "rejectOrDegrade": [
+        "硬性降级：源文件 audioTracks=0，不可作为带声成片、对白分析或音画同步高光的合格输入。",
+        "拒绝声称狼直接造成女子伤势：攻击接触未被完整明确展示。",
+        "拒绝从 Amelia 的视觉特效推断其具体能力、预言内容或对白。",
+        "Cora 的本集命名依赖 EP1 名卡与外观连续性，若逐集完全独立使用，应改回描述性 ID。"
+      ]
+    },
+    {
+      "episode": "EP3",
+      "sourcePath": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/d1ioorgaznqg6a4/ep003_kpjbcfsc8m.mp4",
+      "sha256": "aeee2cd6dde6e0304d8142a13d7601b556a3efbfe8babdf6d65c4896a6e8701c",
+      "durationSeconds": 137.117,
+      "media": {"displayWidth": 720, "displayHeight": 1280, "nominalFrameRate": 24.971433639526367, "videoTracks": 1, "audioTracks": 1},
+      "observableFacts": [
+        {"statement": "悬崖雪地上，抱婴女子面对包括黑金毛领男子和 Cora 在内的数人。", "evidence": {"start": 0.0, "end": 28.0, "basis": "悬崖全景及正反打"}, "confidence": "high"},
+        {"statement": "抱婴女子与婴儿被白色半透明球状屏障包围，Cora 在屏障外有反应镜头。", "evidence": {"start": 28.0, "end": 46.0, "basis": "球形光效及空间位置"}, "confidence": "high"},
+        {"statement": "黑金毛领男子在雪地俯身/下沉，随后镜头切到一只正面灰狼。", "evidence": {"start": 50.0, "end": 62.0, "basis": "关键段逐秒抽帧"}, "confidence": "high"},
+        {"statement": "抱婴女子贴近并抱紧婴儿；前景出现一名深色人形倒下/下沉，随后画面出现碎裂光效。", "evidence": {"start": 63.0, "end": 87.0, "basis": "连续动作与特效"}, "confidence": "medium"},
+        {"statement": "灰狼向女子与婴儿方向逼近，接着黑金毛领男子的双眼呈红色发光。", "evidence": {"start": 88.0, "end": 98.0, "basis": "逐秒抽帧连续镜头"}, "confidence": "high"},
+        {"statement": "末段抱婴女子身体和衣物有血迹并倒在雪地；Amelia、黑金毛领男子及其他人物出现近景。", "evidence": {"start": 99.0, "end": 137.117, "basis": "人物近景与倒地画面"}, "confidence": "high"}
+      ],
+      "characters": [
+        {"id": "series_darkhaired_woman_white_fur", "description": "黑发、白裙与毛领服饰成年女子；抱婴儿且身上有血迹", "name": null, "nameEvidence": null, "confidence": "high"},
+        {"id": "series_darkhaired_man_ornate_fur", "description": "黑发、黑金华服与毛领成年男子；后段双眼发红光", "name": null, "nameEvidence": null, "confidence": "high"},
+        {"id": "ep3_cora_blonde_purple", "description": "金发、紫黑服饰成年女子；与 EP1 的 Cora 外观一致", "name": "Cora", "nameEvidence": {"start": 23.5, "end": 27.5, "episode": "EP1", "basis": "跨集外观连续性加 EP1 名卡"}, "confidence": "medium"},
+        {"id": "ep3_amelia_high_priestess", "description": "白发、骨饰头冠老年女性；与 EP2 的 Amelia 外观一致", "name": "Amelia", "nameEvidence": {"start": 78.0, "end": 82.0, "episode": "EP2", "basis": "跨集外观连续性加 EP2 名卡"}, "confidence": "medium"},
+        {"id": "series_infant_white_purple_wrap", "description": "白色襁褓、紫色腰带婴儿", "name": null, "nameEvidence": null, "confidence": "high"},
+        {"id": "ep3_gray_wolf", "description": "悬崖雪地中的灰狼", "name": null, "nameEvidence": null, "confidence": "high"}
+      ],
+      "relationships": [
+        {"subjectId": "series_darkhaired_woman_white_fur", "objectId": "series_infant_white_purple_wrap", "statement": "女子持续抱持、贴近并遮护婴儿；不判定亲属关系。", "evidence": {"start": 0.0, "end": 115.0, "basis": "持续抱持与遮护动作"}, "confidence": "high"},
+        {"subjectId": "ep3_cora_blonde_purple", "objectId": "series_darkhaired_man_ornate_fur", "statement": "Cora 多次站在黑金毛领男子身后或旁边，共同面对抱婴女子；具体关系未知。", "evidence": {"start": 0.0, "end": 58.0, "basis": "空间同阵线"}, "confidence": "medium"}
+      ],
+      "causalLinks": [
+        {"cause": "球状屏障出现", "effect": "抱婴女子和婴儿与屏障外人物在空间上被分隔", "evidence": {"start": 28.0, "end": 46.0, "basis": "同镜头内可见空间分隔"}, "confidence": "high"},
+        {"cause": "灰狼逼近镜头", "effect": "随后切到黑金毛领男子红色发光双眼", "evidence": {"start": 88.0, "end": 98.0, "basis": "剪辑邻接，未证明狼与男子是同一实体"}, "confidence": "low"}
+      ],
+      "summary": "悬崖雪地上，抱婴女子与黑金毛领男子、Cora 等人对峙；白色球状屏障把女子和婴儿包围。随后出现男子俯身、灰狼、碎裂光效、灰狼逼近和男子红眼等镜头。末段抱婴女子带血倒地，Amelia 与其他人物出现。未把灰狼与任何人视为同一身份，也未推断伤势来源或对白。",
+      "continuityOut": "本集末段停留在悬崖雪地的伤者与婴儿；EP4 开头立刻展示同样白紫襁褓婴儿独自向悬崖下方坠落/下降，构成强动作衔接，但谁使其坠落未展示。",
+      "highlightCandidates": [
+        {"start": 28.0, "end": 46.0, "boundarySafety": {"visualStart": "safe_on_barrier_scene_start", "visualEnd": "safe_before_man_cutaway", "audio": "unverified_no_transcript"}, "reason": "球形屏障、母体式抱持构图与外部人物反应形成完整视觉段落；不赋予亲属含义。", "confidence": "high"},
+        {"start": 58.0, "end": 98.0, "boundarySafety": {"visualStart": "safe_on_cut_to_wolf", "visualEnd": "safe_on_cut_back_to_woman", "audio": "unverified_no_transcript"}, "reason": "灰狼出现、女子护住婴儿、碎裂光效、灰狼逼近与男子红眼组成递进式超自然冲突。", "confidence": "medium"}
+      ],
+      "rejectOrDegrade": [
+        "拒绝把灰狼认定为黑金毛领男子的变形或分身：只有剪辑邻接和红眼意象。",
+        "拒绝断定女子伤势、倒地或屏障破裂由具体人物造成。",
+        "拒绝推断任何亲属、阵营、心理状态和对白内容。",
+        "高光音频边界未获词级转写验证，均为视觉安全候选。"
+      ]
+    },
+    {
+      "episode": "EP4",
+      "sourcePath": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/qwu7arhqdy76fut/ep004_9cuqmt85eg.mp4",
+      "sha256": "a683338e9ad7533ffe7e7e75fc697e1e65d2ca5556a7fe8d4d7ec0849bde577f",
+      "durationSeconds": 205.075,
+      "media": {"displayWidth": 720, "displayHeight": 1280, "nominalFrameRate": 24.981103897094727, "videoTracks": 1, "audioTracks": 1},
+      "observableFacts": [
+        {"statement": "白紫襁褓婴儿沿悬崖方向向下移动/坠落，额头出现橙色狼形标记，胸前坠饰发光。", "evidence": {"start": 0.0, "end": 18.0, "basis": "开场连续特写与全景"}, "confidence": "high"},
+        {"statement": "画面文字“Cliffside Beach”出现在海浪镜头上。", "evidence": {"start": 18.0, "end": 23.0, "basis": "烧录地点卡"}, "confidence": "high"},
+        {"statement": "海面/岸边升起巨型蛇形生物，随后蓝色能量沿地面/水面冲向它。", "evidence": {"start": 27.0, "end": 38.0, "basis": "逐秒抽帧"}, "confidence": "high"},
+        {"statement": "蓝白发光的狼形实体扑咬蛇形生物，之后站在岸边岩石上。", "evidence": {"start": 38.0, "end": 49.0, "basis": "攻击与落位镜头"}, "confidence": "high"},
+        {"statement": "银灰长发、黑色华服成年男子以蓝色光效托住并抱住婴儿。", "evidence": {"start": 49.0, "end": 73.0, "basis": "接住、抱持及近景"}, "confidence": "high"},
+        {"statement": "画面文字“Shadow Pack Training Ground”出现在训练场转场。", "evidence": {"start": 74.0, "end": 80.0, "basis": "烧录地点卡"}, "confidence": "high"},
+        {"statement": "黑发夹红发束、皮毛短装女子在训练场持刀移动/交手，周围有多名成年观看者。", "evidence": {"start": 80.0, "end": 147.0, "basis": "训练动作与群像"}, "confidence": "high"},
+        {"statement": "该女子手臂出现红色裂纹状发光，随后训练场中的一名高大光头男子跪地。", "evidence": {"start": 148.0, "end": 167.0, "basis": "光效、悬崖转场及跪地镜头；不解释两者因果"}, "confidence": "high"},
+        {"statement": "橙色火焰狼形实体在女子身后显现；随后出现其面部、橙色眼睛及从上方覆盖女子的火焰狼意象。", "evidence": {"start": 173.0, "end": 199.0, "basis": "逐秒抽帧"}, "confidence": "high"},
+        {"statement": "片尾切到被暖色阳光照亮的树林。", "evidence": {"start": 199.0, "end": 205.075, "basis": "场景转场"}, "confidence": "high"}
+      ],
+      "characters": [
+        {"id": "series_infant_white_purple_wrap", "description": "白色襁褓、紫色腰带婴儿；额头出现橙色狼形标记", "name": null, "nameEvidence": null, "confidence": "high"},
+        {"id": "series_silverhaired_man_black_regalia", "description": "银灰长发、黑色华服成年男子；以蓝色光效接住婴儿", "name": null, "nameEvidence": null, "confidence": "high"},
+        {"id": "series_darkhaired_redstreak_trainee", "description": "黑发夹红发束、皮毛短装成年女子；持刀训练并与火焰狼意象同框", "name": null, "nameEvidence": null, "confidence": "high"},
+        {"id": "ep4_bald_large_trainee", "description": "高大光头成年男子；训练场中跪地", "name": null, "nameEvidence": null, "confidence": "high"},
+        {"id": "ep4_blue_spectral_wolf", "description": "蓝白发光狼形实体", "name": null, "nameEvidence": null, "confidence": "high"},
+        {"id": "series_orange_fire_wolf", "description": "橙色火焰狼形实体/意象", "name": null, "nameEvidence": null, "confidence": "high"}
+      ],
+      "relationships": [
+        {"subjectId": "series_silverhaired_man_black_regalia", "objectId": "series_infant_white_purple_wrap", "statement": "男子以蓝色光效托住并抱持婴儿；不判定亲属关系。", "evidence": {"start": 49.0, "end": 73.0, "basis": "接住与抱持动作"}, "confidence": "high"},
+        {"subjectId": "series_silverhaired_man_black_regalia", "objectId": "series_darkhaired_redstreak_trainee", "statement": "男子在训练场近距离握住/扶住女子肩部，后续观察她与火焰狼意象；具体身份关系未知。", "evidence": {"start": 138.0, "end": 188.0, "basis": "身体接触与观察镜头"}, "confidence": "medium"},
+        {"subjectId": "series_darkhaired_redstreak_trainee", "objectId": "series_orange_fire_wolf", "statement": "女子与火焰狼形实体连续同框并由同一橙色光效关联；不把狼认定为其变形。", "evidence": {"start": 173.0, "end": 199.0, "basis": "同框与匹配光效"}, "confidence": "medium"}
+      ],
+      "causalLinks": [
+        {"cause": "蓝白能量冲向蛇形生物并显现狼形实体", "effect": "狼形实体扑咬蛇形生物，婴儿随后被银发男子托住", "evidence": {"start": 32.0, "end": 54.0, "basis": "连续动作链"}, "confidence": "medium"},
+        {"cause": "女子手臂出现红色裂纹状光效", "effect": "后续出现橙色火焰狼形实体", "evidence": {"start": 148.0, "end": 183.0, "basis": "时间邻接与同色视觉关联，机制未展示"}, "confidence": "low"}
+      ],
+      "summary": "白紫襁褓婴儿从悬崖方向下降到标注为 Cliffside Beach 的海岸，巨型蛇形生物出现后，蓝白发光狼形实体发动攻击；银灰长发男子以蓝光托住并抱住婴儿。场景转到 Shadow Pack Training Ground，黑发红束女子持刀训练，手臂出现红色裂纹状光效，并在后段与橙色火焰狼意象同框。片尾切向树林。",
+      "continuityOut": "训练段后半展示橙色火焰狼，EP5 开头直接回到训练场的发光圆圈并展示蓝白狼与橙色狼对峙，形成明确视觉延续。",
+      "highlightCandidates": [
+        {"start": 27.0, "end": 54.0, "boundarySafety": {"visualStart": "safe_on_serpent_reveal", "visualEnd": "safe_after_infant_catch", "audio": "unverified_no_transcript"}, "reason": "蛇形生物现身、蓝色冲击、光狼扑咬和婴儿获接住构成完整动作段。", "confidence": "high"},
+        {"start": 167.0, "end": 199.0, "boundarySafety": {"visualStart": "safe_on_cut_from_kneeling_man_to_woman", "visualEnd": "safe_before_forest_cut", "audio": "unverified_no_transcript"}, "reason": "女子正面、火焰狼显现、狼眼特写及俯视火焰意象形成完整能力展示。", "confidence": "high"}
+      ],
+      "rejectOrDegrade": [
+        "拒绝说明是谁让婴儿坠落，也不推断银发男子与婴儿的亲属关系。",
+        "拒绝把蓝白狼或橙色狼认定为具体人物变形。",
+        "拒绝声称女子手臂光效直接导致光头男子跪地：中间有地点/群像切换。",
+        "高光音频边界未获词级转写验证，均为视觉安全候选。"
+      ]
+    },
+    {
+      "episode": "EP5",
+      "sourcePath": "/Users/julia_chen/Documents/ChatGPT/短剧/pb_data/storage/pbc_lumepisodes/d4hl19mhjzv393s/ep005_d218wasmj6.mp4",
+      "sha256": "f5d2345d277887609b925b47b31c81d465f8fbd0a5ef6282d232b95d322480b6",
+      "durationSeconds": 84.575,
+      "media": {"displayWidth": 720, "displayHeight": 1280, "nominalFrameRate": 24.960094451904297, "videoTracks": 1, "audioTracks": 1},
+      "observableFacts": [
+        {"statement": "黑发红束女子站在地面的橙色发光圆圈中，银灰长发男子面对她。", "evidence": {"start": 0.0, "end": 8.0, "basis": "开场全景与男子近景"}, "confidence": "high"},
+        {"statement": "蓝白狼形实体与橙色火焰狼形实体在训练场相对并发生能量碰撞/对抗。", "evidence": {"start": 8.0, "end": 18.0, "basis": "双狼同框与光效"}, "confidence": "high"},
+        {"statement": "红发成年女子站在橙色圆圈中，身后显现大型火焰狼形实体。", "evidence": {"start": 18.0, "end": 32.0, "basis": "圆圈、手部光效与狼形显现"}, "confidence": "high"},
+        {"statement": "银灰长发男子展示一枚黑色圆形小物，随后红发女子接触/接收该物。", "evidence": {"start": 33.0, "end": 48.0, "basis": "物件特写与交接手部镜头"}, "confidence": "high"},
+        {"statement": "黑发红束女子出现近景，银灰长发男子在她旁边并短暂扶/靠近她；随后特写其颈前的狼头/兽首形坠饰。", "evidence": {"start": 48.0, "end": 64.0, "basis": "人物近景与坠饰特写"}, "confidence": "high"},
+        {"statement": "末段多名训练场人物围观，银灰长发男子占据主要近景并张口说话；对白内容不可用。", "evidence": {"start": 65.0, "end": 84.575, "basis": "群像与口型；未做转写"}, "confidence": "high"}
+      ],
+      "characters": [
+        {"id": "series_darkhaired_redstreak_trainee", "description": "黑发夹红发束、皮毛短装成年女子；开场站在发光圆圈中", "name": null, "nameEvidence": null, "confidence": "high"},
+        {"id": "series_silverhaired_man_black_regalia", "description": "银灰长发、黑色华服成年男子", "name": null, "nameEvidence": null, "confidence": "high"},
+        {"id": "ep5_redhaired_woman", "description": "红发、皮毛短装成年女子；与火焰狼形实体同框", "name": null, "nameEvidence": null, "confidence": "high"},
+        {"id": "ep5_blue_spectral_wolf", "description": "蓝白发光狼形实体", "name": null, "nameEvidence": null, "confidence": "high"},
+        {"id": "series_orange_fire_wolf", "description": "橙色火焰狼形实体", "name": null, "nameEvidence": null, "confidence": "high"}
+      ],
+      "relationships": [
+        {"subjectId": "series_silverhaired_man_black_regalia", "objectId": "ep5_redhaired_woman", "statement": "男子向红发女子展示并交付/让其接触黑色圆形小物；具体授予含义未知。", "evidence": {"start": 33.0, "end": 48.0, "basis": "物件特写与手部交接"}, "confidence": "high"},
+        {"subjectId": "series_silverhaired_man_black_regalia", "objectId": "series_darkhaired_redstreak_trainee", "statement": "男子在女子近景旁扶住/靠近她；具体师徒、亲属或阵营关系未知。", "evidence": {"start": 53.0, "end": 59.0, "basis": "近身接触"}, "confidence": "medium"},
+        {"subjectId": "ep5_redhaired_woman", "objectId": "series_orange_fire_wolf", "statement": "红发女子与橙色火焰狼形实体在同一圆圈段落中连续出现；不认定为变形关系。", "evidence": {"start": 18.0, "end": 32.0, "basis": "同场光效与显现镜头"}, "confidence": "medium"}
+      ],
+      "causalLinks": [
+        {"cause": "训练场圆圈发光并出现人物手部能量", "effect": "随后狼形实体显现/对抗", "evidence": {"start": 0.0, "end": 32.0, "basis": "连续视觉段落；不解释法术机制"}, "confidence": "medium"},
+        {"cause": "银发男子展示黑色圆形小物", "effect": "红发女子伸手接触/接收", "evidence": {"start": 38.0, "end": 48.0, "basis": "同一物件的连续交接镜头"}, "confidence": "high"}
+      ],
+      "summary": "训练场开场展示黑发红束女子站在发光圆圈中，随后蓝白狼与橙色火焰狼对抗；红发女子也在圆圈中显现火焰狼意象。银灰长发男子向红发女子展示并交接一枚黑色圆形小物。后段回到黑发红束女子与银发男子，并特写她颈前的兽首形坠饰；群像结尾中男子开口，但对白未冻结。",
+      "continuityOut": "本任务只覆盖到 EP5；片尾以训练场群像和银灰长发男子近景结束，没有审阅后续集。",
+      "highlightCandidates": [
+        {"start": 8.0, "end": 32.0, "boundarySafety": {"visualStart": "safe_on_cut_to_spectral_wolves", "visualEnd": "safe_before_dialogue_closeups", "audio": "unverified_no_transcript"}, "reason": "蓝白狼与火焰狼对抗后，红发女子在圆圈中显现火焰狼，视觉主题完整。", "confidence": "high"},
+        {"start": 38.0, "end": 64.0, "boundarySafety": {"visualStart": "safe_on_object_closeup", "visualEnd": "safe_after_pendant_reveal", "audio": "unverified_no_transcript"}, "reason": "圆形小物展示与交接，随后切到另一女子和兽首坠饰特写，适合作为物件线索段，但两件物品是否相同不可确定。", "confidence": "medium"}
+      ],
+      "rejectOrDegrade": [
+        "拒绝把蓝白狼或橙色狼认定为具体人物变形。",
+        "拒绝解释黑色圆形小物与兽首坠饰的名称、用途或是否为同一物。",
+        "拒绝推断银发男子与两名女子的师徒、亲属、伴侣或阵营关系。",
+        "末段虽有明显口型，因无可靠转写而拒绝对白与说话人内容；高光音频边界仍须复核。"
+      ]
+    }
+  ],
+  "crossEpisodeContinuity": [
+    {
+      "from": "EP1",
+      "to": "EP2",
+      "statement": "EP1 片尾黑金毛领男子举高白紫襁褓婴儿；EP2 开头外观一致的黑发白裙女子抱着同样襁褓婴儿进入雪林。",
+      "evidence": {"fromStart": 178.0, "fromEnd": 182.95, "toStart": 0.0, "toEnd": 8.0, "basis": "襁褓颜色/服装与人物外观连续"},
+      "confidence": "medium"
+    },
+    {
+      "from": "EP2",
+      "to": "EP3",
+      "statement": "EP2 末段把抱婴女子、黑金毛领男子和 Amelia 集合到室内；EP3 开头在悬崖雪地重新出现抱婴女子、男子、Cora 等人。",
+      "evidence": {"fromStart": 99.0, "fromEnd": 115.749, "toStart": 0.0, "toEnd": 12.0, "basis": "人物外观与白紫襁褓连续"},
+      "confidence": "medium"
+    },
+    {
+      "from": "EP3",
+      "to": "EP4",
+      "statement": "EP3 末段仍位于悬崖雪地并围绕抱婴女子；EP4 开头同样白紫襁褓婴儿沿悬崖向下移动，随后抵达标注为 Cliffside Beach 的海岸段。",
+      "evidence": {"fromStart": 99.0, "fromEnd": 137.117, "toStart": 0.0, "toEnd": 23.0, "basis": "地点地貌与襁褓外观强连续"},
+      "confidence": "high"
+    },
+    {
+      "from": "EP4",
+      "to": "EP5",
+      "statement": "EP4 后段训练场显现橙色火焰狼；EP5 开头回到训练场发光圆圈，并展示蓝白狼与橙色狼对抗。",
+      "evidence": {"fromStart": 173.0, "fromEnd": 199.0, "toStart": 0.0, "toEnd": 18.0, "basis": "训练场、人物造型与狼形光效连续"},
+      "confidence": "high"
+    }
+  ],
+  "globalRejectOrDegrade": [
+    "所有情绪、心理、身份、阵营、亲属、伴侣和说话人信息，除非有明确画面名卡/烧录文字或可核验对白，否则不冻结。",
+    "EP1/EP3/EP4/EP5 虽有音轨，但本次没有可靠词级转写；所有对白、语义因果与音频边界均拒绝或降级。",
+    "EP2 没有任何音轨，必须拒绝把它当作完整音视频母版或对白分析输入。",
+    "跨集同一人物判断只基于造型、面孔和连续道具，保持 medium；人物名称只在存在画面名卡的集内为 high。"
+  ]
+}

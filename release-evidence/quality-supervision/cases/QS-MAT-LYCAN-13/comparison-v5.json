@@ -1,0 +1,161 @@
+{
+  "caseId": "QS-MAT-LYCAN-13",
+  "comparisonVersion": "v5",
+  "golden": {
+    "version": "v1",
+    "status": "frozen_blind",
+    "sha256": "ca2c502069a14088d018beddc959555d9cd080f75f184933be2efe18da1e1c7d",
+    "unchanged": true
+  },
+  "system": {
+    "materialId": "zmzrljhnwl4uxw5",
+    "jobId": "30wqqaz0u3vav09",
+    "snapshotSha256": "e861fd1a3abb749d8fb268113603c1f19b0a1512a473e470bbb394b3d767bafc",
+    "terminalStatus": "succeeded",
+    "progress": 100,
+    "terminalStage": "completed",
+    "finalResultPresent": true,
+    "semanticModel": "qwen-vl-max",
+    "semanticPromptVersion": "material-v2-20260830.1",
+    "verifiedFactCount": 3,
+    "characterCount": 2,
+    "relationshipCount": 1,
+    "hookCount": 1,
+    "materialConfidence": 49,
+    "productionStatus": "blocked",
+    "sourceAttribution": "pending",
+    "qualityGatePassed": false
+  },
+  "verdict": {
+    "engineeringExecution": "PASS",
+    "contentQuality": "STRUCTURALLY_IMPROVED_BUT_FACTUALLY_BELOW_GATE",
+    "productionSafety": "PASS_BLOCKING_BEHAVIOR",
+    "hardGate": "NO-GO",
+    "reason": "OCR point evidence and shot-boundary handling improved, but the sole verified command-response relationship links the opening male command to the later response that golden evidence attributes to the purple-clad woman's naming. Verified bodyFormat also retains dangling fact references."
+  },
+  "scores": {
+    "factAndEvidenceAccuracy": 52,
+    "highlightLocalization": 82,
+    "hookRetention": 77,
+    "storyCompleteness": 68,
+    "hookMainMatch": null,
+    "transitionNarration": null,
+    "engineeringReliability": 90,
+    "fullWeightedTotal": null,
+    "scopeNormalizedScore": 69,
+    "scopeNormalizedDenominatorWeight": 75,
+    "priorScopeNormalizedScores": {"v1": 22, "v2": 28, "v3": 66, "v4": 70}
+  },
+  "requestedChecks": [
+    {
+      "check": "point-sampled OCR independently supports title fact",
+      "result": "pass",
+      "evidence": "ocr_frame at 17.5s has sampleType=point, start=end=17.5, a concrete framePath, and sourceText 'Killian the Juggernaut.'. The frame exists (SHA-256 de0558457a05b623e3d97ee8fb78491352bc53d525fffb5e20cfb228fce9064a) and independent visual inspection confirms that subtitle."
+    },
+    {
+      "check": "three verified facts",
+      "result": "pass_with_asr_residual",
+      "evidence": "fact-002, local-dialogue-title and local-dialogue-response exist and are verified. The title fact is cross-supported by ASR and point OCR; the ASR phrase remains mistranscribed."
+    },
+    {
+      "check": "two characters and one command-response relationship",
+      "result": "fail_hard_gate",
+      "evidence": "Two character nodes exist, but character-command-speaker is based on the 0–2.86s armored man's command while the 20.9–21.86s response follows the purple-clad woman's 16.1–20.4s naming in the golden. Linking those as one verified relationship conflates two speakers/events."
+    },
+    {
+      "check": "unverified kneeling and observer shock not claimed fixed",
+      "result": "pass",
+      "evidence": "No verified fact asserts kneeling or shock; hook visualSummary explicitly requires human verification."
+    },
+    {
+      "check": "hook end snapped to a real shot boundary",
+      "result": "pass_with_review_gate",
+      "evidence": "Hook ends at 23.9s; safeEnd nearestShotBoundary=23.9 with adjacent shot intervals 22.133–23.9 and 23.9–25.1. action=shot_boundary_only and semantic/frame remain unverified, so reviewRequired=true and status=unverified are correct."
+    },
+    {
+      "check": "stale repaired-edge diagnostics removed from qualityGate reasons",
+      "result": "pass",
+      "evidence": "No current reason claims segments/transitions/timeline reference fact-003/004/005/006; rejected cut/fade claims include rejectionReason under review.rejectedClaims."
+    }
+  ],
+  "evidenceGraphAudit": {
+    "coreRequestedLayers": {
+      "result": "pass",
+      "verifiedFactIds": ["fact-002", "local-dialogue-title", "local-dialogue-response"],
+      "invalidReferencesInObservationsSegmentsTimelineTransitionsHooks": []
+    },
+    "fullPublishedGraph": {
+      "result": "fail",
+      "invalidPublishedReferences": [
+        {"path": "creative.bodyFormat", "factIds": ["fact-001", "fact-003"], "verification": "verified"},
+        {"path": "value.risks[1]", "factIds": ["fact-003"], "verification": "unverified"},
+        {"path": "creative.hookSourceStatus", "factIds": ["fact-001"], "verification": "unverified"}
+      ],
+      "note": "The v4 P0 remains closed for its explicitly tested core layers, but the broader published graph is not closed. RejectedClaims references are intentionally excluded from this failure list."
+    }
+  },
+  "timecodeAndCausalComparison": [
+    {"golden": "0–3.4 armored man commands Juggernaut", "system": "fact-002, 0–2.86", "result": "partial_match"},
+    {"golden": "3.4–6.7 purple-clad woman's death taunt", "system": "absent", "result": "omission"},
+    {"golden": "16.1–20.4 purple-clad woman names Killian / champion", "system": "title fact 16.8–20.04 plus OCR point at 17.5; speaker not represented", "result": "partial_match"},
+    {"golden": "20.9–21.86 Killian responds to the later caller", "system": "response fact exists but relationship points to opening command speaker", "result": "causal_misattribution"},
+    {"golden": "kneeling and observer shock 20.9–25.2", "system": "not promoted; manual visual review required", "result": "safe_omission_pending_review"},
+    {"golden": "strongest highlight 15.1–23.5", "system": "15.1–23.9 snapped to shot boundary", "result": "high_match_boundary_review_required"}
+  ],
+  "hardGates": {
+    "result": "NO-GO",
+    "triggered": [
+      "critical_command_response_relationship_misattributed",
+      "verified_published_claim_references_nonexistent_or_rejected_evidence"
+    ],
+    "notTriggered": [
+      "unverified_visual_action_promoted_as_fact",
+      "unsafe_hook_boundary_auto_approved",
+      "unapproved_asset_entered_production"
+    ]
+  },
+  "priorGapRetest": [
+    {"id": "QS-L13-V4-P1-001", "status": "partially_fixed_with_new_p0", "evidence": "Facts/characters/relationship were added, but the relationship joins the wrong command speaker to the response; kneeling/shock correctly remain unverified."},
+    {"id": "QS-L13-V4-P1-002", "status": "partially_fixed_safely_blocked", "evidence": "23.9 is a real shot boundary; action is only shot_boundary_only and semantic/frame are unverified, with human review retained."},
+    {"id": "QS-L13-V4-P1-003", "status": "not_fixed", "evidence": "EPISODE_SPLICE/正片剧集拼接 remains projected; creative.bodyFormat is verified using fact-001/fact-003 that are not verified observations."},
+    {"id": "QS-L13-V4-P2-001", "status": "fixed", "evidence": "Stale current-edge reasons were removed; rejected transition claims now carry rejectionReason."},
+    {"id": "QS-L13-V4-P2-002", "status": "not_fixed", "evidence": "No immutable predecessor failure record is visible in the current job snapshot."}
+  ],
+  "developmentItems": [
+    {
+      "id": "QS-L13-V5-P0-001",
+      "severity": "P0",
+      "module": "processor/semantic_analysis.py entity/relationship synthesis",
+      "task": "Do not infer a command-response edge merely from a command at 0s and response at 21s. Create the later caller as a separate review-safe entity only when speaker/frame evidence exists, and link the response to that later event; otherwise leave relationship unverified.",
+      "regression": "This case must not link character-command-speaker based on fact-002 to local-dialogue-response. The 16.1–20.4 caller remains distinct from the 0–2.86 speaker unless evidence proves identity."
+    },
+    {
+      "id": "QS-L13-V5-P0-002",
+      "severity": "P0",
+      "module": "processor/semantic_analysis.py full output evidence reconciliation",
+      "task": "Apply graph closure to all published layers, including creative.bodyFormat, hookSourceStatus and value.risks, not only story layers.",
+      "regression": "Outside review.rejectedClaims, no published claim may reference fact-001/fact-003/fact-006 unless it exists as a verified observation."
+    },
+    {
+      "id": "QS-L13-V5-P1-001",
+      "severity": "P1",
+      "module": "processor visual fact extraction",
+      "task": "Add independently evidenced visual facts for kneeling and observer reactions, with frame/clip intervals and conservative actor labels; do not infer unsupported identity or emotion from a single frame.",
+      "regression": "Golden 20.9–25.2 visual actions are either verified with replayable positive-duration evidence or explicitly remain pending."
+    },
+    {
+      "id": "QS-L13-V5-P1-002",
+      "severity": "P1",
+      "module": "processor hook boundary verification",
+      "task": "Retain 23.9 shot snap but obtain action/semantic closure evidence before approval.",
+      "regression": "Shot-boundary-only must never be promoted to approved safeEnd without action and semantic review."
+    },
+    {
+      "id": "QS-L13-V5-P1-003",
+      "severity": "P1",
+      "module": "format classifier and PocketBase projection",
+      "task": "Project material format as unknown until assembly/source-boundary evidence exists.",
+      "regression": "The isolated ad cannot be verified as episode splice from generic full-duration transcript or rejected facts."
+    }
+  ]
+}

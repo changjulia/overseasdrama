@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "preprod-attestation-v1",
+  "control": "monitoring-alerts",
+  "environment": "REPLACE_WITH_PREPROD_ENVIRONMENT",
+  "executedAt": "2000-01-01T00:00:00Z",
+  "releaseCommit": "0000000000000000000000000000000000000000",
+  "result": "failed",
+  "operator": "REPLACE",
+  "reviewer": "REPLACE_WITH_INDEPENDENT_REVIEWER",
+  "secretRedactionVerified": true,
+  "signedUrlRedactionVerified": true,
+  "evidence": [
+    {
+      "signals": ["pocketbase_health", "queue_oldest_age", "lease_expired", "worker_restart", "disk", "backup_freshness"],
+      "notificationChannel": "REDACTED_CHANNEL_NAME",
+      "injectedIncidentId": "REPLACE",
+      "delivered": false,
+      "resolvedNotificationDelivered": false
+    }
+  ]
+}

@@ -250,6 +250,31 @@
 .taskFeedback { background: #edf5ff; color: #245fba; }
 .taskError { background: #fff0ef; color: #b83a34; }
 
+.stallWarning,
+.failureEvidence {
+  border: 1px solid #efd39c;
+  border-radius: 9px;
+  display: grid;
+  font-size: 10px;
+  gap: 7px;
+  line-height: 1.5;
+  margin: 10px 0;
+  padding: 10px;
+}
+
+.stallWarning { background: #fff8e9; color: #805716; }
+.failureEvidence { background: #fff2f1; border-color: #efc2bf; color: #8d302c; }
+.stallWarning b,
+.failureEvidence b { font-size: 11px; }
+.stallWarning code,
+.failureEvidence code { background: #ffffffaa; border-radius: 5px; overflow-wrap: anywhere; padding: 5px 7px; }
+.failureEvidence p { margin: 0; }
+.failureEvidence div > span { font-weight: 750; }
+.failureEvidence ul { display: flex; flex-wrap: wrap; gap: 5px; list-style: none; margin: 5px 0 0; padding: 0; }
+.failureEvidence li { background: #fff; border: 1px solid #edc8c5; border-radius: 999px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; padding: 3px 6px; }
+.failureEvidence summary { cursor: pointer; font-weight: 700; }
+.failureEvidence pre { background: #2b2022; border-radius: 7px; color: #f7e8e8; font-size: 8px; margin: 7px 0 0; max-height: 180px; overflow: auto; padding: 8px; white-space: pre-wrap; word-break: break-word; }
+
 .primaryButton,
 .reviewActions button,
 .exportActions button {
