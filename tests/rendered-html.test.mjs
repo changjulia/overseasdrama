@@ -59,6 +59,8 @@ test("keeps the documented frontend modules integrated", async () => {
   assert.doesNotMatch(inspiration, /检测到镜头切换，回看片段确认/);
   assert.doesNotMatch(inspiration, /该素材已完成旧版分析，但尚未生成 material-v2/);
   assert.match(inspiration, /正在读取 material-v2 分析详情/);
+  assert.match(inspiration, /detailed\.analysisStatus !== "succeeded"/);
+  assert.match(inspiration, /url\.searchParams\.delete\("analysis"\)/);
   assert.match(inspiration, /detailRequests/);
   assert.match(inspiration, /existing\?\.analysisV2&&!item\.analysisV2/);
   assert.match(inspiration, /仅看分析完成/);
@@ -103,7 +105,7 @@ test("keeps the external-hook production workflow explicit and evidence-backed",
     readFile(new URL("../app/features/factory/components/ExternalHookAnalysis.tsx", import.meta.url), "utf8"),
   ]);
 
-  for (const step of ["选择剧集", "生成并选择正片故事线", "按故事走向匹配外搭钩子", "设计过渡", "成片时间线", "质检", "预览和审核", "保存和导出"]) {
+  for (const step of ["选择剧目与高光", "生成并选择高光故事线", "逐故事线召回钩子", "设计过渡", "成片时间线", "质检", "预览和审核", "保存和导出"]) {
     assert.ok(factory.includes(step), `missing production workflow step: ${step}`);
   }
   assert.match(factory, /productionGate/);

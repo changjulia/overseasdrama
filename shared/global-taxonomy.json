@@ -1,0 +1,1217 @@
+{
+  "version": "global-taxonomy-v1",
+  "dimensions": [
+    "genre",
+    "theme",
+    "role",
+    "relation",
+    "conflict",
+    "emotion",
+    "storyBeat",
+    "scene",
+    "audience",
+    "acquisition"
+  ],
+  "legacyCodeMap": {
+    "genre.都市": "genre.都市",
+    "genre.古装": "genre.古装",
+    "genre.悬疑": "genre.悬疑",
+    "genre.甜宠": "genre.甜宠",
+    "genre.豪门": "genre.豪门",
+    "genre.年代": "genre.年代",
+    "genre.仙侠": "genre.仙侠",
+    "genre.现实": "genre.现实",
+    "theme.复仇": "theme.复仇",
+    "theme.重生": "theme.重生",
+    "theme.成长": "theme.成长",
+    "theme.救赎": "theme.救赎",
+    "theme.家族": "theme.家族",
+    "theme.女性独立": "theme.女性独立",
+    "theme.阶层逆袭": "theme.阶层逆袭",
+    "theme.真相": "theme.真相",
+    "theme.契约婚姻": "theme.契约婚姻",
+    "theme.身份反转": "theme.身份反转",
+    "theme.背叛": "theme.背叛",
+    "theme.亲情": "theme.亲情",
+    "role.主角": "role.主角",
+    "role.男主": "role.男主",
+    "role.女主": "role.女主",
+    "role.反派": "role.反派",
+    "role.配角": "role.配角",
+    "role.受害者": "role.受害者",
+    "role.权威者": "role.权威者",
+    "relation.恋人": "relation.恋人",
+    "relation.夫妻": "relation.夫妻",
+    "relation.亲子": "relation.亲子",
+    "relation.敌对": "relation.敌对",
+    "relation.盟友": "relation.盟友",
+    "relation.上下级": "relation.上下级",
+    "relation.师徒": "relation.师徒",
+    "relation.背叛": "relation.背叛",
+    "conflict.身份误会": "conflict.身份误会",
+    "conflict.复仇对抗": "conflict.复仇对抗",
+    "conflict.权力争夺": "conflict.权力争夺",
+    "conflict.生存危机": "conflict.生存危机",
+    "conflict.情感选择": "conflict.情感选择",
+    "conflict.家族反目": "conflict.家族反目",
+    "conflict.阶层压迫": "conflict.阶层压迫",
+    "conflict.法律困境": "conflict.法律困境",
+    "emotion.愤怒": "emotion.愤怒",
+    "emotion.悲伤": "emotion.悲伤",
+    "emotion.甜蜜": "emotion.甜蜜",
+    "emotion.紧张": "emotion.紧张",
+    "emotion.爽感": "emotion.爽感",
+    "emotion.虐": "emotion.虐",
+    "emotion.震惊": "emotion.震惊",
+    "emotion.期待": "emotion.期待",
+    "emotion.恐惧": "emotion.恐惧",
+    "storyBeat.开场钩子": "storyBeat.开场钩子",
+    "storyBeat.反转": "storyBeat.反转",
+    "storyBeat.打脸": "storyBeat.打脸",
+    "storyBeat.告白": "storyBeat.告白",
+    "storyBeat.揭密": "storyBeat.揭密",
+    "storyBeat.危机": "storyBeat.危机",
+    "storyBeat.误会": "storyBeat.误会",
+    "storyBeat.团圆": "storyBeat.团圆",
+    "storyBeat.离别": "storyBeat.离别",
+    "storyBeat.复合": "storyBeat.复合",
+    "storyBeat.羞辱": "storyBeat.羞辱",
+    "storyBeat.反击": "storyBeat.反击",
+    "storyBeat.兑现": "storyBeat.兑现",
+    "scene.办公室": "scene.办公室",
+    "scene.医院": "scene.医院",
+    "scene.家中": "scene.家中",
+    "scene.法庭": "scene.法庭",
+    "scene.校园": "scene.校园",
+    "scene.宴会": "scene.宴会",
+    "scene.警局": "scene.警局",
+    "scene.街道": "scene.街道",
+    "scene.酒店": "scene.酒店",
+    "scene.监狱": "scene.监狱",
+    "audience.女性向": "audience.女性向",
+    "audience.男性向": "audience.男性向",
+    "audience.年轻人群": "audience.年轻人群",
+    "audience.家庭人群": "audience.家庭人群",
+    "audience.下沉人群": "audience.下沉人群",
+    "audience.高消费人群": "audience.高消费人群",
+    "acquisition.信息差": "acquisition.信息差",
+    "acquisition.情绪拉升": "acquisition.情绪拉升",
+    "acquisition.强冲突": "acquisition.强冲突",
+    "acquisition.悬念预告": "acquisition.悬念预告",
+    "acquisition.身份揭示": "acquisition.身份揭示",
+    "acquisition.反差": "acquisition.反差",
+    "acquisition.爽点兑现": "acquisition.爽点兑现",
+    "acquisition.虐点共情": "acquisition.虐点共情"
+  },
+  "pendingAliases": [
+    "年下",
+    "fantasy",
+    "家长",
+    "boss"
+  ],
+  "definitions": [
+    {
+      "code": "genre.都市",
+      "label": "都市",
+      "dimension": "genre",
+      "aliases": [
+        "都市",
+        "都市剧",
+        "现代",
+        "urban",
+        "urban drama"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "genre.古装",
+      "label": "古装",
+      "dimension": "genre",
+      "aliases": [
+        "古装",
+        "古装剧",
+        "历史剧",
+        "period",
+        "historical"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "genre.悬疑",
+      "label": "悬疑",
+      "dimension": "genre",
+      "aliases": [
+        "悬疑",
+        "悬疑剧",
+        "推理",
+        "mystery",
+        "thriller"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "genre.甜宠",
+      "label": "甜宠",
+      "dimension": "genre",
+      "aliases": [
+        "甜宠",
+        "甜宠剧",
+        "言情",
+        "romance",
+        "sweet romance"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "genre.豪门",
+      "label": "豪门",
+      "dimension": "genre",
+      "aliases": [
+        "豪门",
+        "豪门剧",
+        "霸总",
+        "billionaire romance"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "genre.年代",
+      "label": "年代",
+      "dimension": "genre",
+      "aliases": [
+        "年代",
+        "年代剧",
+        "republican era"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "genre.仙侠",
+      "label": "仙侠",
+      "dimension": "genre",
+      "aliases": [
+        "仙侠",
+        "仙侠剧",
+        "xianxia"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "genre.现实",
+      "label": "现实",
+      "dimension": "genre",
+      "aliases": [
+        "现实",
+        "现实题材",
+        "realistic"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "theme.复仇",
+      "label": "复仇",
+      "dimension": "theme",
+      "aliases": [
+        "复仇",
+        "revenge"
+      ],
+      "related": [
+        "conflict.复仇对抗"
+      ],
+      "contradicts": []
+    },
+    {
+      "code": "theme.重生",
+      "label": "重生",
+      "dimension": "theme",
+      "aliases": [
+        "重生",
+        "重生逆袭",
+        "rebirth",
+        "second chance"
+      ],
+      "related": [
+        "storyBeat.反转"
+      ],
+      "contradicts": []
+    },
+    {
+      "code": "theme.成长",
+      "label": "成长",
+      "dimension": "theme",
+      "aliases": [
+        "成长",
+        "成长线",
+        "growth"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "theme.救赎",
+      "label": "救赎",
+      "dimension": "theme",
+      "aliases": [
+        "救赎",
+        "redemption"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "theme.家族",
+      "label": "家族",
+      "dimension": "theme",
+      "aliases": [
+        "家族",
+        "家族线",
+        "family",
+        "family saga"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "theme.女性独立",
+      "label": "女性独立",
+      "dimension": "theme",
+      "aliases": [
+        "女性独立",
+        "女性成长",
+        "女强",
+        "female empowerment"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "theme.阶层逆袭",
+      "label": "阶层逆袭",
+      "dimension": "theme",
+      "aliases": [
+        "阶层逆袭",
+        "逆袭",
+        "social mobility"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "theme.真相",
+      "label": "真相",
+      "dimension": "theme",
+      "aliases": [
+        "真相",
+        "寻找真相",
+        "truth"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "theme.契约婚姻",
+      "label": "契约婚姻",
+      "dimension": "theme",
+      "aliases": [
+        "契约婚姻",
+        "契约",
+        "contract marriage"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "theme.身份反转",
+      "label": "身份反转",
+      "dimension": "theme",
+      "aliases": [
+        "身份反转",
+        "身份逆转",
+        "identity reversal"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "theme.背叛",
+      "label": "背叛",
+      "dimension": "theme",
+      "aliases": [
+        "背叛",
+        "betrayal theme"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "theme.亲情",
+      "label": "亲情",
+      "dimension": "theme",
+      "aliases": [
+        "亲情",
+        "family love",
+        "kinship"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "role.主角",
+      "label": "主角",
+      "dimension": "role",
+      "aliases": [
+        "主角",
+        "主人公",
+        "男女主",
+        "protagonist",
+        "lead"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "role.男主",
+      "label": "男主",
+      "dimension": "role",
+      "aliases": [
+        "男主",
+        "male lead",
+        "hero"
+      ],
+      "related": [],
+      "contradicts": [],
+      "parent": "role.主角"
+    },
+    {
+      "code": "role.女主",
+      "label": "女主",
+      "dimension": "role",
+      "aliases": [
+        "女主",
+        "female lead",
+        "heroine"
+      ],
+      "related": [],
+      "contradicts": [],
+      "parent": "role.主角"
+    },
+    {
+      "code": "role.反派",
+      "label": "反派",
+      "dimension": "role",
+      "aliases": [
+        "反派",
+        "villain",
+        "antagonist"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "role.配角",
+      "label": "配角",
+      "dimension": "role",
+      "aliases": [
+        "配角",
+        "supporting character"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "role.受害者",
+      "label": "受害者",
+      "dimension": "role",
+      "aliases": [
+        "受害者",
+        "victim"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "role.权威者",
+      "label": "权威者",
+      "dimension": "role",
+      "aliases": [
+        "权威者",
+        "authority"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "relation.恋人",
+      "label": "恋人",
+      "dimension": "relation",
+      "aliases": [
+        "恋人",
+        "情侣",
+        "lovers",
+        "romantic partners"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "relation.夫妻",
+      "label": "夫妻",
+      "dimension": "relation",
+      "aliases": [
+        "夫妻",
+        "夫妻关系",
+        "spouses",
+        "married"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "relation.亲子",
+      "label": "亲子",
+      "dimension": "relation",
+      "aliases": [
+        "亲子",
+        "父子",
+        "母子",
+        "parent-child"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "relation.敌对",
+      "label": "敌对",
+      "dimension": "relation",
+      "aliases": [
+        "敌对",
+        "对手",
+        "敌人",
+        "rivals",
+        "enemies"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "relation.盟友",
+      "label": "盟友",
+      "dimension": "relation",
+      "aliases": [
+        "盟友",
+        "同盟",
+        "allies"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "relation.上下级",
+      "label": "上下级",
+      "dimension": "relation",
+      "aliases": [
+        "上下级",
+        "雇佣关系",
+        "上下属",
+        "subordinate"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "relation.师徒",
+      "label": "师徒",
+      "dimension": "relation",
+      "aliases": [
+        "师徒",
+        "师生",
+        "师徒关系",
+        "mentor"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "relation.背叛",
+      "label": "背叛",
+      "dimension": "relation",
+      "aliases": [
+        "背叛",
+        "betrayal"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "conflict.身份误会",
+      "label": "身份误会",
+      "dimension": "conflict",
+      "aliases": [
+        "身份误会",
+        "身份错认",
+        "identity misunderstanding",
+        "mistaken identity"
+      ],
+      "related": [
+        "storyBeat.误会"
+      ],
+      "contradicts": []
+    },
+    {
+      "code": "conflict.复仇对抗",
+      "label": "复仇对抗",
+      "dimension": "conflict",
+      "aliases": [
+        "复仇对抗",
+        "revenge conflict"
+      ],
+      "related": [
+        "theme.复仇"
+      ],
+      "contradicts": []
+    },
+    {
+      "code": "conflict.权力争夺",
+      "label": "权力争夺",
+      "dimension": "conflict",
+      "aliases": [
+        "权力争夺",
+        "权力斗争",
+        "power struggle"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "conflict.生存危机",
+      "label": "生存危机",
+      "dimension": "conflict",
+      "aliases": [
+        "生存危机",
+        "survival crisis"
+      ],
+      "related": [
+        "emotion.紧张"
+      ],
+      "contradicts": []
+    },
+    {
+      "code": "conflict.情感选择",
+      "label": "情感选择",
+      "dimension": "conflict",
+      "aliases": [
+        "情感选择",
+        "love choice",
+        "emotional dilemma"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "conflict.家族反目",
+      "label": "家族反目",
+      "dimension": "conflict",
+      "aliases": [
+        "家族反目",
+        "家庭矛盾",
+        "family feud"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "conflict.阶层压迫",
+      "label": "阶层压迫",
+      "dimension": "conflict",
+      "aliases": [
+        "阶层压迫",
+        "阶级冲突",
+        "class oppression"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "conflict.法律困境",
+      "label": "法律困境",
+      "dimension": "conflict",
+      "aliases": [
+        "法律困境",
+        "法律冲突",
+        "legal dilemma"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "emotion.愤怒",
+      "label": "愤怒",
+      "dimension": "emotion",
+      "aliases": [
+        "愤怒",
+        "anger",
+        "angry"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "emotion.悲伤",
+      "label": "悲伤",
+      "dimension": "emotion",
+      "aliases": [
+        "悲伤",
+        "sadness",
+        "sad"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "emotion.甜蜜",
+      "label": "甜蜜",
+      "dimension": "emotion",
+      "aliases": [
+        "甜蜜",
+        "甜",
+        "sweet"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "emotion.紧张",
+      "label": "紧张",
+      "dimension": "emotion",
+      "aliases": [
+        "紧张",
+        "tension",
+        "tense"
+      ],
+      "related": [
+        "conflict.生存危机"
+      ],
+      "contradicts": []
+    },
+    {
+      "code": "emotion.爽感",
+      "label": "爽感",
+      "dimension": "emotion",
+      "aliases": [
+        "爽感",
+        "爽",
+        "catharsis",
+        "爽点"
+      ],
+      "related": [
+        "storyBeat.打脸"
+      ],
+      "contradicts": []
+    },
+    {
+      "code": "emotion.虐",
+      "label": "虐",
+      "dimension": "emotion",
+      "aliases": [
+        "虐",
+        "虐心",
+        "heartbreak"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "emotion.震惊",
+      "label": "震惊",
+      "dimension": "emotion",
+      "aliases": [
+        "震惊",
+        "惊讶",
+        "shock"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "emotion.期待",
+      "label": "期待",
+      "dimension": "emotion",
+      "aliases": [
+        "期待",
+        "anticipation"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "emotion.恐惧",
+      "label": "恐惧",
+      "dimension": "emotion",
+      "aliases": [
+        "恐惧",
+        "害怕",
+        "fear"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "storyBeat.开场钩子",
+      "label": "开场钩子",
+      "dimension": "storyBeat",
+      "aliases": [
+        "开场钩子",
+        "开场",
+        "opening hook",
+        "hook"
+      ],
+      "related": [
+        "acquisition.悬念预告"
+      ],
+      "contradicts": []
+    },
+    {
+      "code": "storyBeat.反转",
+      "label": "反转",
+      "dimension": "storyBeat",
+      "aliases": [
+        "反转",
+        "twist",
+        "reversal"
+      ],
+      "related": [
+        "theme.重生"
+      ],
+      "contradicts": []
+    },
+    {
+      "code": "storyBeat.打脸",
+      "label": "打脸",
+      "dimension": "storyBeat",
+      "aliases": [
+        "打脸",
+        "爽点打脸",
+        "comeuppance"
+      ],
+      "related": [
+        "emotion.爽感"
+      ],
+      "contradicts": []
+    },
+    {
+      "code": "storyBeat.告白",
+      "label": "告白",
+      "dimension": "storyBeat",
+      "aliases": [
+        "告白",
+        "confession"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "storyBeat.揭密",
+      "label": "揭密",
+      "dimension": "storyBeat",
+      "aliases": [
+        "揭密",
+        "揭示秘密",
+        "身份揭示",
+        "revelation"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "storyBeat.危机",
+      "label": "危机",
+      "dimension": "storyBeat",
+      "aliases": [
+        "危机",
+        "危机升级",
+        "crisis"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "storyBeat.误会",
+      "label": "误会",
+      "dimension": "storyBeat",
+      "aliases": [
+        "误会",
+        "misunderstanding"
+      ],
+      "related": [
+        "conflict.身份误会"
+      ],
+      "contradicts": []
+    },
+    {
+      "code": "storyBeat.团圆",
+      "label": "团圆",
+      "dimension": "storyBeat",
+      "aliases": [
+        "团圆",
+        "reunion"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "storyBeat.离别",
+      "label": "离别",
+      "dimension": "storyBeat",
+      "aliases": [
+        "离别",
+        "separation"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "storyBeat.复合",
+      "label": "复合",
+      "dimension": "storyBeat",
+      "aliases": [
+        "复合",
+        "reconciliation"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "storyBeat.羞辱",
+      "label": "羞辱",
+      "dimension": "storyBeat",
+      "aliases": [
+        "羞辱",
+        "humiliation"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "storyBeat.反击",
+      "label": "反击",
+      "dimension": "storyBeat",
+      "aliases": [
+        "反击",
+        "counterattack",
+        "fight back"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "storyBeat.兑现",
+      "label": "兑现",
+      "dimension": "storyBeat",
+      "aliases": [
+        "兑现",
+        "payoff",
+        "resolution"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "scene.办公室",
+      "label": "办公室",
+      "dimension": "scene",
+      "aliases": [
+        "办公室",
+        "office"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "scene.医院",
+      "label": "医院",
+      "dimension": "scene",
+      "aliases": [
+        "医院",
+        "hospital"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "scene.家中",
+      "label": "家中",
+      "dimension": "scene",
+      "aliases": [
+        "家中",
+        "家庭",
+        "home"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "scene.法庭",
+      "label": "法庭",
+      "dimension": "scene",
+      "aliases": [
+        "法庭",
+        "courtroom",
+        "court"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "scene.校园",
+      "label": "校园",
+      "dimension": "scene",
+      "aliases": [
+        "校园",
+        "school",
+        "campus"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "scene.宴会",
+      "label": "宴会",
+      "dimension": "scene",
+      "aliases": [
+        "宴会",
+        "party",
+        "banquet"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "scene.警局",
+      "label": "警局",
+      "dimension": "scene",
+      "aliases": [
+        "警局",
+        "派出所",
+        "police station"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "scene.街道",
+      "label": "街道",
+      "dimension": "scene",
+      "aliases": [
+        "街道",
+        "street"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "scene.酒店",
+      "label": "酒店",
+      "dimension": "scene",
+      "aliases": [
+        "酒店",
+        "hotel"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "scene.监狱",
+      "label": "监狱",
+      "dimension": "scene",
+      "aliases": [
+        "监狱",
+        "prison"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "audience.女性向",
+      "label": "女性向",
+      "dimension": "audience",
+      "aliases": [
+        "女性向",
+        "女频",
+        "female audience",
+        "women"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "audience.男性向",
+      "label": "男性向",
+      "dimension": "audience",
+      "aliases": [
+        "男性向",
+        "男频",
+        "male audience",
+        "men"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "audience.年轻人群",
+      "label": "年轻人群",
+      "dimension": "audience",
+      "aliases": [
+        "年轻人群",
+        "年轻用户",
+        "youth",
+        "young adults"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "audience.家庭人群",
+      "label": "家庭人群",
+      "dimension": "audience",
+      "aliases": [
+        "家庭人群",
+        "家庭用户",
+        "family audience"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "audience.下沉人群",
+      "label": "下沉人群",
+      "dimension": "audience",
+      "aliases": [
+        "下沉人群",
+        "下沉市场",
+        "mass market"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "audience.高消费人群",
+      "label": "高消费人群",
+      "dimension": "audience",
+      "aliases": [
+        "高消费人群",
+        "高净值",
+        "premium audience"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "acquisition.信息差",
+      "label": "信息差",
+      "dimension": "acquisition",
+      "aliases": [
+        "信息差",
+        "information gap"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "acquisition.情绪拉升",
+      "label": "情绪拉升",
+      "dimension": "acquisition",
+      "aliases": [
+        "情绪拉升",
+        "情绪钩子",
+        "emotional lift"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "acquisition.强冲突",
+      "label": "强冲突",
+      "dimension": "acquisition",
+      "aliases": [
+        "强冲突",
+        "冲突钩子",
+        "strong conflict"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "acquisition.悬念预告",
+      "label": "悬念预告",
+      "dimension": "acquisition",
+      "aliases": [
+        "悬念预告",
+        "悬念",
+        "cliffhanger",
+        "suspense"
+      ],
+      "related": [
+        "storyBeat.开场钩子"
+      ],
+      "contradicts": []
+    },
+    {
+      "code": "acquisition.身份揭示",
+      "label": "身份揭示",
+      "dimension": "acquisition",
+      "aliases": [
+        "身份揭示",
+        "身份钩子",
+        "identity reveal"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "acquisition.反差",
+      "label": "反差",
+      "dimension": "acquisition",
+      "aliases": [
+        "反差",
+        "反差钩子",
+        "contrast"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "acquisition.爽点兑现",
+      "label": "爽点兑现",
+      "dimension": "acquisition",
+      "aliases": [
+        "爽点兑现",
+        "爽感兑现",
+        "payoff"
+      ],
+      "related": [],
+      "contradicts": []
+    },
+    {
+      "code": "acquisition.虐点共情",
+      "label": "虐点共情",
+      "dimension": "acquisition",
+      "aliases": [
+        "虐点共情",
+        "共情",
+        "empathy"
+      ],
+      "related": [],
+      "contradicts": []
+    }
+  ]
+}
+
+

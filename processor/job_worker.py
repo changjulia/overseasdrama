@@ -474,7 +474,12 @@ def process_one_endpoint(base_url: str, token: str, worker_id: str, api_prefix: 
         # than ten minutes. Keep the lease at the server-supported maximum so a
         # completed result is not rejected while the worker is inside one model
         # request and cannot emit an intermediate progress heartbeat.
-        claim_body = {"worker_id": worker_id, "lease_seconds": 1800}
+        # Interactive matching calls are individually capped at 180 seconds.
+        # A four-minute lease covers one provider call while allowing a new
+        # worker to recover promptly after a local service restart. Long-form
+        # material analysis keeps the full 30-minute lease.
+        lease_seconds = 240 if kind in {"hook_match", "entry_precision", "supplemental_highlight"} else 1800
+        claim_body = {"worker_id": worker_id, "lease_seconds": lease_seconds}
         if job_id:
             claim_body["job_id"] = job_id
         status, response = api_request(base_url, token, f"{api_prefix}/claim", "POST", claim_body)
@@ -528,7 +533,7 @@ def process_one_endpoint(base_url: str, token: str, worker_id: str, api_prefix: 
         progress_state["stage"] = stage
         payload = {
             "worker_id": worker_id, "lease_token": job["lease_token"], "status": "rendering" if kind == "factory_render" else "running",
-            "progress": progress_state["value"], "lease_seconds": 1800,
+            "progress": progress_state["value"], "lease_seconds": lease_seconds,
             "logs": {**claimed_parameters, "stage": stage, "kind": kind},
         }
         if kind == "hook_match":

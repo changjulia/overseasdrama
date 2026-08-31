@@ -55,6 +55,9 @@ export default defineConfig(async () => {
           // Preserve the local UI Origin header. PocketBase's custom routes
           // intentionally reject requests that do not come from the app.
           changeOrigin: false,
+          headers: {
+            "x-lumina-ui": "local",
+          },
           rewrite: (path) => path.replace(/^\/pb/, ""),
         },
       },

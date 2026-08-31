@@ -114,6 +114,14 @@ export type StorylinePlanSegment = {
 };
 export type StorylinePlan = {
   id: string;
+  parentHighlightAssetId?: string;
+  semanticFingerprint?: {
+    ontologyVersion: string;
+    dramaAnalysisVersion: string;
+    highlightAssetVersion: string;
+    hookAnalysisVersion?: string;
+    matchContextHash?: string;
+  };
   title: string;
   strategyType: string;
   chronology: "chronological" | "flashback";
@@ -254,6 +262,8 @@ export type StrategyHookRecommendation = {
   reasons: string[];
   evidenceLevel?: "weak" | "medium" | "strong";
   productionEligible?: boolean;
+  tagRelation?: "exact" | "compatible" | "bridgeable" | "contradictory" | "unknown";
+  tagGate?: "allow_recall" | "needs_evidence" | "blocked";
   template?: Record<string, unknown>;
 };
 const configuredUrl =
@@ -300,7 +310,7 @@ export async function startHookStoryMatch(
       : targetDurationSeconds > 900
         ? "15_25m"
         : "5_15m";
-  const value = (await request("/api/lumina/hook-matching/jobs", {
+  const jobRequest = {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -317,7 +327,45 @@ export async function startHookStoryMatch(
       template_material_id: options?.templateMaterialId,
       selected_storylines: options?.selectedStorylines,
     }),
-  })) as Record<string, unknown>;
+  };
+  let value: Record<string, unknown>;
+  try {
+    value = (await request(
+      "/api/lumina/hook-matching/jobs",
+      jobRequest,
+    )) as Record<string, unknown>;
+  } catch (error) {
+    const retryJobId =
+      forceRetry && error instanceof Error
+        ? error.message.match(/hook-matching\/jobs\/([^/\s]+)\/retry/i)?.[1]
+        : undefined;
+    if (!retryJobId) throw error;
+    const current = (await request(
+      `/api/collections/hook_match_jobs/records/${encodeURIComponent(retryJobId)}`,
+    )) as Record<string, unknown>;
+    await request(
+      `/api/lumina/hook-matching/jobs/${encodeURIComponent(retryJobId)}/retry`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          reason: "用户在内容工厂中重新匹配",
+          override_non_retryable: true,
+          override_reason: "用户已修正素材或匹配规则，并明确要求重新运行分析",
+          idempotency_key: `factory-retry:${retryJobId}:${String(current.updated || "unknown")}`,
+          expected_status: String(current.status || "failed"),
+          expected_updated: String(current.updated || ""),
+        }),
+      },
+    );
+    value = {
+      ...current,
+      status: "queued",
+      progress: 0,
+      current_stage: "interactive_queued",
+      error: "",
+    };
+  }
   return {
     id: String(value.id),
     status: String(value.status) as HookMatchJob["status"],
@@ -334,6 +382,7 @@ function recommendation(
   const retrieval = object(value.retrieval),
     template = object(value.template),
     hook = object(value.hook);
+  const relation = String(retrieval.tagRelation || retrieval.relation || "unknown") as StrategyHookRecommendation["tagRelation"];
   return {
     hookId: String(value.hook_id || template.sourceHookId || hook.id || ""),
     materialId:
@@ -350,7 +399,9 @@ function recommendation(
     evidenceLevel: String(
       retrieval.evidenceLevel || "",
     ) as StrategyHookRecommendation["evidenceLevel"],
-    productionEligible: retrieval.productionEligible === true,
+    tagRelation: relation,
+    tagGate: relation === "contradictory" ? "blocked" : relation === "unknown" ? "needs_evidence" : "allow_recall",
+    productionEligible: relation !== "contradictory" && relation !== "unknown" && retrieval.productionEligible === true,
     template: Object.keys(template).length ? template : undefined,
   };
 }

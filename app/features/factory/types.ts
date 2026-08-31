@@ -25,6 +25,22 @@ export type FactoryFlowStepId =
 export type FactoryStepState = "locked" | "ready" | "active" | "completed";
 export type IntegrationState = "not-connected" | "available" | "running" | "failed" | "completed";
 
+export type FactorySemanticFingerprint = {
+  ontologyVersion: string;
+  dramaAnalysisVersion: string;
+  highlightAssetVersion: string;
+  hookAnalysisVersion?: string;
+  matchContextHash?: string;
+};
+
+/** Multi-select preserves one immutable semantic context per entity. */
+export type FactorySemanticSelection = {
+  entityId: string;
+  entityType: "highlight" | "storyline";
+  parentEntityId?: string;
+  fingerprint: FactorySemanticFingerprint;
+};
+
 export type FactoryFlowStep = {
   id: FactoryFlowStepId;
   order: number;
@@ -243,7 +259,12 @@ export type FactorySourceContext = {
     evidence?: string;
     event?: string;
     emotion?: string;
+    highlightAssetId?: string;
+    analysisVersion?: string;
+    ontologyVersion?: string;
+    matchContextHash?: string;
   }>;
+  semanticSelections?: FactorySemanticSelection[];
 };
 
 export type FactoryWorkspaceProps = {

@@ -447,7 +447,7 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
     const hooks = e.app
       .findRecordsByFilter(
         "hook_assets",
-        "source_class = 'external_material' && boundary_status = 'verified' && review_status = 'approved'",
+        "source_class = 'external_material' && boundary_status != 'rejected' && review_status != 'rejected'",
         "-id",
         500,
         0,
@@ -841,10 +841,8 @@ routerAdd("POST", "/api/lumina/hook-matching/jobs", (e) => {
     throw new BadRequestError(
       "external hook duration must be between 5 and 60 seconds",
     );
-  if (hook.getString("boundary_status") !== "verified")
-    throw new BadRequestError(
-      "hook boundaries must be verified before matching",
-    );
+  // Matching is an analysis step: reviewable draft hooks may be evaluated,
+  // while /factory/projects still requires a verified production asset.
   const freeEpisodes = Math.max(0, drama.getInt("free_episodes"));
   const scopeMode = String(body.scope_mode || "free_only");
   if (!["free_only", "custom"].includes(scopeMode))

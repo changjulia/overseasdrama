@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeDimension, normalizeTag, normalizeTags, rankOntologyTags, relationOf, compareTagSets } from "../app/lib/ontology/normalization.ts";
+import { normalizeDimension, normalizeTag, normalizeTags, rankOntologyTags, relationOf, compareTagSets, evaluateTagRecall } from "../app/lib/ontology/normalization.ts";
 
 test("normalizes Chinese and English aliases while retaining provenance", () => {
   const tag = normalizeTag({ label: "Revenge", evidence: ["asr-4"] }, "theme");
@@ -56,4 +56,19 @@ test("compares sets with weighted score and hard conflicts", () => {
   assert.equal(result.hardConflicts.length, 1);
   assert.equal(result.exact.length, 1);
   assert.ok(result.score < 0.5);
+});
+
+test("recall gate blocks contradictions and leaves unknown pending evidence", () => {
+  const blocked = evaluateTagRecall(["女性向"], ["男性向"], "audience");
+  assert.equal(blocked.decision, "blocked");
+  assert.equal(blocked.productionEligible, false);
+  assert.ok(blocked.hardConflicts.length > 0);
+
+  const pending = evaluateTagRecall(["未收录甲"], ["未收录乙"], "theme");
+  assert.equal(pending.decision, "needs_evidence");
+  assert.equal(pending.productionEligible, false);
+
+  const recalled = evaluateTagRecall(["复仇"], ["revenge"], "theme");
+  assert.equal(recalled.decision, "allow_recall");
+  assert.equal(recalled.productionEligible, false);
 });

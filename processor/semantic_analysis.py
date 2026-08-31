@@ -837,6 +837,69 @@ def _enrich_material_hooks(creative: dict[str, Any], transcript: list[dict[str, 
                     "visualSummary": item.get("visualSummary") or "",
                 })
                 break
+    # Matching needs an opening unit even when source attribution is unknown or
+    # the provider decides there is no deliberately prefaced external fragment.
+    # Keep existence/localization separate from source classification: promote
+    # a conservative 8-30 second opening interval and mark it for review rather
+    # than collapsing the useful asset to hooks=[].
+    has_opening_hook = any(
+        isinstance(item, dict)
+        and isinstance(item.get("start"), (int, float))
+        and float(item.get("start", 0)) <= .5
+        for item in hooks
+    )
+    if not has_opening_hook and duration >= 8:
+        timeline = creative.get("timeline") if isinstance(creative.get("timeline"), list) else []
+        timeline_boundaries = {
+            float(item["start"])
+            for item in timeline
+            if isinstance(item, dict)
+            and isinstance(item.get("start"), (int, float))
+            and 8 <= float(item["start"]) <= min(30.0, duration)
+        }
+        transcript_boundaries = {
+            float(item["end"])
+            for item in transcript
+            if isinstance(item, dict)
+            and isinstance(item.get("end"), (int, float))
+            and 8 <= float(item["end"]) <= min(30.0, duration)
+        }
+        boundary_candidates = timeline_boundaries | transcript_boundaries
+        fallback_end = min(boundary_candidates, key=lambda value: (abs(value - 15.0), value)) if boundary_candidates else min(15.0, duration)
+        opening_lines = [
+            str(item.get("text") or item.get("transcript") or "").strip()
+            for item in transcript
+            if isinstance(item, dict)
+            and float(item.get("start", 0) or 0) < fallback_end
+            and str(item.get("text") or item.get("transcript") or "").strip()
+        ]
+        timeline_labels = [
+            str(item.get("label") or "").strip()
+            for item in timeline
+            if isinstance(item, dict)
+            and float(item.get("start", 0) or 0) < fallback_end
+            and str(item.get("label") or "").strip()
+        ]
+        hooks.insert(0, {
+            "id": "opening-candidate-fallback",
+            "code": "OPENING_CANDIDATE_REVIEW",
+            "label": "开场候选（待复核）",
+            "hookType": timeline_labels[0] if timeline_labels else "原生正片开场",
+            "openingHookType": "来源待确认",
+            "start": 0.0,
+            "end": round(fallback_end, 3),
+            "plotSummary": " → ".join(timeline_labels) or "开场完整事件待语义复核",
+            "spokenSummary": "；".join(opening_lines[:6]),
+            "visualSummary": "",
+            "narrativePromise": "待语义复核",
+            "informationGap": "待语义复核",
+            "mechanisms": [],
+            "intensity": {},
+            "themes": [],
+            "contentTags": [],
+            "reviewRequired": True,
+            "fallbackReason": "模型未返回钩子，系统按开场事件边界保留候选",
+        })
     format_claim = creative.get("format") if isinstance(creative.get("format"), dict) else {}
     material_format = str(format_claim.get("value") or format_claim.get("label") or "")
     opening_limit: float | None = None
@@ -926,6 +989,52 @@ def _enrich_material_hooks(creative: dict[str, Any], transcript: list[dict[str, 
             "verification": "verified" if start_boundary["status"] == "verified" and end_boundary["status"] == "verified" else "needs_review",
             "reviewRequired": bool(raw.get("reviewRequired", False)) or start_boundary["status"] != "verified" or end_boundary["status"] != "verified",
         }
+        # Providers may localize the opening on the timeline while omitting the
+        # matching fields. Derive a conservative, reviewable decision card from
+        # dialogue inside the exact interval instead of emitting empty UI data.
+        interval_lines = [
+            str(item.get("text") or item.get("transcript") or "").strip()
+            for item in transcript
+            if isinstance(item, dict)
+            and float(item.get("end", 0) or 0) >= start
+            and float(item.get("start", 0) or 0) < end
+            and str(item.get("text") or item.get("transcript") or "").strip()
+        ]
+        matching_text = " ".join([
+            str(candidate.get("hookType") or ""),
+            str(candidate.get("label") or ""),
+            str(candidate.get("plotSummary") or ""),
+            str(candidate.get("spokenSummary") or ""),
+            *interval_lines,
+        ]).lower()
+        mechanism_label = ""
+        if re.search(r"伤害|杀|死|威胁|hurt|harm|kill|die|threat", matching_text):
+            mechanism_label = "死亡威胁"
+        elif re.search(r"身份|真相|原来|identity|truth|actually", matching_text):
+            mechanism_label = "身份揭露"
+        elif re.search(r"羞辱|滚|跪|废物|humiliat|kneel|worthless", matching_text):
+            mechanism_label = "公开羞辱"
+        elif re.search(r"抓奸|背叛|出轨|cheat|betray", matching_text):
+            mechanism_label = "背叛揭露"
+        elif re.search(r"争斗|冲突|怒斥|对抗|fight|conflict|how dare", matching_text):
+            mechanism_label = "强冲突"
+        if not candidate.get("mechanisms") and mechanism_label:
+            candidate["mechanisms"] = [{"code": "DERIVED_OPENING_MECHANISM", "label": mechanism_label, "value": mechanism_label, "confidence": .72, "evidence": [], "verification": "unverified"}]
+        if not str(candidate.get("narrativePromise") or "").strip():
+            candidate["narrativePromise"] = "威胁将如何兑现，冲突双方将付出什么代价" if mechanism_label == "死亡威胁" else "开场冲突将如何升级并得到回应"
+        if not str(candidate.get("informationGap") or "").strip():
+            candidate["informationGap"] = "威胁者身份、冲突原因与后果尚未揭示" if mechanism_label == "死亡威胁" else "冲突起因、双方关系与后续结果尚未揭示"
+        information_structure = candidate.get("informationStructure") if isinstance(candidate.get("informationStructure"), dict) else {}
+        candidate["informationStructure"] = {**information_structure, "unrevealed": information_structure.get("unrevealed") or candidate["informationGap"]}
+        intensity = candidate.get("intensity") if isinstance(candidate.get("intensity"), dict) else {}
+        candidate["intensity"] = {
+            **intensity,
+            "conflict": intensity.get("conflict") if isinstance(intensity.get("conflict"), (int, float)) else (85 if mechanism_label == "死亡威胁" else 72),
+            "comprehensionBarrier": intensity.get("comprehensionBarrier") if isinstance(intensity.get("comprehensionBarrier"), (int, float)) else (25 if interval_lines else 55),
+            "first3sStimulus": intensity.get("first3sStimulus") if isinstance(intensity.get("first3sStimulus"), (int, float)) else (82 if mechanism_label in {"死亡威胁", "公开羞辱", "背叛揭露"} else 68),
+        }
+        if interval_lines and not str(candidate.get("spokenSummary") or "").strip():
+            candidate["spokenSummary"] = "；".join(interval_lines[:6])
         normalized = _normalize_highlight_candidate(candidate, duration, index)
         if normalized is not None:
             candidate = normalized
@@ -974,6 +1083,40 @@ def _enrich_material_hooks(creative: dict[str, Any], transcript: list[dict[str, 
             "reviewRequired": bool(source.get("reviewRequired", False)) or end_boundary["status"] != "verified",
         }]
         entry_points = [item for item in enriched if item.get("_candidateRole") == "entryPoint" and float(item.get("duration", 0)) < opening_limit - .5][:5]
+    if not final_hooks and duration >= 8:
+        timeline = creative.get("timeline") if isinstance(creative.get("timeline"), list) else []
+        boundaries = {float(item["start"]) for item in timeline if isinstance(item, dict) and isinstance(item.get("start"), (int, float)) and 8 <= float(item["start"]) <= min(30.0, duration)}
+        boundaries.update(float(item["end"]) for item in transcript if isinstance(item, dict) and isinstance(item.get("end"), (int, float)) and 8 <= float(item["end"]) <= min(30.0, duration))
+        fallback_end = min(boundaries, key=lambda value: (abs(value - 15.0), value)) if boundaries else min(15.0, duration)
+        lines = [str(item.get("text") or item.get("transcript") or "").strip() for item in transcript if isinstance(item, dict) and float(item.get("start", 0) or 0) < fallback_end and str(item.get("text") or item.get("transcript") or "").strip()]
+        opening_text = " ".join(lines).lower()
+        threatening = bool(re.search(r"伤害|杀|死|威胁|hurt|harm|kill|die|threat|how dare", opening_text))
+        mechanism = "死亡威胁" if threatening else "强冲突"
+        start_boundary = _material_hook_boundary(0.0, transcript, shots, "start")
+        end_boundary = _material_hook_boundary(fallback_end, transcript, shots, "end")
+        final_hooks = [{
+            "id": "opening-candidate-guaranteed",
+            "code": "OPENING_CANDIDATE_REVIEW",
+            "label": "开场候选（待复核）",
+            "hookType": "威胁冲突开场" if threatening else "原生正片开场",
+            "openingHookType": "来源待确认",
+            "start": 0.0,
+            "end": round(fallback_end, 3),
+            "duration": round(fallback_end, 3),
+            "spokenSummary": "；".join(lines[:6]),
+            "mechanisms": [{"code": "DERIVED_OPENING_MECHANISM", "label": mechanism, "value": mechanism, "confidence": .72, "evidence": [], "verification": "unverified"}],
+            "narrativePromise": "威胁将如何兑现，冲突双方将付出什么代价" if threatening else "开场冲突将如何升级并得到回应",
+            "informationGap": "威胁者身份、冲突原因与后果尚未揭示" if threatening else "冲突起因、双方关系与后续结果尚未揭示",
+            "informationStructure": {"unrevealed": "威胁者身份、冲突原因与后果尚未揭示" if threatening else "冲突起因、双方关系与后续结果尚未揭示"},
+            "intensity": {"conflict": 85 if threatening else 72, "comprehensionBarrier": 25 if lines else 55, "first3sStimulus": 82 if threatening else 68},
+            "safeStart": start_boundary,
+            "safeEnd": end_boundary,
+            "boundaryStatus": "verified" if start_boundary["status"] == "verified" and end_boundary["status"] == "verified" else "unverified",
+            "verification": "needs_review",
+            "reviewRequired": True,
+            "fallbackReason": "模型候选未通过边界门禁，系统保留开场完整事件供人工复核",
+        }]
+        entry_points = list(final_hooks)
     return {**creative, "hooks": final_hooks, "entryPoints": entry_points, "hookLocalization": {
         "status": "localized" if final_hooks else "needs_review",
         "candidateCount": len(final_hooks),
@@ -2661,7 +2804,7 @@ def _openai_request_body(provider: str, model: str, task: str, payload: dict[str
         character = {**claim, "characterId": "stable ID", "name": "Simplified Chinese", "originalName": "optional source spelling", "role": "Simplified Chinese"}
         relationship = {**claim, "subject": "character name", "object": "character name", "type": "relationship type", "description": "relationship and evolution in Simplified Chinese"}
         phase = {**claim, "start": "seconds", "end": "seconds", "description": "cause, event, result and relationship change in Simplified Chinese"}
-        hook = {**claim, "start": "seconds", "end": "seconds", "hookType": "stable hook type", "plotSummary": "complete hook-fragment plot summary", "spokenSummary": "whole fragment spoken meaning", "visualSummary": "whole fragment visual progression", "narrativePromise": "Simplified Chinese", "informationGap": "Simplified Chinese", "reviewRequired": "boolean"}
+        hook = {**claim, "start": "seconds", "end": "seconds", "hookType": "stable hook type", "openingHookType": "外搭钩子|同剧高光前置|原生正片开场|来源待确认", "plotSummary": "complete hook-fragment plot summary", "spokenSummary": "whole fragment spoken meaning", "visualSummary": "whole fragment visual progression", "narrativePromise": "Simplified Chinese", "informationGap": "Simplified Chinese", "mechanisms": [claim], "emotionCurve": {"start": "opening emotion in Simplified Chinese", "peak": "peak emotion and trigger in Simplified Chinese", "endSuspense": "emotion and unresolved suspense at cut in Simplified Chinese"}, "informationStructure": {"audienceKnows": "facts established for audience", "characterKnows": "facts established for on-screen characters", "unrevealed": "critical unanswered information"}, "exitState": {"lastLine": "last complete spoken line or 无对白", "lastAction": "last complete visible action", "facing": "subject screen direction or 无法确认", "shotScale": "close-up|medium|full|wide or 无法确认", "audioClosure": "收口|未收口|无对白|无法确认"}, "intensity": {"conflict": "0..100", "informationDensity": "0..100", "comprehensionBarrier": "0..100 where higher means harder", "first3sStimulus": "0..100"}, "reviewRequired": "boolean"}
         output_contract = {
             "content": {
                 "summary": {"value": "180-500 Chinese-character chronological causal synopsis", "confidence": "0..1 number", "evidence": evidence, "basedOnFactIds": ["factId"], "verification": "verified|unverified"},
@@ -3857,6 +4000,8 @@ def analyze_material_v2(path: Path, workspace: Path, on_progress: Callable[[int,
             "First reconstruct only the story observable inside each 30-60 second semantic segment",
             "Keep stable material-local character IDs; use candidate names when identity is uncertain",
             "Identify opening hook, re-hooks, information refreshes, emotional peaks, low-retention intervals, cliffhanger and CTA with material timecodes",
+            "Always return at least one complete opening hook candidate from the first 60 seconds when an observable 8-30 second event exists; hooks may be empty only for damaged video, pure end-card/CTA footage, or no reusable event",
+            "Separate opening-hook existence from source attribution: an uncertain or native opening must still be returned in hooks with openingHookType 来源待确认 or 原生正片开场, never discarded merely because it is not a confirmed external preface",
             "Classify creative format, T0/T1/T2/T3/TX tier, transitions, visual/subtitle/audio/rhythm packaging and observable risks",
             "Classify bodyFormat as 正片主导, 解说主导, 混合, or 未确定 and calculate narrationCoverage; narration excludes original character dialogue, short transition voice-over and CTA",
             "Use 正片主导 when narrationCoverage < 0.30 and continuous dramatic action/dialogue supplies the main information; use 解说主导 when narrationCoverage >= 0.50 and narration supplies the main story information; otherwise use 混合 or 未确定",
@@ -3865,7 +4010,7 @@ def analyze_material_v2(path: Path, workspace: Path, on_progress: Callable[[int,
             "For 正片剧集解说, derive hooks only from the opening 5-60 seconds and prioritize the condensed narration promise; do not return the whole narrated body as a hook",
             "For 外搭钩子＋本剧正片, locate the exact complete external-source opening fragment from time 0 to the body transition; use dense boundary comparison and never include the following drama body",
             "Once an external opening is identified, hooks[0] must span and holistically summarize that complete fragment. Strong 5-20 second moments inside it belong only in entryPoints and must never replace the complete external-hook conclusion",
-            "Each hook must include hookType, themes, contentTags, characterRoles, relationships, conflict, emotion, narrativePromise, informationGap, spokenSummary, visualSummary and qualityScores",
+            "Each hook must include hookType, openingHookType, mechanisms, narrativePromise, informationGap, informationStructure.unrevealed, intensity.conflict, intensity.comprehensionBarrier, intensity.first3sStimulus, spokenSummary, visualSummary and qualityScores",
             "Each hook start and end must be supported by dialogue, action and shot-boundary evidence; if action completion is not observable mark the boundary unverified and reviewRequired=true",
             "Classify hookSourceStatus and hookAssemblyType independently; 同剧外搭 means a same-drama high point from another episode is deliberately placed before the body",
             "Because this independent material does not include complete owned-drama coverage, visual/person/scene/style differences alone can only support 疑似外搭 and must set reviewRequired=true; never confirm external origin from differences alone",
@@ -4129,8 +4274,11 @@ def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> Analy
     scope = {int(value) for value in (payload.get("episode_scope") or []) if str(value).isdigit()}
     if hook.get("source_class") != "external_material":
         raise AnalysisFailed("external-hook matching requires an external_material hook asset")
-    if hook.get("boundary_status") != "verified":
-        raise AnalysisFailed("hook asset boundaries must be verified before story matching")
+    # Draft external hooks may be explored during matching. Their boundary
+    # status still participates in the production gate below, so an
+    # unverified hook can produce recommendations but cannot become
+    # production-ready until a human review verifies its boundaries.
+    hook_boundary_verified = hook.get("boundary_status") == "verified"
     if not episodes or not scope:
         raise AnalysisFailed("hook matching requires analyzed episodes inside a non-empty scope")
     duration_spec = _target_duration_spec(payload)
@@ -4448,7 +4596,7 @@ def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> Analy
             } for position, segment in enumerate(valid_segments)]
             episode_rows = [{"episode": int(item.get("episode_number") or 0), "durationSeconds": float(item.get("duration_seconds") or 0)} for item in episodes if isinstance(item, dict)]
             graph = _reconstruct_storyline({"events": graph_events}, episode_rows)
-            boundary_verified = all(
+            boundary_verified = hook_boundary_verified and all(
                 segment.get("safeStart", {}).get("status") == "verified"
                 and segment.get("safeEnd", {}).get("status") == "verified"
                 for segment in valid_segments

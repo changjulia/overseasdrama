@@ -49,6 +49,18 @@ export type PocketBaseDramaRecord = {
   analysisError?: string;
   detailResult?: unknown;
   precisionResults: Array<{ episode: number; result: unknown; parameters?: unknown }>;
+  highlightCandidates: Array<{
+    id: string;
+    episode: number;
+    start: number;
+    end: number;
+    title: string;
+    evidence?: string;
+    event?: string;
+    emotion?: string;
+    highlightAssetId?: string;
+    analysisVersion?: string;
+  }>;
   posterUrl?: string;
   episodeMedia: Record<number, FactoryEpisodeMedia>;
   sourceType: "内部" | "外部";
@@ -301,6 +313,8 @@ async function getPocketBaseDrama(recordId: string, signal?: AbortSignal): Promi
   const payload = await episodesResponse.json() as { items: PocketBaseRecord[] };
   const jobsResponse = await pbFetch(`/api/collections/analysis_jobs/records?perPage=500&sort=created&filter=${filter}&expand=episode`, { signal });
   const jobsPayload = await jobsResponse.json() as { items: PocketBaseRecord[] };
+  const highlightsResponse = await pbFetch(`/api/collections/hook_assets/records?perPage=500&sort=episode,start_seconds&filter=${encodeURIComponent(`drama="${recordId}" && source_class="episode_highlight"`)}&expand=episode`, { signal });
+  const highlightsPayload = await highlightsResponse.json() as { items: PocketBaseRecord[] };
   const episodeNumberById = new Map(payload.items.map((item) => [item.id, Number(item.episode_number)]));
   const coarseJobs = jobsPayload.items.filter((item) => item.stage === "coarse");
   const coarseByEpisode = new Map(coarseJobs.map((item) => [String(item.episode || ""), item]));
@@ -331,6 +345,32 @@ async function getPocketBaseDrama(recordId: string, signal?: AbortSignal): Promi
   const precisionResults = jobsPayload.items
     .filter((item) => item.stage === "precision" && item.status === "succeeded" && item.result)
     .map((item) => ({ episode: episodeNumberById.get(String(item.episode || "")) || 0, result: item.result, parameters: item.logs }));
+  const highlightCandidates = highlightsPayload.items
+    .map((item) => {
+      const expandedEpisode = item.expand && typeof item.expand === "object"
+        ? (item.expand as Record<string, unknown>).episode
+        : undefined;
+      const episode = episodeNumberById.get(String(item.episode || ""))
+        || Number(expandedEpisode && typeof expandedEpisode === "object"
+          ? (expandedEpisode as Record<string, unknown>).episode_number
+          : 0);
+      const start = Number(item.start_seconds);
+      const end = Number(item.end_seconds);
+      const event = String(item.spoken_summary || item.visual_summary || item.conflict || "").trim();
+      return {
+        id: item.id,
+        episode,
+        start,
+        end,
+        title: String(item.title || item.narrative_promise || event || `EP${episode} 高光`).trim(),
+        evidence: String(item.evidence_summary || "").trim() || undefined,
+        event: event || undefined,
+        emotion: String(item.emotion || "").trim() || undefined,
+        highlightAssetId: item.id,
+        analysisVersion: String(item.analysis_version || "").trim() || undefined,
+      };
+    })
+    .filter((item) => item.episode > 0 && Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start);
   const stageSnapshot = (stage: "coarse" | "detail" | "precision") => {
     const stageJobs = jobsPayload.items.filter((item) => item.stage === stage);
     if (!stageJobs.length) return { status: String(drama[`${stage}_status`] || "idle"), progress: Number(drama[`${stage}_progress`]) || 0 };
@@ -367,6 +407,7 @@ async function getPocketBaseDrama(recordId: string, signal?: AbortSignal): Promi
     analysisError: [coarse.status, detail.status, precision.status].includes("failed") ? String(drama.analysis_error || "") || undefined : undefined,
     detailResult: normalizeAnalysisPayload(latestDetail?.result ?? drama.analysis),
     precisionResults,
+    highlightCandidates,
     posterUrl: fileUrl(drama, drama.poster, "300x400") || (typeof drama.external_cover_url === "string" ? drama.external_cover_url : undefined),
     episodeMedia,
     sourceType: drama.source_type === "外部" ? "外部" : "内部",

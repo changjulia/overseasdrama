@@ -1,3 +1,4 @@
+import taxonomy from "../../../shared/global-taxonomy.json" with { type: "json" };
 /** Shared, deliberately small vocabulary for labels exchanged by the stores. */
 export const DIMENSIONS = ["genre", "theme", "role", "relation", "conflict", "emotion", "storyBeat", "scene", "audience", "acquisition"] as const;
 export type OntologyDimension = typeof DIMENSIONS[number];
@@ -28,18 +29,28 @@ export type TagSetComparison = {
   unknown: Array<{ left: OntologyTag; right: OntologyTag }>;
   hardConflicts: string[];
 };
+export type TagRecallGate = {
+  stage: "recall_only";
+  decision: "allow_recall" | "needs_evidence" | "blocked";
+  relation: TagRelation;
+  score: number;
+  productionEligible: false;
+  hardConflicts: string[];
+  reasons: string[];
+};
 export type OntologyTag = {
   code: string; label: string; dimension: OntologyDimension; aliases: string[];
   parent?: string; related: string[]; contradicts: string[];
   original: string; evidence: string[]; confidence?: number;
+  mappingStatus: "mapped" | "pending_mapping"; taxonomyVersion: string;
 };
 export type RankedOntologyTag = OntologyTag & {
   episodes?: number[]; start?: number; end?: number; prominence: "primary" | "secondary";
   primaryScore: number; manualStatus?: "confirmed" | "rejected"; locked?: boolean;
 };
-type Definition = Omit<OntologyTag, "original" | "evidence" | "confidence" | "aliases"> & { aliases: string[] };
+type Definition = Omit<OntologyTag, "original" | "evidence" | "confidence" | "aliases" | "mappingStatus" | "taxonomyVersion"> & { aliases: string[] };
 
-const definitions: Definition[] = [
+const legacyDefinitions: Definition[] = [
   ["genre","都市",["都市剧","现代","urban","urban drama"]], ["genre","古装",["古装剧","历史剧","period","historical"]], ["genre","悬疑",["悬疑剧","推理","mystery","thriller"]], ["genre","甜宠",["甜宠剧","言情","romance","sweet romance"]], ["genre","豪门",["豪门剧","霸总","billionaire romance"]], ["genre","年代",["年代剧","年下","republican era"]], ["genre","仙侠",["仙侠剧","xianxia","fantasy"]], ["genre","现实",["现实题材","realistic"]],
   ["theme","复仇",["revenge"]], ["theme","重生",["重生逆袭","rebirth","second chance"]], ["theme","成长",["成长线","growth"]], ["theme","救赎",["redemption"]], ["theme","家族",["家族线","family","family saga"]], ["theme","女性独立",["女性成长","女强","female empowerment"]], ["theme","阶层逆袭",["逆袭","social mobility"]], ["theme","真相",["寻找真相","truth"]], ["theme","契约婚姻",["契约","contract marriage"]], ["theme","身份反转",["身份逆转","identity reversal"]], ["theme","背叛",["betrayal theme"]], ["theme","亲情",["family love","kinship"]],
   ["role","主角",["主人公","男女主","protagonist","lead"]], ["role","男主",["male lead","hero"]], ["role","女主",["female lead","heroine"]], ["role","反派",["villain","antagonist"]], ["role","配角",["supporting character"]], ["role","受害者",["victim"]], ["role","权威者",["家长","boss","authority"]],
@@ -51,6 +62,11 @@ const definitions: Definition[] = [
   ["audience","女性向",["女频","female audience","women"]], ["audience","男性向",["男频","male audience","men"]], ["audience","年轻人群",["年轻用户","youth","young adults"]], ["audience","家庭人群",["家庭用户","family audience"]], ["audience","下沉人群",["下沉市场","mass market"]], ["audience","高消费人群",["高净值","premium audience"]],
   ["acquisition","信息差",["information gap"]], ["acquisition","情绪拉升",["情绪钩子","emotional lift"]], ["acquisition","强冲突",["冲突钩子","strong conflict"]], ["acquisition","悬念预告",["悬念","cliffhanger","suspense"]], ["acquisition","身份揭示",["身份钩子","identity reveal"]], ["acquisition","反差",["反差钩子","contrast"]], ["acquisition","爽点兑现",["爽感兑现","payoff"]], ["acquisition","虐点共情",["共情","empathy"]],
 ].map(([dimension, label, aliases]) => ({ code: `${dimension}.${String(label).replace(/[^\w\u4e00-\u9fff]+/g, "-")}`, label: String(label), dimension: dimension as OntologyDimension, aliases: [String(label), ...(aliases as string[])], related: [], contradicts: [] }));
+
+// The shared taxonomy is the sole runtime vocabulary. Keep the legacy list
+// above only as readable migration context; it must not drive matching.
+const definitions = taxonomy.definitions as Definition[];
+export const TAXONOMY_VERSION = taxonomy.version;
 
 const byCode = new Map(definitions.map((d) => [d.code, d]));
 export function isKnownOntologyTag(tag: Pick<OntologyTag, "code">): boolean { return byCode.has(tag.code); }
@@ -75,7 +91,7 @@ export function normalizeTag(input: unknown, dimension: OntologyDimension = "the
   const candidate = byCode.get(String(rawObject.code ?? "")) ?? byAlias.get(`${dimension}:${key(original)}`) ?? anyAlias.get(key(original));
   const definition = candidate ?? { code: `${dimension}.${slug(original)}`, label: original.trim() || "未命名标签", dimension, aliases: [original], related: [], contradicts: [] };
   const evidence = Array.from(new Set([...(options.evidence ?? []), ...(Array.isArray(rawObject.evidence) ? rawObject.evidence.filter((v): v is string => typeof v === "string") : [])]));
-  return { code: definition.code, label: definition.label, dimension: definition.dimension, aliases: definition.aliases, parent: definition.parent, related: definition.related, contradicts: definition.contradicts, original, evidence, confidence: typeof options.confidence === "number" ? options.confidence : typeof rawObject.confidence === "number" ? rawObject.confidence : undefined };
+  return { mappingStatus: candidate ? "mapped" : "pending_mapping", taxonomyVersion: TAXONOMY_VERSION, code: definition.code, label: definition.label, dimension: definition.dimension, aliases: definition.aliases, parent: definition.parent, related: definition.related, contradicts: definition.contradicts, original, evidence, confidence: typeof options.confidence === "number" ? options.confidence : typeof rawObject.confidence === "number" ? rawObject.confidence : undefined };
 }
 
 export function normalizeTags(input: unknown, dimension: OntologyDimension, options?: { evidence?: string[] }): OntologyTag[] {
@@ -118,6 +134,27 @@ export function compareTagSets(left: unknown[], right: unknown[], dimension: Ont
   const score = Math.max(-1, Math.min(1, (buckets.exact.length * 1 + buckets.compatible.length * 0.55 + buckets.bridgeable.length * 0.15 - buckets.contradictory.length) / Math.max(1, a.length * b.length)));
   const relation: TagRelation = hardConflicts.length ? "contradictory" : buckets.exact.length ? "exact" : buckets.compatible.length ? "compatible" : buckets.bridgeable.length ? "bridgeable" : "unknown";
   return { relation, score, ...buckets, hardConflicts };
+}
+
+/** Tags only recall/rank candidates; they never approve production. */
+export function evaluateTagRecall(left: unknown[], right: unknown[], dimension: OntologyDimension = "theme"): TagRecallGate {
+  const comparison = compareTagSets(left, right, dimension);
+  if (comparison.relation === "contradictory") return {
+    stage: "recall_only", decision: "blocked", relation: comparison.relation,
+    score: comparison.score, productionEligible: false,
+    hardConflicts: comparison.hardConflicts,
+    reasons: comparison.hardConflicts.map((conflict) => `标签冲突：${conflict}`),
+  };
+  if (comparison.relation === "unknown") return {
+    stage: "recall_only", decision: "needs_evidence", relation: comparison.relation,
+    score: comparison.score, productionEligible: false, hardConflicts: [],
+    reasons: ["标签关系尚未被本体确认，需要补充语义或原片证据"],
+  };
+  return {
+    stage: "recall_only", decision: "allow_recall", relation: comparison.relation,
+    score: comparison.score, productionEligible: false, hardConflicts: [],
+    reasons: ["仅进入候选召回与粗排，仍需故事语义和生产门禁验证"],
+  };
 }
 export function normalizeAnalysisPayload(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;

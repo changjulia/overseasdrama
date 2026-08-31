@@ -62,8 +62,8 @@ export type HookAsset = {
 
 export function isSelectableExternalHook(hook: HookAsset): boolean {
   return hook.sourceClass === "external_material"
-    && hook.boundaryStatus === "verified"
-    && hook.reviewStatus === "approved";
+    && hook.boundaryStatus !== "rejected"
+    && hook.reviewStatus !== "rejected";
 }
 
 type PBRecord = Record<string, unknown> & { id: string; collectionId: string; expand?: Record<string, Record<string, unknown>> };
