@@ -3095,7 +3095,7 @@ def _extract_chat_stream(response: Any) -> dict[str, Any]:
         raise AnalysisFailed(f"{exc}; finish_reason={finish}") from exc
 
 
-def _semantic_request(task: str, payload: dict[str, Any], _safety_retry: int = 0) -> dict[str, Any]:
+def _semantic_request(task: str, payload: dict[str, Any], _safety_retry: int = 0, _size_retry: int = 0) -> dict[str, Any]:
     endpoint = os.getenv("LUMINA_SEMANTIC_ENDPOINT")
     api_key = os.getenv("LUMINA_SEMANTIC_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")
     model = os.getenv("LUMINA_SEMANTIC_MODEL")
@@ -3149,6 +3149,22 @@ def _semantic_request(task: str, payload: dict[str, Any], _safety_retry: int = 0
                 review.update({"status": "needs_review", "reviewRequired": True, "reasons": reasons})
                 sanitized_result["review"] = review
                 return sanitized_result
+            if exc.code == 400 and task == "hook-story-match" and _size_retry < 1:
+                # Route selection needs stable highlight ids and timestamped facts,
+                # not the full nested analysis objects. Some compatible providers
+                # report an oversized context as a generic HTTP 400, so retry once
+                # with a stricter evidence-only view before using the local fallback.
+                compact_payload = _compact_hook_story_retry_payload(payload)
+                compact_size = len(json.dumps(compact_payload, ensure_ascii=False))
+                original_size = len(json.dumps(payload, ensure_ascii=False))
+                if compact_size < original_size:
+                    if os.getenv("LUMINA_SEMANTIC_DEBUG", "false").lower() == "true":
+                        print(
+                            f"[semantic-request] task={task} http=400 compact-retry chars={original_size}->{compact_size}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                    return _semantic_request(task, compact_payload, _safety_retry, _size_retry + 1)
             request_size = len(json.dumps(body, ensure_ascii=False))
             payload_sizes = {key: len(json.dumps(value, ensure_ascii=False)) for key, value in payload.items()} if task == "paid-ad-material-story-synthesis" else {}
             raise AnalysisFailed(f"Semantic provider HTTP {exc.code} (request_chars={request_size}, payload_sizes={payload_sizes}): {response_body or exc.reason}") from exc
@@ -4199,6 +4215,58 @@ def _compact_episode_semantics(value: Any) -> dict[str, Any]:
     return {name: root.get(name) for name in ("episodeSummary", "episodePlots", "emotionCurve", "contentTags") if root.get(name) not in (None, "", [])}
 
 
+def _compact_provider_value(value: Any, *, list_limit: int = 16, text_limit: int = 800) -> Any:
+    """Bound provider context without mutating persisted evidence."""
+    if isinstance(value, str):
+        return value if len(value) <= text_limit else value[:text_limit] + "…"
+    if isinstance(value, list):
+        return [_compact_provider_value(item, list_limit=list_limit, text_limit=text_limit) for item in value[:list_limit]]
+    if isinstance(value, dict):
+        return {
+            str(key): _compact_provider_value(item, list_limit=list_limit, text_limit=text_limit)
+            for key, item in value.items()
+            if key not in ("base64", "embedding", "rawFrames", "frames") and item not in (None, "", [])
+        }
+    return value
+
+
+def _compact_hook_highlight(value: Any, *, strict: bool = False) -> dict[str, Any]:
+    """Return the evidence-bearing subset needed to select a story route."""
+    row = value if isinstance(value, dict) else {}
+    output = {
+        key: row.get(key)
+        for key in (
+            "id", "title", "summary", "episode", "start_seconds", "end_seconds",
+            "startSeconds", "endSeconds", "start", "end", "boundary_status",
+            "review_status", "safe_start", "safe_end", "evidence",
+            "transcript", "actions", "shots", "audioEvents", "analysis",
+        )
+        if row.get(key) not in (None, "", [])
+    }
+    return _compact_provider_value(
+        output,
+        list_limit=6 if strict else 14,
+        text_limit=320 if strict else 700,
+    )
+
+
+def _compact_hook_story_retry_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Create the strict second-attempt payload used after provider HTTP 400."""
+    compact = _compact_provider_value(payload, list_limit=12, text_limit=500)
+    episodes = payload.get("episodes") if isinstance(payload.get("episodes"), list) else []
+    compact["episodes"] = []
+    for episode in episodes:
+        if not isinstance(episode, dict):
+            continue
+        compact["episodes"].append({
+            "episode": episode.get("episode"),
+            "durationSeconds": episode.get("durationSeconds"),
+            "analysis": _compact_provider_value(episode.get("analysis") or {}, list_limit=6, text_limit=320),
+            "highlights": [_compact_hook_highlight(item, strict=True) for item in (episode.get("highlights") or [])[:12]],
+        })
+    return compact
+
+
 def _external_hook_fragment_evidence(hook: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """Keep only timestamped observations wholly inside the reviewed hook fragment.
 
@@ -4319,7 +4387,7 @@ def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> Analy
             "episode": int(item.get("episode_number") or 0),
             "durationSeconds": item.get("duration_seconds"),
             "analysis": _compact_episode_semantics(item.get("analysis_result")),
-            "highlights": [highlight for highlight in (item.get("highlights") if isinstance(item.get("highlights"), list) else []) if strategy != "story_to_hook" or not selected_highlight_ids or str(highlight.get("id") or "") in selected_highlight_ids],
+            "highlights": [_compact_hook_highlight(highlight) for highlight in (item.get("highlights") if isinstance(item.get("highlights"), list) else []) if strategy != "story_to_hook" or not selected_highlight_ids or str(highlight.get("id") or "") in selected_highlight_ids],
         } for item in episodes if int(item.get("episode_number") or 0) in scope],
         "requirements": [
             strategy_requirements.get(strategy, strategy_requirements["hook_to_story"]),
@@ -4622,7 +4690,8 @@ def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> Analy
             explicit_contradictions = match.get("contradictions") or match.get("hasContradiction") or False
             gate_input = {**calibration, "storyCompleteness": story_completeness,
                           "storyScore": business_score["score"], "promiseScore": business_score["dimensionScores"]["promise"],
-                          "contradictions": explicit_contradictions}
+                          "contradictions": explicit_contradictions,
+                          "sourceVerified": bool(hook.get("id") and drama.get("id")) and all(segment.get("highlightAssetId") for segment in valid_segments)}
             gate = item_production_gate(gate_input, GateThresholds(require_human_verification=True, require_story_completeness=True))
             duration_validation = _story_duration_validation(valid_segments, duration_spec, match.get("durationShortfallExplanation") or match.get("duration_shortfall_explanation"))
             gate["checks"]["targetDuration"] = duration_validation["passed"]
@@ -4662,11 +4731,19 @@ def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> Analy
                 }
             gate["mode"] = strategy
             gate["modeChecks"] = mode_checks
-            gate["requiredChecks"].update(mode_checks)
-            failed_mode_checks = [name for name, passed in mode_checks.items() if not passed]
+            hard_mode_names = {
+                "truthSafety", "factLeakage", "templateSnapshotPresent",
+                "templateEvidenceQualified", "templateBodyStructurePresent",
+            }
+            gate["checks"].update(mode_checks)
+            gate["requiredChecks"].update({name: passed for name, passed in mode_checks.items() if name in hard_mode_names})
+            failed_mode_checks = [name for name, passed in mode_checks.items() if not passed and name in hard_mode_names]
+            advisory_mode_checks = [name for name, passed in mode_checks.items() if not passed and name not in hard_mode_names]
             if failed_mode_checks:
                 gate["passed"] = False
                 gate["reasons"].extend([f"{name} failed" for name in failed_mode_checks])
+            if advisory_mode_checks:
+                gate.setdefault("advisories", []).extend([f"{name} failed; retained as a production advisory" for name in advisory_mode_checks])
             first = valid_segments[0]
             safe_start = first.get("safeStart") if isinstance(first.get("safeStart"), dict) else {}
             entry_points = [{

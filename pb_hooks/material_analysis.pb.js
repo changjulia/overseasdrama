@@ -2,7 +2,7 @@
 
 onRecordAfterCreateSuccess((e) => {
   const helpers = require(`${__hooks}/material_analysis_helpers.js`);
-  if (e.record.getString("video") && e.record.getString("analysis_status") === "queued") helpers.createJob(e.app, e.record);
+  if ((e.record.getString("video") || e.record.getString("source_url")) && e.record.getString("analysis_status") === "queued") helpers.createJob(e.app, e.record);
   e.next();
 }, "ad_materials");
 
@@ -64,6 +64,7 @@ routerAdd("POST", "/api/lumina/material-analysis/claim", (e) => {
         id: material.id,
         collection_id: material.collection().id,
         video: material.getString("video"),
+        source_url: material.getString("source_url"),
         title: material.getString("title"),
         original_name: material.getString("original_name"),
         mime_type: material.getString("mime_type"),
@@ -307,7 +308,7 @@ routerAdd("POST", "/api/lumina/material-analysis/materials/{id}/retry", (e) => {
   const jobs = e.app.findRecordsByFilter("material_analysis_jobs", "material = {:material}", "-id", 1, 0, { material: material.id }).filter(Boolean);
   const job = jobs[0];
   if (!job) {
-    if (!material.getString("video")) throw new BadRequestError("material has no uploaded video");
+    if (!material.getString("video") && !material.getString("source_url")) throw new BadRequestError("material has no uploaded video or remote source URL");
     const created = helpers.createJob(e.app, material);
     return e.json(200, { id: created.id, status: "queued", attempt: 0 });
   }

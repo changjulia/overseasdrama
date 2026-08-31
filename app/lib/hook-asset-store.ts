@@ -109,7 +109,7 @@ function fromRecord(record: PBRecord): HookAsset {
     materialPlatform: text(material.platform) || undefined,
     materialExposure: number(material.exposure) || undefined,
     materialRunDays: number(material.days) || undefined,
-    materialVideoUrl: materialId && videoName ? `${PB_URL}/api/files/${text(material.collectionId, "pbc_lumadmat001")}/${materialId}/${encodeURIComponent(videoName)}` : episodeVideoUrl,
+    materialVideoUrl: materialId && videoName ? `${PB_URL}/api/files/${text(material.collectionId, "pbc_lumadmat001")}/${materialId}/${encodeURIComponent(videoName)}` : text(material.source_url) || episodeVideoUrl,
     dramaId: text(record.drama, text(episode.drama, text(episodeDrama.id))) || undefined,
     dramaTitle: text(episodeDrama.title) || undefined,
     episodeId: episodeId || undefined,
@@ -166,15 +166,31 @@ function validLocalizedHook(hook: HookAsset) {
 
 export async function listHookAssets(signal?: AbortSignal, externalOnly = false): Promise<HookAsset[]> {
   const filter = externalOnly ? `&filter=${encodeURIComponent('source_class="external_material"')}` : "";
-  const payload = await pbJson(`/api/collections/hook_assets/records?perPage=500&sort=-id&expand=material,episode,episode.drama${filter}`, { signal }) as { items?: PBRecord[] };
-  return normalizeHookTitles((payload.items ?? []).map(fromRecord).filter(validLocalizedHook));
+  const items: PBRecord[] = [];
+  let page = 1;
+  let totalPages = 1;
+  do {
+    const payload = await pbJson(`/api/collections/hook_assets/records?page=${page}&perPage=200&sort=-id&expand=material,episode,episode.drama${filter}`, { signal }) as { items?: PBRecord[]; totalPages?: number };
+    items.push(...(payload.items ?? []));
+    totalPages = Math.max(1, number(payload.totalPages, 1));
+    page += 1;
+  } while (page <= totalPages);
+  return normalizeHookTitles(items.map(fromRecord).filter(validLocalizedHook));
 }
 
 /** Inspiration screen only contains hooks extracted from imported ad materials. */
 export async function listInspirationHookAssets(signal?: AbortSignal): Promise<HookAsset[]> {
   const filter = encodeURIComponent('source_class!="episode_highlight"');
-  const payload = await pbJson(`/api/collections/hook_assets/records?perPage=500&sort=-id&expand=material&filter=${filter}`, { signal }) as { items?: PBRecord[] };
-  return normalizeHookTitles((payload.items ?? []).map(fromRecord).filter(validLocalizedHook));
+  const items: PBRecord[] = [];
+  let page = 1;
+  let totalPages = 1;
+  do {
+    const payload = await pbJson(`/api/collections/hook_assets/records?page=${page}&perPage=200&sort=-id&expand=material&filter=${filter}`, { signal }) as { items?: PBRecord[]; totalPages?: number };
+    items.push(...(payload.items ?? []));
+    totalPages = Math.max(1, number(payload.totalPages, 1));
+    page += 1;
+  } while (page <= totalPages);
+  return normalizeHookTitles(items.map(fromRecord).filter(validLocalizedHook));
 }
 
 /** Analysis picker query. Rights are displayed but intentionally do not block analysis. */

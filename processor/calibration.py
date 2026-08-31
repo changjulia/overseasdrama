@@ -208,7 +208,7 @@ def build_calibration_payload(signals: ConfidenceSignals | Mapping[str, Any], pr
 
 
 def item_production_gate(item: Mapping[str, Any], thresholds: GateThresholds | None = None) -> dict[str, Any]:
-    """Apply conservative production checks to one calibrated item."""
+    """Apply the item gate, hard-blocking only source, evidence, boundary and facts."""
     t = thresholds or GateThresholds()
     probability = float(_get(item, "calibratedProbability", "calibrated_probability", default=0.0))
     evidence = float(_get(item, "evidenceCoverage", "evidence_coverage", default=0.0))
@@ -217,18 +217,25 @@ def item_production_gate(item: Mapping[str, Any], thresholds: GateThresholds | N
     story_score = float(_get(item, "storyScore", "story_score", default=100.0))
     promise_score = float(_get(item, "promiseScore", "promise_score", default=100.0))
     contradictions = _get(item, "contradictions", "contradiction", "hasContradiction", default=False)
+    source_verified = bool(_get(item, "sourceVerified", "source_verified", default=True))
     contradiction_ok = not bool(contradictions) if not isinstance(contradictions, (int, float)) else float(contradictions) <= t.max_contradiction_rate
     review = str(_get(item, "humanVerification", "human_verification", "review", default="unverified")).lower()
     review_ok = not t.require_human_verification or review in {"verified", "approved", "human_verified"}
-    checks = {"calibratedProbability": probability >= t.min_calibrated_probability,
+    checks = {"sourceVerified": source_verified,
+              "calibratedProbability": probability >= t.min_calibrated_probability,
               "evidenceCoverage": evidence >= t.min_evidence_coverage,
               "boundaryReliability": boundary >= t.min_boundary_reliability,
               "storyCompleteness": completeness >= t.min_story_completeness,
               "storyScore": story_score >= 75.0, "promiseScore": promise_score >= 70.0,
               "contradictions": contradiction_ok, "review": review_ok}
-    required = {**checks, "storyCompleteness": checks["storyCompleteness"] or not t.require_story_completeness}
-    reasons = [f"{name} below threshold" if name not in ("contradictions", "review") else f"{name} failed" for name, ok in required.items() if not ok]
-    advisories = ["storyCompleteness below threshold; creative truncation is allowed"] if not checks["storyCompleteness"] and not t.require_story_completeness else []
+    hard_names = {"sourceVerified", "evidenceCoverage", "boundaryReliability", "contradictions"}
+    required = {name: ok for name, ok in checks.items() if name in hard_names}
+    reasons = [f"{name} below threshold" if name not in ("sourceVerified", "contradictions") else f"{name} failed" for name, ok in required.items() if not ok]
+    advisories = [
+        f"{name} below threshold; retained as a production advisory"
+        if name not in ("review",) else "review pending; retained as a production advisory"
+        for name, ok in checks.items() if name not in hard_names and not ok
+    ]
     return {"passed": all(required.values()), "reasons": reasons, "advisories": advisories, "checks": checks, "requiredChecks": required, "thresholds": asdict(t)}
 
 

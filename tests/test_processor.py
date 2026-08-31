@@ -16,7 +16,7 @@ from processor.scribe import is_cache_valid, source_fingerprint
 from processor.batch_transcribe import select_free_episodes
 from processor.job_worker import ApiRequestError, classify_failure, envelope_from_dict, execute_entry_precision_job, execute_semantic_job, process_available, process_one_endpoint
 from processor.factory_render import build_render_quality_report
-from processor.semantic_analysis import AnalysisFailed, AnalysisEnvelope, Evidence, Timecode, _apply_material_evidence_gate, _complete_sentence_limit, _downgrade_unsupported_external_hook, _enrich_material_hooks, _external_hook_fragment_evidence, _external_hook_match_input, _extract_chat_stream, _extract_provider_result, _material_evidence_timestamps, _material_output_contract_valid, _material_semantic_analysis, _material_story_consistency_issues, _material_story_quality_issues, _normalize_material_format, _normalize_precision_hooks, _openai_request_body, _opening_preface_boundary, _precision_candidates, _reconstruct_storyline, _reconstruct_highlights, _sanitize_material_provider_input, _semantic_frame_base64, _semantic_request, _story_duration_validation, _storyboard_quality_issues, _storyboard_units_from_event_ledger, _strict_safety_provider_input, _target_duration_spec, _validate_semantic_claims, analyze_coarse, analyze_detail, analyze_hook_entry_points, analyze_hook_story_match, analyze_material, failed_envelope, transcribe
+from processor.semantic_analysis import AnalysisFailed, AnalysisEnvelope, Evidence, Timecode, _apply_material_evidence_gate, _compact_hook_highlight, _complete_sentence_limit, _downgrade_unsupported_external_hook, _enrich_material_hooks, _external_hook_fragment_evidence, _external_hook_match_input, _extract_chat_stream, _extract_provider_result, _material_evidence_timestamps, _material_output_contract_valid, _material_semantic_analysis, _material_story_consistency_issues, _material_story_quality_issues, _normalize_material_format, _normalize_precision_hooks, _openai_request_body, _opening_preface_boundary, _precision_candidates, _reconstruct_storyline, _reconstruct_highlights, _sanitize_material_provider_input, _semantic_frame_base64, _semantic_request, _story_duration_validation, _storyboard_quality_issues, _storyboard_units_from_event_ledger, _strict_safety_provider_input, _target_duration_spec, _validate_semantic_claims, analyze_coarse, analyze_detail, analyze_hook_entry_points, analyze_hook_story_match, analyze_material, failed_envelope, transcribe
 
 MATERIAL_CONTRACT = {
     "content": {"summary": {"value": "摘要", "confidence": 0.9, "evidence": [{"source": "transcript", "timecode": {"start": 0, "end": 1}, "confidence": 0.9, "text": "开场对白"}], "basedOnFactIds": ["F1"], "verification": "verified"}, "observations": [{"factId": "F1", "actorObserved": "说话者", "actionObserved": "说出开场对白", "evidence": [{"source": "transcript", "timecode": {"start": 0, "end": 1}, "confidence": 0.9, "text": "开场对白"}], "verification": "verified"}], "inferences": [], "tags": [], "characters": [], "relationships": [], "segments": [], "completeness": {"value": "完整", "confidence": 0.9, "evidence": []}},
@@ -274,6 +274,20 @@ class ProcessorTests(unittest.TestCase):
         result = analyze_hook_story_match(payload).result
         self.assertEqual(result["matches"], [])
         self.assertEqual(result["supplementalAnalysisRequests"][0]["requestedAnalysis"], "highlight_precision")
+
+    def test_hook_highlight_provider_view_drops_heavy_fields_and_bounds_evidence(self):
+        highlight = {
+            "id": "eh1", "start_seconds": 1, "end_seconds": 9,
+            "boundary_status": "verified", "review_status": "approved",
+            "base64": "secret", "embedding": [1] * 1000,
+            "evidence": [{"text": "证" * 1200, "timecode": {"start": 1, "end": 2}}] * 30,
+        }
+        compact = _compact_hook_highlight(highlight)
+        self.assertEqual(compact["id"], "eh1")
+        self.assertNotIn("base64", compact)
+        self.assertNotIn("embedding", compact)
+        self.assertEqual(len(compact["evidence"]), 14)
+        self.assertLessEqual(len(compact["evidence"][0]["text"]), 701)
 
     def test_story_duration_tiers_allow_only_explained_shortfall(self):
         spec = _target_duration_spec({"targetDurationTier": "5-15m"})
@@ -648,6 +662,39 @@ class ProcessorTests(unittest.TestCase):
         retry_body = urlopen_mock.call_args_list[1].args[0].data.decode("utf-8")
         self.assertNotIn("explicit sexual scene", retry_body)
         self.assertNotIn("secret-image", retry_body)
+
+    @patch("processor.semantic_analysis.urllib.request.urlopen")
+    def test_hook_story_match_http_400_retries_with_compact_context(self, urlopen_mock):
+        oversized = urllib.error.HTTPError(
+            "https://dashscope", 400, "bad request", {}, io.BytesIO(b'{"error":{"code":"invalid_parameter"}}')
+        )
+        retry_context = MagicMock()
+        retry_response = retry_context.__enter__.return_value
+        retry_response.__iter__.return_value = iter([
+            b'data: {"choices":[{"delta":{"content":"{\\"matches\\":[]}"}}]}\n',
+            b'data: [DONE]\n',
+        ])
+        urlopen_mock.side_effect = [oversized, retry_context]
+        payload = {
+            "episodes": [{
+                "episode": 1,
+                "analysis": {"episodeSummary": "剧情" * 1000},
+                "highlights": [{
+                    "id": "eh1", "start_seconds": 1, "end_seconds": 9,
+                    "evidence": [{"text": "对白" * 1000, "timecode": {"start": 1, "end": 2}}] * 30,
+                }],
+            }],
+        }
+        with patch.dict("os.environ", {
+            "DASHSCOPE_API_KEY": "local-test-key",
+            "LUMINA_SEMANTIC_ENDPOINT": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+            "LUMINA_SEMANTIC_MODEL": "qwen3-vl-plus",
+            "LUMINA_SEMANTIC_PROVIDER": "openai-chat-completions",
+        }, clear=True):
+            self.assertEqual(_semantic_request("hook-story-match", payload), {"matches": []})
+        first_size = len(urlopen_mock.call_args_list[0].args[0].data)
+        retry_size = len(urlopen_mock.call_args_list[1].args[0].data)
+        self.assertLess(retry_size, first_size)
 
     def test_detail_evidence_requires_episode_and_uses_its_duration(self):
         durations = {1: 5.0, 2: 20.0}

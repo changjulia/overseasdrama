@@ -169,11 +169,17 @@ def execute_material_job(response: dict[str, Any], base_url: str, workspace: Pat
     material_id = str(material.get("id") or "")
     collection_id = str(material.get("collection_id") or "")
     video_name = str(material.get("video") or "")
-    if not material_id or not collection_id or not video_name:
-        raise RuntimeError("material job is missing material.id, material.collection_id, or material.video")
-    suffix = Path(video_name).suffix or ".video"
+    source_url = str(material.get("source_url") or "").strip()
+    if not material_id or not collection_id or (not video_name and not source_url):
+        raise RuntimeError("material job is missing material identity or a playable media source")
+    parsed_source = urllib.parse.urlparse(source_url)
+    if source_url and parsed_source.scheme not in {"http", "https"}:
+        raise RuntimeError("material source_url must use http or https")
+    source_name = video_name or Path(urllib.parse.unquote(parsed_source.path)).name
+    suffix = Path(source_name).suffix or ".video"
     source = workspace / f"material-source{suffix}"
-    asset_url = f"{base_url.rstrip('/')}/api/files/{collection_id}/{material_id}/{urllib.parse.quote(video_name)}"
+    asset_url = (f"{base_url.rstrip('/')}/api/files/{collection_id}/{material_id}/{urllib.parse.quote(video_name)}"
+                 if video_name else source_url)
     if on_progress:
         on_progress(8, "下载素材")
     download(asset_url, source)

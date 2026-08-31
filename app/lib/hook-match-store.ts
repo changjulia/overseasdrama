@@ -411,6 +411,7 @@ export async function listStorylinePlans(
   episodeScope: number[],
   deliveryGoal: string,
   targetDurationSeconds: number,
+  selectedHighlightIds: string[] = [],
   signal?: AbortSignal,
 ): Promise<{
   storyNeed: StoryNeed;
@@ -426,6 +427,7 @@ export async function listStorylinePlans(
       episode_scope: episodeScope,
       delivery_goal: deliveryGoal,
       target_duration_seconds: targetDurationSeconds,
+      selected_highlight_ids: selectedHighlightIds,
     }),
     signal,
   })) as Record<string, unknown>;

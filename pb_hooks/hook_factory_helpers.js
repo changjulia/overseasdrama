@@ -384,9 +384,15 @@ function generateStorylinePlans(
   episodes,
   deliveryGoal,
   targetDurationSeconds,
+  selectedHighlightIds,
 ) {
   const rows = Array.isArray(episodes) ? episodes : [];
   const target = Math.max(60, Number(targetDurationSeconds || 900));
+  const selectedHighlightIdSet = new Set(
+    (Array.isArray(selectedHighlightIds) ? selectedHighlightIds : [])
+      .map(String)
+      .filter(Boolean),
+  );
   const highlights = [];
   rows.forEach((episode) => {
     const episodeNumber = Number(
@@ -492,13 +498,17 @@ function generateStorylinePlans(
       });
     });
     const sourceHighlights = Array.isArray(episode && episode.highlights)
-      ? episode.highlights.slice()
+      ? episode.highlights.filter(
+          (item) =>
+            !selectedHighlightIdSet.size ||
+            selectedHighlightIdSet.has(String((item && item.id) || "")),
+        )
       : [];
     // Coarse analysis already contains timestamped transcript evidence. It is
     // usable for storyline ideation even before a reviewer creates a persisted
     // highlight or verifies its cutting boundary; those statuses remain visible
     // as advisory metadata instead of suppressing the whole episode.
-    if (!sourceHighlights.length) {
+    if (!sourceHighlights.length && !selectedHighlightIdSet.size) {
       const transcript = Array.isArray(episodeAnalysis.transcript)
         ? episodeAnalysis.transcript.filter(
             (item) =>
@@ -823,7 +833,7 @@ function generateStorylinePlans(
             : index === segments.length - 1
               ? "阶段兑现或形成新卡点"
               : "推动冲突与信息增量",
-        highlightAssetId: item.id,
+        highlightAssetId: item.sourceHighlightId || item.id,
         analysisVersion: item.analysisVersion,
         safeStart: item.safeStart,
         safeEnd: item.safeEnd,
@@ -873,7 +883,7 @@ function generateStorylinePlans(
       },
       evidence: segments.map((item) => ({
         sourceType: "episode_highlight",
-        sourceId: item.id,
+        sourceId: item.sourceHighlightId || item.id,
         episode: item.episode,
         start: item.start,
         end: item.end,
@@ -935,6 +945,8 @@ function generateStorylinePlans(
     return {
       ...representative,
       id: `sequential-episode-${episodeNumber}-${start.toFixed(2)}`,
+      sourceHighlightId:
+        episodeNumber === anchor.episode ? anchor.id : representative.id,
       episode: episodeNumber,
       start,
       end: episodeEnd,

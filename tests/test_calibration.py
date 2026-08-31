@@ -55,9 +55,23 @@ class CalibrationTests(unittest.TestCase):
             "boundaryReliability": 1, "storyCompleteness": 1, "contradictions": False,
             "humanVerification": "verified", "storyScore": 74.9, "promiseScore": 69.9},
             GateThresholds(require_human_verification=True))
-        self.assertFalse(gate["passed"])
+        self.assertTrue(gate["passed"])
         self.assertFalse(gate["checks"]["storyScore"])
         self.assertFalse(gate["checks"]["promiseScore"])
+        self.assertTrue(gate["advisories"])
+
+    def test_item_gate_only_hard_blocks_source_evidence_boundary_and_facts(self):
+        soft = item_production_gate({"sourceVerified": True, "calibratedProbability": 0,
+            "evidenceCoverage": 1, "boundaryReliability": 1, "storyCompleteness": 0,
+            "storyScore": 1, "promiseScore": 1, "contradictions": False,
+            "humanVerification": "unverified"}, GateThresholds(require_human_verification=True))
+        self.assertTrue(soft["passed"])
+        for field in ("sourceVerified", "evidenceCoverage", "boundaryReliability", "contradictions"):
+            broken = {"sourceVerified": True, "evidenceCoverage": 1,
+                "boundaryReliability": 1, "contradictions": False}
+            broken[field] = False if field in ("sourceVerified", "contradictions") else 0
+            if field == "contradictions": broken[field] = True
+            self.assertFalse(item_production_gate(broken)["passed"], field)
 
 if __name__ == "__main__":
     unittest.main()

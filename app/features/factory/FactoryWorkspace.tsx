@@ -75,6 +75,28 @@ const padEpisode = (episode: number) =>
   `EP ${String(episode).padStart(2, "0")}`;
 const timecode = (seconds: number) =>
   `00:${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+const safeDownloadName = (value: string) =>
+  value.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, " ").trim();
+const mediaExtension = (url: string) => {
+  try {
+    const match = new URL(url, window.location.href).pathname.match(/\.([a-z0-9]{2,5})$/i);
+    return match?.[1]?.toLowerCase() ?? "mp4";
+  } catch {
+    return "mp4";
+  }
+};
+const downloadMedia = async (url: string, fileName: string) => {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`素材读取失败（${response.status}）`);
+  const objectUrl = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+};
 const highlightSelectionKey = (item: {
   id: string | number;
   episode: number;
@@ -123,41 +145,46 @@ const hookOptionFromAsset = (
   templateEvidenceLevel: rec?.evidenceLevel,
   templateProductionEligible: rec?.productionEligible,
 });
-const passesHardGate = (gate?: { passed?: boolean }) => gate?.passed === true;
-const passesNonOverridableGate = (gate?: Record<string, unknown>) => {
+const passesHardGate = (gate?: Record<string, unknown>) => {
+  if (!gate) return false;
   const checks = (
-    gate?.requiredChecks && typeof gate.requiredChecks === "object"
+    gate.requiredChecks && typeof gate.requiredChecks === "object"
       ? gate.requiredChecks
-      : gate?.checks && typeof gate.checks === "object"
+      : gate.checks && typeof gate.checks === "object"
         ? gate.checks
         : {}
   ) as Record<string, unknown>;
-  const soft = new Set([
-    "storyScore",
-    "story_score",
-    "calibratedProbability",
-    "calibrated_probability",
-    "storyCompleteness",
-    "story_completeness",
-    "understandingCost",
-    "understanding_cost",
-    "transitionDifficulty",
-    "transition_difficulty",
+  const hard = new Set([
+    "sourceVerified", "sourceTraceability", "mediaPlayable",
+    "evidenceCoverage", "boundaryReliability", "boundary",
+    "contradictions", "truthSafety", "factLeakage",
+    "templateSnapshotPresent", "templateEvidenceQualified",
+    "templateBodyStructurePresent",
   ]);
-  return Object.entries(checks).every(
-    ([name, passed]) => passed !== false || soft.has(name),
-  );
+  const hardEntries = Object.entries(checks).filter(([name]) => hard.has(name));
+  return hardEntries.length
+    ? hardEntries.every(([, passed]) => passed !== false)
+    : gate.passed === true;
+};
+const passesNonOverridableGate = (gate?: Record<string, unknown>) => {
+  return passesHardGate(gate);
 };
 const isProductionReadyMatch = (item: HookStoryMatch) =>
   item.humanVideoApproved ||
-  (passesHardGate(item.productionGate) &&
-    item.storyScore >= 75 &&
-    item.promiseFulfillmentScore >= 70);
+  passesHardGate(item.productionGate);
 const isEditableBackupMatch = (item: HookStoryMatch) =>
   passesNonOverridableGate(item.productionGate) &&
   !isProductionReadyMatch(item) &&
   item.storyScore >= 65 &&
   item.promiseFulfillmentScore >= 70;
+const productionMatchScore = (item: HookStoryMatch) =>
+  item.storyScore * 2 + item.promiseFulfillmentScore + item.matchScore;
+const bestProductionMatch = (items: HookStoryMatch[]) =>
+  [...items]
+    .filter(isProductionReadyMatch)
+    .sort((left, right) => productionMatchScore(right) - productionMatchScore(left))[0];
+const waitFor = (milliseconds: number) =>
+  new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
 
 function selectedRange(episodes: number[]) {
   if (!episodes.length) return "未选择片源";
@@ -376,6 +403,186 @@ function HookTimelinePreview({
   );
 }
 
+function HookAssemblyPreview({
+  hookUrl,
+  hookStart,
+  hookEnd,
+  highlightUrl,
+  highlightStart,
+  highlightEnd,
+  title,
+}: {
+  hookUrl: string;
+  hookStart: number;
+  hookEnd: number;
+  highlightUrl: string;
+  highlightStart: number;
+  highlightEnd: number;
+  title: string;
+}) {
+  const hookRef = useRef<HTMLVideoElement>(null);
+  const highlightRef = useRef<HTMLVideoElement>(null);
+  const safeHookStart = Math.max(0, hookStart);
+  const safeHookEnd = Math.max(safeHookStart + 0.1, hookEnd);
+  const safeHighlightStart = Math.max(0, highlightStart);
+  const safeHighlightEnd = Math.max(safeHighlightStart + 0.1, highlightEnd);
+  const hookDuration = safeHookEnd - safeHookStart;
+  const highlightDuration = safeHighlightEnd - safeHighlightStart;
+  const totalDuration = hookDuration + highlightDuration;
+  const [current, setCurrent] = useState(0);
+  const [activeClip, setActiveClip] = useState<"hook" | "highlight">("hook");
+  const [playing, setPlaying] = useState(false);
+
+  const pauseBoth = () => {
+    hookRef.current?.pause();
+    highlightRef.current?.pause();
+    setPlaying(false);
+  };
+
+  const seek = (seconds: number) => {
+    const next = Math.min(totalDuration, Math.max(0, seconds));
+    const inHook = next < hookDuration || next === 0;
+    const target = inHook ? hookRef.current : highlightRef.current;
+    hookRef.current?.pause();
+    highlightRef.current?.pause();
+    setPlaying(false);
+    setActiveClip(inHook ? "hook" : "highlight");
+    if (target?.readyState) {
+      target.currentTime = inHook
+        ? safeHookStart + next
+        : safeHighlightStart + (next - hookDuration);
+    }
+    setCurrent(next);
+  };
+
+  const togglePlay = () => {
+    if (playing) {
+      pauseBoth();
+      return;
+    }
+    let clip = activeClip;
+    if (current >= totalDuration - 0.05) {
+      clip = "hook";
+      setActiveClip("hook");
+      setCurrent(0);
+      if (hookRef.current) hookRef.current.currentTime = safeHookStart;
+    }
+    const target = clip === "hook" ? hookRef.current : highlightRef.current;
+    if (!target) return;
+    target.muted = true;
+    void target.play().then(() => setPlaying(true)).catch(() => undefined);
+  };
+
+  return (
+    <div
+      className={styles.assemblyPreview}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+    >
+      <div className={styles.assemblyPreviewStage}>
+        <video
+          ref={hookRef}
+          className={activeClip === "hook" ? styles.assemblyVideoActive : ""}
+          src={`${hookUrl}#t=${safeHookStart}`}
+          muted
+          playsInline
+          preload="metadata"
+          aria-label={`${title} 钩子片段`}
+          onLoadedMetadata={(event) => {
+            if (event.currentTarget.currentTime < safeHookStart)
+              event.currentTarget.currentTime = safeHookStart;
+          }}
+          onPlay={() => setPlaying(true)}
+          onPause={() => {
+            if (activeClip === "hook") setPlaying(false);
+          }}
+          onTimeUpdate={(event) => {
+            const video = event.currentTarget;
+            if (video.currentTime >= safeHookEnd - 0.04) {
+              video.pause();
+              video.currentTime = safeHookEnd;
+              setCurrent(hookDuration);
+              setActiveClip("highlight");
+              const next = highlightRef.current;
+              if (next) {
+                next.currentTime = safeHighlightStart;
+                void next.play().catch(() => setPlaying(false));
+              }
+              return;
+            }
+            setCurrent(Math.max(0, video.currentTime - safeHookStart));
+          }}
+        />
+        <video
+          ref={highlightRef}
+          className={activeClip === "highlight" ? styles.assemblyVideoActive : ""}
+          src={`${highlightUrl}#t=${safeHighlightStart}`}
+          muted
+          playsInline
+          preload="metadata"
+          aria-label={`${title} 高光候选片段`}
+          onLoadedMetadata={(event) => {
+            if (event.currentTarget.currentTime < safeHighlightStart)
+              event.currentTarget.currentTime = safeHighlightStart;
+          }}
+          onPlay={() => setPlaying(true)}
+          onPause={() => {
+            if (activeClip === "highlight") setPlaying(false);
+          }}
+          onTimeUpdate={(event) => {
+            const video = event.currentTarget;
+            if (video.currentTime >= safeHighlightEnd - 0.04) {
+              video.pause();
+              video.currentTime = safeHighlightEnd;
+              setCurrent(totalDuration);
+              setPlaying(false);
+              return;
+            }
+            setCurrent(
+              hookDuration +
+                Math.max(0, video.currentTime - safeHighlightStart),
+            );
+          }}
+        />
+        <button type="button" className={styles.assemblyPlay} onClick={togglePlay}>
+          {playing ? "暂停" : "播放成片"}
+        </button>
+        <span className={styles.assemblyClipBadge}>
+          {activeClip === "hook" ? "钩子" : "高光候选"}
+        </span>
+      </div>
+      <div className={styles.assemblyTimeline}>
+        <div
+          className={styles.assemblyTrack}
+          style={{
+            "--hook-ratio": `${(hookDuration / totalDuration) * 100}%`,
+          } as React.CSSProperties}
+        >
+          <span className={styles.assemblyBoundary} aria-hidden="true">
+            <i />
+            <b>钩子结束｜正片开始</b>
+          </span>
+          <input
+            type="range"
+            min={0}
+            max={totalDuration}
+            step={0.01}
+            value={Math.min(totalDuration, current)}
+            aria-label={`拖动预成片时间轴，${previewTime(hookDuration)}处为钩子与正片分界点`}
+            onPointerDown={pauseBoth}
+            onChange={(event) => seek(Number(event.currentTarget.value))}
+          />
+        </div>
+        <div className={styles.assemblyTimelineMeta}>
+          <span>钩子 {previewTime(hookDuration)}</span>
+          <b>{previewTime(current)} / {previewTime(totalDuration)}</b>
+          <span>正片 {previewTime(highlightDuration)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function FactoryWorkspace({
   initialMode = "episode-splice",
   editingDraft,
@@ -518,6 +725,7 @@ export function FactoryWorkspace({
   const [bulkHookMatching, setBulkHookMatching] = useState(false);
   const [selectedProductionPairIds, setSelectedProductionPairIds] = useState<string[]>([]);
   const [batchProductionStarting, setBatchProductionStarting] = useState(false);
+  const [batchProductionError, setBatchProductionError] = useState("");
   const [storylineLoading, setStorylineLoading] = useState(false);
   const [storylineError, setStorylineError] = useState("");
   const [storylineRequestToken, setStorylineRequestToken] = useState(0);
@@ -613,14 +821,18 @@ export function FactoryWorkspace({
     () => new Set(selectedExternalHighlightIds),
     [selectedExternalHighlightIds],
   );
-  const selectedExternalHighlightAssetIds = useMemo(
+  const selectedExternalHighlightAssetIdList = useMemo(
     () =>
-      new Set(
+      [...new Set(
         selectedExternalHighlightIds
           .map((key) => key.split("|", 1)[0])
           .filter(Boolean),
-      ),
+      )].sort(),
     [selectedExternalHighlightIds],
+  );
+  const selectedExternalHighlightAssetIds = useMemo(
+    () => new Set(selectedExternalHighlightAssetIdList),
+    [selectedExternalHighlightAssetIdList],
   );
   const selectedExternalHighlights = useMemo(
     () =>
@@ -1713,7 +1925,10 @@ export function FactoryWorkspace({
     setFactoryRender(render);
   };
 
-  const requestStorylineBatchRenders = async (requestedPlanIds?: string[]) => {
+  const requestStorylineBatchRenders = async (
+    requestedPlanIds?: string[],
+    resolvedMatches: Record<string, HookStoryMatch> = {},
+  ) => {
     const plansForProduction = requestedPlanIds?.length
       ? selectedStorylinePlans.filter((plan) => requestedPlanIds.includes(plan.id))
       : selectedStorylinePlans;
@@ -1736,9 +1951,10 @@ export function FactoryWorkspace({
             undefined,
             job.matchContextHash,
           );
-      const storyMatch = matches.find(
+      const rawStoryMatch = resolvedMatches[plan.id] ?? matches.find(
         (item) => item.id === cached.selectedRecommendationId,
       ) ?? matches[0];
+      const storyMatch = rawStoryMatch;
       if (!storyMatch || !isProductionReadyMatch(storyMatch)) continue;
       const versionTimeline: ExternalHookTimelineClip[] = [
         {
@@ -2026,6 +2242,7 @@ export function FactoryWorkspace({
               episodes,
               goal,
               targetDurationSeconds,
+              selectedExternalHighlightAssetIdList,
               controller.signal,
             );
     void request
@@ -2071,6 +2288,7 @@ export function FactoryWorkspace({
     matchStrategy,
     mode,
     targetDurationSeconds,
+    selectedExternalHighlightAssetIdList,
     storylineRequestToken,
   ]);
   const selectedStorylinePlans = storylinePlans.filter((item) =>
@@ -2085,13 +2303,40 @@ export function FactoryWorkspace({
       return Boolean(storylineHookPairs[plan.id] && recommendation && isProductionReadyMatch(recommendation));
     })
     .map((plan) => plan.id);
+  const manuallyReviewableStorylineIds = selectedStorylinePlans
+    .filter((plan) => {
+      const cached = storylineMatchCache[plan.id];
+      const recommendation = cached?.matches.find(
+        (item) => item.id === cached.selectedRecommendationId,
+      ) ?? cached?.matches[0];
+      return Boolean(
+        storylineHookPairs[plan.id] &&
+        recommendation &&
+        !isProductionReadyMatch(recommendation) &&
+        passesNonOverridableGate(recommendation.productionGate),
+      );
+    })
+    .map((plan) => plan.id);
+  const selectableProductionPairIds = selectedStorylinePlans
+    .filter((plan) => Boolean(storylineHookPairs[plan.id]))
+    .map((plan) => plan.id);
   const selectedReadyProductionPairIds = selectedProductionPairIds.filter((id) =>
     productionReadyStorylineIds.includes(id),
+  );
+  const selectedManualReviewPairIds = selectedProductionPairIds.filter((id) =>
+    manuallyReviewableStorylineIds.includes(id),
+  );
+  const selectedBlockedPairIds = selectedProductionPairIds.filter(
+    (id) =>
+      !productionReadyStorylineIds.includes(id) &&
+      !manuallyReviewableStorylineIds.includes(id),
   );
   const activeStoryThread = storyUnderstanding?.storylines.find(
     (storyline) => storyline.id === activeStoryThreadId,
   );
-  const visibleStorylinePlans = activeStoryThread
+  // A story-understanding tab is explanatory context. When the user explicitly
+  // selected highlights it must not hide plans belonging to another thread.
+  const visibleStorylinePlans = activeStoryThread && !selectedExternalHighlightIds.length
     ? storylinePlans.filter((plan) =>
         activeStoryThread.sourcePlanIds.includes(plan.id),
       )
@@ -2180,6 +2425,7 @@ export function FactoryWorkspace({
     touch();
   };
   const toggleProductionPair = (id: string) => {
+    setBatchProductionError("");
     setSelectedProductionPairIds((current) =>
       current.includes(id)
         ? current.filter((item) => item !== id)
@@ -2187,17 +2433,69 @@ export function FactoryWorkspace({
     );
   };
   const startSelectedPairProduction = async () => {
-    if (!selectedReadyProductionPairIds.length || batchProductionStarting) return;
+    if (!selectedProductionPairIds.length || batchProductionStarting) return;
+    setBatchProductionError("");
     setBatchProductionStarting(true);
     const originalSelection = selectedStorylineIds;
     try {
-      setSelectedStorylineIds(selectedReadyProductionPairIds);
-      await requestStorylineBatchRenders(selectedReadyProductionPairIds);
+      onNotify?.("正在自动优化素材衔接与安全切点…");
+      const resolvedMatches: Record<string, HookStoryMatch> = {};
+      const unresolvedPlanIds: string[] = [];
+      for (const planId of selectedProductionPairIds) {
+        const cached = storylineMatchCache[planId];
+        const pair = storylineHookPairs[planId];
+        let matches = cached?.matches ?? [];
+        let resolved = bestProductionMatch(matches);
+        if (!resolved && cached?.job?.id && pair?.hookAssetId && dramaSource?.id) {
+          const seed = matches.find(
+            (item) => item.id === cached.selectedRecommendationId,
+          ) ?? matches[0];
+          if (seed) {
+            await requestMoreEntryPoints(seed.id).catch(() => undefined);
+            for (let attempt = 0; attempt < 8 && !resolved; attempt += 1) {
+              await waitFor(attempt === 0 ? 800 : 1500);
+              matches = await listHookStoryMatches(
+                pair.hookAssetId,
+                dramaSource.id,
+                undefined,
+                cached.job.matchContextHash,
+              );
+              resolved = bestProductionMatch(matches);
+            }
+          }
+        }
+        if (resolved) resolvedMatches[planId] = resolved;
+        else unresolvedPlanIds.push(planId);
+        if (cached && matches !== cached.matches) {
+          setStorylineMatchCache((current) => ({
+            ...current,
+            [planId]: {
+              ...current[planId],
+              matches,
+              selectedRecommendationId: resolved?.id ?? current[planId]?.selectedRecommendationId,
+              savedAt: new Date().toISOString(),
+            },
+          }));
+        }
+      }
+      const producibleIds = selectedProductionPairIds.filter(
+        (planId) => resolvedMatches[planId],
+      );
+      if (!producibleIds.length)
+        throw new Error("当前素材暂时无法形成完整衔接，系统已保留任务并将继续尝试可用替代方案");
+      setSelectedStorylineIds(producibleIds);
+      await requestStorylineBatchRenders(producibleIds, resolvedMatches);
       setActiveStep(5);
-      onNotify?.(`已将 ${selectedReadyProductionPairIds.length} 个钩子故事线组合批量送入生产环境`);
+      onNotify?.(
+        `已自动优化并将 ${producibleIds.length} 个组合送入生产${unresolvedPlanIds.length ? `；${unresolvedPlanIds.length} 个组合正在后台寻找替代安全切点` : ""}`,
+      );
     } catch (error) {
       setSelectedStorylineIds(originalSelection);
-      setFactoryRenderError(error instanceof Error ? error.message : "批量进入生产失败");
+      const message =
+        error instanceof Error ? error.message : "批量进入生产失败";
+      setFactoryRenderError(message);
+      setBatchProductionError(message);
+      onNotify?.(message);
     } finally {
       setBatchProductionStarting(false);
     }
@@ -3915,10 +4213,16 @@ export function FactoryWorkspace({
                             <input
                               type="checkbox"
                               checked={selectedProductionPairIds.includes(plan.id)}
-                              disabled={!productionReady}
+                              disabled={!paired}
                               onChange={() => toggleProductionPair(plan.id)}
                             />
-                            {productionReady ? "选择进入生产" : "等待通过门禁"}
+                            {!paired
+                              ? "等待匹配钩子"
+                              : productionReady
+                                ? "选择此组合"
+                                : manuallyReviewableStorylineIds.includes(plan.id)
+                                  ? "选择并人工确认"
+                                  : "选择收藏（硬阻断）"}
                           </label>
                         </div>
                         <b>{plan.title}</b>
@@ -3963,36 +4267,41 @@ export function FactoryWorkspace({
               <div className={styles.productionPairDock} role="region" aria-label="批量生产选择">
                 <div>
                   <small>批量生产篮</small>
-                  <b>已选择 {selectedReadyProductionPairIds.length} 个合格钩子组合</b>
+                  <b>已选择 {selectedProductionPairIds.length} 个钩子组合</b>
                   <span>
-                    共 {productionReadyStorylineIds.length} 个组合已通过门禁；未通过的组合不会被送入生产。
+                    可直接生产 {selectedReadyProductionPairIds.length} · 需人工确认 {selectedManualReviewPairIds.length} · 硬阻断 {selectedBlockedPairIds.length}
                   </span>
+                  {batchProductionError && (
+                    <span className={styles.productionPairError} role="alert">
+                      {batchProductionError}
+                    </span>
+                  )}
                 </div>
                 <div className={styles.productionPairDockActions}>
                   <button
                     type="button"
-                    disabled={!productionReadyStorylineIds.length}
+                    disabled={!selectableProductionPairIds.length}
                     onClick={() =>
                       setSelectedProductionPairIds(
-                        selectedReadyProductionPairIds.length === productionReadyStorylineIds.length
+                        selectedProductionPairIds.length === selectableProductionPairIds.length
                           ? []
-                          : productionReadyStorylineIds,
+                          : selectableProductionPairIds,
                       )
                     }
                   >
-                    {selectedReadyProductionPairIds.length === productionReadyStorylineIds.length && productionReadyStorylineIds.length
+                    {selectedProductionPairIds.length === selectableProductionPairIds.length && selectableProductionPairIds.length
                       ? "取消全选"
-                      : "全选合格组合"}
+                      : "全选已匹配组合"}
                   </button>
                   <button
                     type="button"
                     className={styles.productionPairPrimary}
-                    disabled={!selectedReadyProductionPairIds.length || batchProductionStarting}
+                    disabled={!selectedProductionPairIds.length || batchProductionStarting}
                     onClick={() => void startSelectedPairProduction()}
                   >
                     {batchProductionStarting
                       ? "正在创建生产任务…"
-                      : `批量进入生产（${selectedReadyProductionPairIds.length}）`}
+                      : `确认并批量生产（${selectedProductionPairIds.length}）`}
                   </button>
                 </div>
               </div>
@@ -4018,6 +4327,29 @@ export function FactoryWorkspace({
               }
               onSelectRecommendation={(item) => {
                 setSelectedRecommendationId(item.id);
+                if (matchStrategy === "story_to_hook" && activeStorylineId) {
+                  setStorylineMatchCache((current) => {
+                    const cached = current[activeStorylineId];
+                    return cached
+                      ? {
+                          ...current,
+                          [activeStorylineId]: {
+                            ...cached,
+                            selectedRecommendationId: item.id,
+                            savedAt: new Date().toISOString(),
+                          },
+                        }
+                      : current;
+                  });
+                  if (item.productionReady || item.editableBackup) {
+                    setSelectedProductionPairIds((current) =>
+                      current.includes(activeStorylineId)
+                        ? current
+                        : [...current, activeStorylineId],
+                    );
+                    setBatchProductionError("");
+                  }
+                }
                 setTimeline([]);
                 touch();
               }}
@@ -4386,6 +4718,9 @@ export function FactoryWorkspace({
               matchStrategy === "template_reuse" &&
               !selectedStorylineIds.length) ||
             (activeStep === 2 &&
+              matchStrategy === "story_to_hook" &&
+              (!selectedProductionPairIds.length || batchProductionStarting)) ||
+            (activeStep === 2 &&
               matchStrategy !== "template_reuse" &&
               !stepReady[2])
           }
@@ -4433,6 +4768,10 @@ export function FactoryWorkspace({
               onNotify?.("连接方案已确认，正在生成可播放草稿");
               return;
             }
+            if (activeStep === 2 && matchStrategy === "story_to_hook") {
+              void startSelectedPairProduction();
+              return;
+            }
             setActiveStep((step) => Math.min(steps.length - 1, step + 1));
           }}
         >
@@ -4448,7 +4787,13 @@ export function FactoryWorkspace({
                 matchStrategy === "template_reuse" &&
                 !hasSelectedStoryMatch
               ? "按选中方案开始完整匹配"
-              : "下一步"}
+              : activeStep === 2 && matchStrategy === "story_to_hook"
+                ? batchProductionStarting
+                  ? "正在进入生产…"
+                  : selectedProductionPairIds.length
+                    ? `进入下一阶段生产（${selectedProductionPairIds.length}）`
+                    : "请先选择可生产组合"
+                : "下一步"}
         </button>
       </div>
       {sourcePicker && (
@@ -4525,6 +4870,11 @@ export function FactoryWorkspace({
                 </select>
               </div>
             )}
+            {sourcePicker === "hook" && !pickerLoading && !pickerError && (
+              <div className={styles.sourcePickerCount} role="status">
+                合格钩子资产池 {hookOptions.length} 条 · 当前标签/故事筛选命中 {filteredHookOptions.length} 条
+              </div>
+            )}
             <div className={styles.sourcePickerList}>
               {pickerLoading ? (
                 <div className={styles.sourcePickerState}>正在读取素材…</div>
@@ -4554,12 +4904,39 @@ export function FactoryWorkspace({
                 (sourcePicker === "drama"
                   ? dramaOptions
                   : filteredHookOptions
-                ).map((option) => (
-                  <button
-                    type="button"
+                ).map((option) => {
+                  const previewHighlight = activeStorylinePlan?.segments?.[0];
+                  const previewHighlightUrl = previewHighlight
+                    ? dramaSource?.episodeMedia?.[previewHighlight.episode]?.url
+                    : undefined;
+                  const canPreviewAssembly =
+                    sourcePicker === "hook" &&
+                    matchStrategy === "story_to_hook" &&
+                    Boolean(option.hookMediaUrl) &&
+                    option.hookStart !== undefined &&
+                    option.hookEnd !== undefined &&
+                    Boolean(previewHighlightUrl && previewHighlight);
+                  const downloadableMaterials = [
+                    option.hookMediaUrl
+                      ? {
+                          url: option.hookMediaUrl,
+                          fileName: `${safeDownloadName(option.title || "外搭钩子")}-钩子素材.${mediaExtension(option.hookMediaUrl)}`,
+                        }
+                      : null,
+                    previewHighlightUrl && previewHighlight
+                      ? {
+                          url: previewHighlightUrl,
+                          fileName: `${safeDownloadName(dramaSource?.dramaCn ?? dramaSource?.title ?? "剧集")}-${padEpisode(previewHighlight.episode)}-正片素材.${mediaExtension(previewHighlightUrl)}`,
+                        }
+                      : null,
+                  ].filter((item): item is { url: string; fileName: string } => Boolean(item));
+                  return (
+                  <article
                     className={styles.sourcePickerCard}
                     key={option.id}
-                    disabled={
+                    role="button"
+                    tabIndex={0}
+                    aria-disabled={
                       sourcePicker === "hook" &&
                       option.hookMatchRelation === "contradictory"
                     }
@@ -4570,6 +4947,10 @@ export function FactoryWorkspace({
                         : undefined
                     }
                     onClick={() => {
+                      if (
+                        sourcePicker === "hook" &&
+                        option.hookMatchRelation === "contradictory"
+                      ) return;
                       if (sourcePicker === "drama") onChooseDrama?.(option);
                       else {
                         if (
@@ -4603,7 +4984,49 @@ export function FactoryWorkspace({
                       setSourcePicker(null);
                       touch();
                     }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ")
+                        event.currentTarget.click();
+                    }}
                   >
+                    {sourcePicker === "hook" && (
+                      <button
+                        type="button"
+                        className={styles.sourcePickerDownload}
+                        disabled={!downloadableMaterials.length}
+                        aria-label={`下载「${option.title}」的钩子和正片素材`}
+                        onClick={async (event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          if (!downloadableMaterials.length) return;
+                          const results = await Promise.allSettled(
+                            downloadableMaterials.map((item) =>
+                              downloadMedia(item.url, item.fileName),
+                            ),
+                          );
+                          const succeeded = results.filter(
+                            (result) => result.status === "fulfilled",
+                          ).length;
+                          if (succeeded === downloadableMaterials.length) {
+                            onNotify?.(
+                              succeeded === 2
+                                ? "已开始下载钩子素材和正片素材"
+                                : "已开始下载当前可用素材；另一份素材尚未接入",
+                            );
+                          } else {
+                            onNotify?.(
+                              succeeded
+                                ? "部分素材已开始下载，另有素材读取失败"
+                                : "素材下载失败，请稍后重试",
+                            );
+                          }
+                        }}
+                        onKeyDown={(event) => event.stopPropagation()}
+                      >
+                        <span aria-hidden="true">↓</span>
+                        下载钩子和正片素材
+                      </button>
+                    )}
                     <span>
                       {sourcePicker === "drama"
                         ? "剧库正片"
@@ -4620,6 +5043,17 @@ export function FactoryWorkspace({
                     <h3>{option.dramaCn ?? option.title}</h3>
                     {option.dramaCn && <b>{option.title}</b>}
                     <p>{option.description}</p>
+                    {canPreviewAssembly && previewHighlight && previewHighlightUrl && (
+                      <HookAssemblyPreview
+                        hookUrl={option.hookMediaUrl!}
+                        hookStart={option.hookStart!}
+                        hookEnd={option.hookEnd!}
+                        highlightUrl={previewHighlightUrl}
+                        highlightStart={previewHighlight.start}
+                        highlightEnd={previewHighlight.end}
+                        title={option.title}
+                      />
+                    )}
                     {sourcePicker === "hook" &&
                       option.hookRetrievalDirection && (
                         <small>
@@ -4661,8 +5095,9 @@ export function FactoryWorkspace({
                           : "选择 →"}
                       </strong>
                     </footer>
-                  </button>
-                ))
+                  </article>
+                  );
+                })
               )}
             </div>
           </aside>

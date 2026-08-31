@@ -154,6 +154,9 @@ routerAdd("POST", "/api/lumina/storyline-plans", (e) => {
           { length: Math.max(0, drama.getInt("free_episodes")) },
           (_, index) => index + 1,
         );
+    const selectedHighlightIds = Array.isArray(body.selected_highlight_ids)
+      ? [...new Set(body.selected_highlight_ids.map(String).filter(Boolean))]
+      : [];
     const episodes = e.app
       .findRecordsByFilter(
         "drama_episodes",
@@ -178,6 +181,10 @@ routerAdd("POST", "/api/lumina/storyline-plans", (e) => {
             { episode: episode.id },
           )
           .filter(Boolean)
+          .filter(
+            (item) =>
+              !selectedHighlightIds.length || selectedHighlightIds.includes(item.id),
+          )
           .map((item) => helpers.hookSemanticSnapshot(item)),
       }));
     const storyNeed = helpers.deriveStoryNeed(
@@ -194,6 +201,7 @@ routerAdd("POST", "/api/lumina/storyline-plans", (e) => {
       episodes,
       body.delivery_goal,
       body.target_duration_seconds,
+      selectedHighlightIds,
     );
     const storyUnderstanding = helpers.generateStoryUnderstanding(
       { id: drama.id, title: drama.getString("title") },
@@ -249,6 +257,7 @@ routerAdd("POST", "/api/lumina/storyline-plans", (e) => {
       diagnostics,
       requested_maximum: 10,
       returned_count: plans.length,
+      selected_highlight_ids: selectedHighlightIds,
     });
   } catch (error) {
     return e.json(422, {
@@ -449,7 +458,7 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
         "hook_assets",
         "source_class = 'external_material' && boundary_status != 'rejected' && review_status != 'rejected'",
         "-id",
-        500,
+        10000,
         0,
       )
       .filter(Boolean);
@@ -715,7 +724,7 @@ routerAdd("POST", "/api/lumina/historical-template-recommendations", (e) => {
         "hook_assets",
         "source_class = 'external_material' && boundary_status = 'verified' && review_status = 'approved' && material != ''",
         "-id",
-        500,
+        10000,
         0,
       )
       .filter(Boolean);

@@ -78,6 +78,27 @@ test("generates only sequential plans from a highlight through the next 2-3 epis
   }
 });
 
+test("limits storyline generation to every explicitly selected highlight", () => {
+  const episodeRows = Array.from({length:5},(_,episodeIndex)=>({
+    episode:episodeIndex+1,
+    durationSeconds:60,
+    analysis:{},
+    highlights:Array.from({length:2},(_,index)=>({id:`h${episodeIndex+1}-${index}`,start_seconds:5+index*20,end_seconds:15+index*20,spoken_summary:`第${episodeIndex+1}集事件${index}`,conflict:"关系冲突",information_gap:"接下来会怎样",evidence:[{source:"subtitle"}],analysis_version:"v1"}))
+  }));
+  const selected=["h1-0","h2-1"];
+  const plans=generateStorylinePlans({id:"selected-drama"},episodeRows,"停滑与点击",300,selected);
+  const openingIds=new Set(plans.map(plan=>String(plan.segments[0].highlightAssetId)));
+  assert.ok(plans.length>=2);
+  assert.ok(plans.every(plan=>selected.some(id=>plan.evidence.some(row=>row.sourceId===id))));
+  assert.ok(selected.every(id=>plans.some(plan=>plan.evidence.some(row=>row.sourceId===id))));
+  assert.ok(openingIds.size>=2);
+});
+
+test("storyline route accepts selected highlight ids as a generation constraint", () => {
+  assert.match(hookRouteSource, /selected_highlight_ids/);
+  assert.match(hookRouteSource, /selectedHighlightIds\.includes\(item\.id\)/);
+});
+
 test("removes repeated plot clauses and does not return duplicate storyline content", () => {
   const repeated="人物发现背叛并决定离开；人物发现背叛并决定离开";
   const episodeRows=Array.from({length:4},(_,episodeIndex)=>({
