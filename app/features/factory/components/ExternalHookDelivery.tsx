@@ -266,7 +266,7 @@ export function ExternalHookDelivery({
             </button>
           </section>
 
-          <section className={styles.card}><div className={styles.cardTitle}><div><span>输出状态</span><h3>{hasPlayablePreview ? "成片可播放" : "等待生成真实成片"}</h3></div></div><p className={styles.inlineHint}>{hasPlayablePreview ? "请在左侧播放检查首帧、转场、字幕与结尾，审核通过后开放导出。" : "生成任务完成后，真实视频会自动出现在左侧预览框。"}</p></section>
+          <section className={styles.card}><div className={styles.cardTitle}><div><span>输出状态</span><h3>{hasPlayablePreview ? "成片可播放" : "等待生成真实成片"}</h3></div></div><p className={styles.inlineHint}>{hasPlayablePreview ? "请在左侧播放检查首帧、转场、字幕与结尾；服务端校验通过后即可导出。" : "生成任务完成后，真实视频会自动出现在左侧预览框。"}</p></section>
           <section className={styles.card}><div className={styles.cardTitle}><div><span>成片版本</span><h3>{versions.length} 个版本</h3></div></div><div className={styles.versionList}>{versions.map(version=><button type="button" key={version.id} onClick={()=>onSelectVersion?.(version)}><b>{version.label}</b><span>{version.createdAt} · {versionStatusLabels[version.status]}</span></button>)}</div></section>
         </div>
       </div>}

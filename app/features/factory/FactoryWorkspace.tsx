@@ -3448,7 +3448,7 @@ export function FactoryWorkspace({
           duration={spliceDurationSeconds ? formatDurationZh(Math.round(spliceDurationSeconds)) : "--:--"}
           previewUrl={factoryRender?.previewUrl}
           renderConnected={true}
-          disabled={!spliceDurationReady}
+          disabled={!spliceDurationReady && !factoryRender?.outputUrl}
           initialReviewStatus={spliceReviewStatus}
           initialProgress={factoryRender?.progress ?? 0}
           initialRenderError={factoryRenderError || factoryRender?.error || ""}
@@ -3461,7 +3461,57 @@ export function FactoryWorkspace({
           }}
           onNotify={onNotify}
         />
-        {spliceReviewStatus === "approved" && factoryRender?.outputUrl && <div className={styles.flowActions}><span>人工审核已通过</span><button type="button" className={styles.nextButton} onClick={async () => { const exported = await exportFactoryRender(factoryRender.project, factoryRender.id, `${title || source.dramaCn || source.title}_正片顺序拼接.mp4`); const link = document.createElement("a"); link.href = exported.outputUrl; link.download = exported.fileName; document.body.appendChild(link); link.click(); link.remove(); onNotify?.("已开始下载正片顺序拼接成片"); }}>导出成片</button></div>}
+        {factoryRender?.outputUrl && (
+          <ExternalHookDelivery
+            view="export"
+            projectName={title || `${source.dramaCn ?? source.title} · 正片顺序拼接`}
+            previewUrl={factoryRender.previewUrl}
+            renderConnected={true}
+            exportableVersionCount={1}
+            versions={
+              editingDraft?.renderVersions?.length
+                ? editingDraft.renderVersions.map((item) => ({
+                    id: item.id,
+                    label: `真实渲染 V${item.version}`,
+                    createdAt: item.created || "历史版本",
+                    status: item.outputUrl ? "approved" as const : "failed" as const,
+                    previewUrl: item.previewUrl,
+                    outputUrl: item.outputUrl,
+                  }))
+                : [{
+                    id: factoryRender.id,
+                    label: `真实渲染 V${factoryRender.version}`,
+                    createdAt: "刚刚完成",
+                    status: "approved" as const,
+                    previewUrl: factoryRender.previewUrl,
+                    outputUrl: factoryRender.outputUrl,
+                  }]
+            }
+            onExport={async (config) => {
+              const renderVersions = editingDraft?.renderVersions?.length
+                ? editingDraft.renderVersions.filter(
+                    (item) =>
+                      item.outputUrl &&
+                      (!config.selectedVersionIds?.length ||
+                        config.selectedVersionIds.includes(item.id)),
+                  )
+                : [factoryRender];
+              for (const item of renderVersions) {
+                const customName = config.versionFileNames?.[item.id]?.trim();
+                const exported = await exportFactoryRender(
+                  factoryRender.project,
+                  item.id,
+                  customName
+                    ? `${customName.replace(/\.[^.]+$/, "")}.${config.format.toLowerCase()}`
+                    : config.fileName,
+                );
+                await downloadMedia(exported.outputUrl, exported.fileName);
+              }
+              onNotify?.(`已开始导出 ${renderVersions.length} 个正片顺序拼接版本`);
+            }}
+            onNotify={onNotify}
+          />
+        )}
       </section>
     </section>
   );
@@ -4806,8 +4856,9 @@ export function FactoryWorkspace({
                 }
               }}
               disabled={
-                !externalReady ||
-                (containsPaidEpisodes && !paidScopeConfirmed)
+                !factoryRender?.outputUrl &&
+                (!externalReady ||
+                  (containsPaidEpisodes && !paidScopeConfirmed))
               }
               onSaveDraft={() => {
                 save(false);
