@@ -1127,10 +1127,18 @@ export function FactoryWorkspace({
       dramaSource?.episodeMedia?.[Number(selectedRawStorySegment.episode)]?.url,
   );
   const hasSelectedStoryMatch = Boolean(selectedRawStoryMatch);
+  const hasPersistedProduction = Boolean(
+    timeline.length &&
+      (factoryProjectId || editingDraft?.factoryProjectId),
+  );
+  const hasCompletedRender = Boolean(
+    factoryRender?.outputUrl ||
+      editingDraft?.renderVersions?.some((render) => Boolean(render.outputUrl)),
+  );
   const hasUsableStoryMatch =
     matchStrategy === "template_reuse"
-      ? hasSelectedStoryMatch
-      : hasApprovedStoryMatch;
+      ? hasSelectedStoryMatch || hasPersistedProduction
+      : hasApprovedStoryMatch || hasPersistedProduction;
   const stepReady =
     mode === "external-hook"
       ? [
@@ -1149,12 +1157,19 @@ export function FactoryWorkspace({
                 )
               : Boolean(hookSourceInput?.hookAssetId),
           matchStrategy === "template_reuse"
-            ? Boolean(selectedStorylineIds.length && hasSelectedStoryMatch)
-            : hasApprovedStoryMatch,
+            ? Boolean(
+                (selectedStorylineIds.length && hasSelectedStoryMatch) ||
+                  hasPersistedProduction,
+              )
+            : hasApprovedStoryMatch || hasPersistedProduction,
           hasUsableStoryMatch && Boolean(selectedTransitionId),
           hasUsableStoryMatch && Boolean(timeline.length),
-          false,
-          false,
+          hasCompletedRender,
+          Boolean(
+            hasCompletedRender &&
+              (editingDraft?.productionStatus === "已导出" ||
+                editingDraft?.factorySnapshot?.review?.decision === "approved"),
+          ),
         ]
       : [
           Boolean(hookSource),
