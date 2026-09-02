@@ -77,9 +77,11 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     restart: unless-stopped
-    mem_limit: 2560m
-    memswap_limit: 3g
-    cpus: 1.5
+    # Keep background OCR/transcription from starving interactive renders on the
+    # 2-core, 4 GB Lighthouse host. Swap remains available for model spikes.
+    mem_limit: 1536m
+    memswap_limit: 2g
+    cpus: 0.7
     environment:
       NEXT_PUBLIC_POCKETBASE_URL: http://pocketbase:8090
       LUMINA_WORKER_TOKEN: ${LUMINA_WORKER_TOKEN}
@@ -131,9 +133,9 @@ services:
       - --worker-id
       - tencent-sg-interactive-worker
     restart: unless-stopped
-    mem_limit: 2048m
-    memswap_limit: 2560m
-    cpus: 1.0
+    mem_limit: 1792m
+    memswap_limit: 2304m
+    cpus: 1.1
     environment:
       NEXT_PUBLIC_POCKETBASE_URL: http://pocketbase:8090
       LUMINA_WORKER_TOKEN: ${LUMINA_WORKER_TOKEN}
