@@ -59,6 +59,7 @@ services:
     environment:
       LUMINA_WORKER_TOKEN: ${LUMINA_WORKER_TOKEN}
       LUMINA_UI_MODE: local-loopback
+      LUMINA_UI_ORIGINS: ${LUMINA_UI_ORIGINS:-}
     volumes:
       - ./deploy/runtime/pb_data:/pb/pb_data
     networks: [lumina]

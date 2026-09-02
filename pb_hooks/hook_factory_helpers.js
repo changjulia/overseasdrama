@@ -17,12 +17,24 @@ function authorizeUi(e) {
   );
   const browserOriginAllowed =
     /^https?:\/\/(localhost|127\.0\.0\.1):(300[0-9]|8090)$/i.test(origin);
+  const configuredOrigins = String($os.getenv("LUMINA_UI_ORIGINS") || "")
+    .split(",")
+    .map((value) => value.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+  const configuredOriginAllowed = configuredOrigins.includes(
+    origin.replace(/\/$/, ""),
+  );
   // Vite's same-origin /pb proxy may omit Origin after proxying. In that case
   // only accept a request that still terminates on the local PocketBase host.
   // Requests without Origin come from the local reverse proxy or CLI. The
   // PocketBase process itself is bound to loopback by the launcher.
   const localProxyAllowed = !origin;
-  if (!browserOriginAllowed && !localProxyAllowed && localUiHeader !== "local")
+  if (
+    !browserOriginAllowed &&
+    !configuredOriginAllowed &&
+    !localProxyAllowed &&
+    localUiHeader !== "local"
+  )
     throw new ForbiddenError("Local UI only");
 }
 
