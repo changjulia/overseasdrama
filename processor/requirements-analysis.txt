@@ -1,5 +1,7 @@
 # Install only on analysis workers; web workers do not need these heavy packages.
 faster-whisper>=1.1,<2
-paddleocr>=2.9,<4
-paddlepaddle>=2.6,<4
+paddleocr>=2.9,<3
+paddlepaddle>=2.6,<3
+numpy>=1.24,<2
 jsonschema>=4.23,<5
+Pillow>=10,<13

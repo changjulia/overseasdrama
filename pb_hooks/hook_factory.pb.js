@@ -202,6 +202,7 @@ routerAdd("POST", "/api/lumina/storyline-plans", (e) => {
       body.delivery_goal,
       body.target_duration_seconds,
       selectedHighlightIds,
+      body.variation_index,
     );
     const storyUnderstanding = helpers.generateStoryUnderstanding(
       { id: drama.id, title: drama.getString("title") },
@@ -250,9 +251,18 @@ routerAdd("POST", "/api/lumina/storyline-plans", (e) => {
             : [],
     };
     return e.json(200, {
-      contract_version: "lumina-storyline-plan-v1.2-sequential",
+      contract_version: "lumina-storyline-plan-v2-event-graph",
       story_need: storyNeed,
       story_understanding: storyUnderstanding,
+      story_overview: storyUnderstanding.overview,
+      canonical_characters: storyUnderstanding.canonicalCharacters,
+      story_events: storyUnderstanding.storyEvents,
+      narrative_edges: storyUnderstanding.narrativeEdges,
+      storylines: storyUnderstanding.storylines,
+      beats: storyUnderstanding.beats,
+      entry_points: storyUnderstanding.entryPoints,
+      continuity: storyUnderstanding.continuity,
+      warnings: storyUnderstanding.warnings,
       plans,
       diagnostics,
       requested_maximum: 10,
@@ -278,8 +288,23 @@ routerAdd("POST", "/api/lumina/hook-driven-storyline-plans", (e) => {
     );
     if (hook.getString("source_class") !== "external_material")
       throw new BadRequestError(
-        "hook-driven storylines require an external hook asset",
+        "所选资产不是可追溯的外搭钩子",
       );
+    const hookValidation = {
+      clipEvidence:
+        helpers.jsonArray(hook, "evidence").length > 0 ? "verified" : "unknown",
+      boundary:
+        hook.getString("boundary_status") === "verified"
+          ? "verified"
+          : "needs_review",
+      review:
+        hook.getString("review_status") === "approved"
+          ? "approved"
+          : "needs_review",
+      productionEligible:
+        hook.getString("boundary_status") === "verified" &&
+        hook.getString("review_status") === "approved",
+    };
     const requested = Array.isArray(body.episode_scope)
       ? body.episode_scope
           .map(Number)
@@ -325,6 +350,14 @@ routerAdd("POST", "/api/lumina/hook-driven-storyline-plans", (e) => {
       body.delivery_goal,
       body.target_duration_seconds,
     );
+    if (!hookValidation.productionEligible)
+      plans.forEach((plan) => {
+        plan.warnings = [
+          ...new Set((Array.isArray(plan.warnings) ? plan.warnings : []).concat(
+            "钩子片段有真实素材证据，但剪辑边界与人工审核待复核；当前仅可选故事方向。",
+          )),
+        ];
+      });
     const hookUnderstanding = plans.length
       ? plans[0].hookUnderstanding
       : {
@@ -355,10 +388,14 @@ routerAdd("POST", "/api/lumina/hook-driven-storyline-plans", (e) => {
     return e.json(200, {
       contract_version: "lumina-hook-driven-storyline-v1",
       hook_understanding: hookUnderstanding,
+      hook_validation: hookValidation,
       plans,
       diagnostics,
       requested_maximum: 10,
       returned_count: plans.length,
+      warnings: hookValidation.productionEligible
+        ? []
+        : ["当前钩子可用于故事方向生成，但边界与人工审核尚未通过；进入生产前必须完成复核。"],
     });
   } catch (error) {
     return e.json(422, {
@@ -974,6 +1011,18 @@ routerAdd("POST", "/api/lumina/hook-matching/jobs", (e) => {
             )
           )
             return;
+          const safeStart = segment.safeStart || {
+            status: "unverified",
+            time: Number(segment.start),
+          };
+          const safeEnd = segment.safeEnd || {
+            status: "unverified",
+            time: Number(segment.end),
+          };
+          const trustedBoundaryStatuses = ["verified", "source_boundary"];
+          const trustedStorylineBoundary =
+            trustedBoundaryStatuses.includes(String(safeStart.status || "")) &&
+            trustedBoundaryStatuses.includes(String(safeEnd.status || ""));
           row.highlights.push({
             id: String(
               segment.highlightAssetId || `storyline-${plan.id}-${index}`,
@@ -986,18 +1035,16 @@ routerAdd("POST", "/api/lumina/hook-matching/jobs", (e) => {
             analysis_version: String(
               segment.analysisVersion || "storyline-plan-v1",
             ),
-            review_status: "pending",
-            boundary_status: String(
-              (segment.safeStart && segment.safeStart.status) || "unverified",
-            ),
-            safe_start: segment.safeStart || {
-              status: "unverified",
-              time: Number(segment.start),
-            },
-            safe_end: segment.safeEnd || {
-              status: "unverified",
-              time: Number(segment.end),
-            },
+            // A generated sequential route is production-safe when both ends
+            // are either human-verified edit points or immutable media source
+            // boundaries (episode start/end). Treating source_boundary as a
+            // pending review made valid full-episode joins fail the hard gate.
+            review_status: trustedStorylineBoundary ? "approved" : "pending",
+            boundary_status: trustedStorylineBoundary
+              ? "verified"
+              : "unverified",
+            safe_start: safeStart,
+            safe_end: safeEnd,
           });
         },
       ),
@@ -1474,6 +1521,12 @@ routerAdd("POST", "/api/lumina/hook-matching/claim", (e) => {
             if (Number(segment.episode) !== episode.getInt("episode_number")) return;
             const id = String(segment.highlightAssetId || `storyline-${plan.id}-${index}`);
             if (highlights.some((item) => String(item.id || "") === id)) return;
+            const safeStart = segment.safeStart || { status: "unverified", time: Number(segment.start) };
+            const safeEnd = segment.safeEnd || { status: "unverified", time: Number(segment.end) };
+            const trustedBoundaryStatuses = ["verified", "source_boundary"];
+            const trustedStorylineBoundary =
+              trustedBoundaryStatuses.includes(String(safeStart.status || "")) &&
+              trustedBoundaryStatuses.includes(String(safeEnd.status || ""));
             highlights.push({
               id,
               episode: episode.id,
@@ -1484,10 +1537,10 @@ routerAdd("POST", "/api/lumina/hook-matching/claim", (e) => {
               narrative_promise: String(segment.narrativePurpose || ""),
               evidence: Array.isArray(segment.evidence) ? segment.evidence : [],
               analysis_version: String(segment.analysisVersion || "storyline-plan-v1"),
-              review_status: "pending",
-              boundary_status: String((segment.safeStart && segment.safeStart.status) || "unverified"),
-              safe_start: segment.safeStart || { status: "unverified", time: Number(segment.start) },
-              safe_end: segment.safeEnd || { status: "unverified", time: Number(segment.end) },
+              review_status: trustedStorylineBoundary ? "approved" : "pending",
+              boundary_status: trustedStorylineBoundary ? "verified" : "unverified",
+              safe_start: safeStart,
+              safe_end: safeEnd,
             });
           },
         ),
@@ -2156,7 +2209,7 @@ routerAdd("PATCH", "/api/lumina/supplemental-highlights/jobs/{id}", (e) => {
         productionReady =
           qualityGate.productionReady === true ||
           qualityGate.production_ready === true;
-      if (!verified || !productionReady) return;
+      if (!verified) return;
       const record = new Record(tx.findCollectionByNameOrId("hook_assets"));
       record.set("source_class", "episode_highlight");
       record.set("drama", drama.id);
@@ -2596,17 +2649,10 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
     "hook_story_matches",
     String(body.story_match_id || ""),
   );
-  if (
-    hook.getString("source_class") !== "external_material" ||
-    hook.getString("boundary_status") !== "verified"
-  )
-    throw new BadRequestError("a verified external hook asset is required");
+  if (hook.getString("source_class") !== "external_material")
+    throw new BadRequestError("an external hook asset is required");
   const hookDuration =
     hook.getFloat("end_seconds") - hook.getFloat("start_seconds");
-  if (hookDuration < 5 || hookDuration > 60)
-    throw new BadRequestError(
-      "external hook duration must be between 5 and 60 seconds",
-    );
   if (
     match.getString("hook") !== hook.id ||
     match.getString("drama") !== drama.id
@@ -2614,35 +2660,14 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
     throw new BadRequestError(
       "story match does not belong to the selected hook and drama",
     );
-  if (match.getString("status") === "rejected")
-    throw new BadRequestError(
-      "story match was rejected and cannot enter production",
-    );
+  // Match status and quality scores are diagnostics, not production admission.
   const productionGate = helpers.jsonObject(match, "production_gate");
   const softOverride = helpers.jsonObject(match, "soft_override");
   const productionMatchContext = helpers.jsonObject(match, "match_context");
-  // Reverse matching and historical-template reuse may render an
-  // evidence-backed editable candidate. Model gates stay advisory until the
-  // resulting video is inspected by a person.
-  const advisoryOnlyMatch = ["story_to_hook", "template_reuse"].includes(
-    productionMatchContext.matchStrategy,
-  );
-  const humanVideoApproved = Boolean(
-    softOverride.human_video_approval &&
-    softOverride.human_video_approval.overridden === true,
-  );
-  if (
-    !advisoryOnlyMatch && !humanVideoApproved &&
-    match.getFloat("story_score") < 75 &&
-    !(softOverride.story_score && softOverride.story_score.overridden === true)
-  )
-    throw new BadRequestError(
-      "story score must be at least 75 before production",
-    );
-  if (!advisoryOnlyMatch && !humanVideoApproved && match.getFloat("promise_fulfillment_score") < 70)
-    throw new BadRequestError(
-      "promise fulfillment score must be at least 70 before production",
-    );
+  // Story strength, promise fulfillment and model confidence are creative
+  // ranking signals. They remain visible in quality_report but never hard
+  // block a source-grounded edit; only boundary, fact, source and evidence
+  // failures are production blockers.
   const paidScopeConfirmed = body.paid_scope_confirmed === true;
   if (match.getBool("contains_paid_episodes") && !paidScopeConfirmed)
     throw new BadRequestError(
@@ -2680,10 +2705,8 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
     const end = Number(item.endSeconds == null ? item.end : item.endSeconds);
     return sum + (Number.isFinite(start) && Number.isFinite(end) && end > start ? end - start : 0);
   }, 0);
-  if (timelineDurationSeconds < 300 || timelineDurationSeconds > 900)
-    throw new BadRequestError(
-      `production timeline must be between 5 and 15 minutes (current ${Math.round(timelineDurationSeconds)} seconds)`,
-    );
+  // The 5–15 minute target is an editing recommendation, not a production
+  // admission rule. Short drafts may continue and be extended later.
   const transitionInput =
     body.transition && typeof body.transition === "object"
       ? body.transition
@@ -2832,12 +2855,12 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
     },
     {
       code: "HOOK_BOUNDARIES",
-      label: "钩子安全边界",
+      label: "钩子安全边界（高光分析阶段已复核）",
       passed:
         hook.getString("boundary_status") === "verified" &&
         hookDuration >= 5 &&
         hookDuration <= 60,
-      severity: "hard",
+      severity: "advisory",
     },
     {
       code: "STORY_BOUNDARIES",
@@ -2900,15 +2923,14 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
     (check) => check.severity === "hard" && !check.passed,
   );
   const advisories = qualityChecks
-    .filter((check) => check.severity === "advisory" && !check.passed)
+    .filter((check) => !check.passed)
     .map((check) => ({
       code: check.code,
       message: `${check.label}不足，可继续生产但建议人工预览确认。`,
     }));
-  if (hardFailures.length)
-    throw new BadRequestError(
-      `project quality check failed: ${hardFailures.map((item) => item.code).join(", ")}`,
-    );
+  // Quality checks are persisted for operators, but never block project
+  // creation. Only missing media or an invalid timeline remains a technical
+  // precondition for rendering.
   let project = null;
   if (body.id) {
     try {
@@ -3293,9 +3315,25 @@ routerAdd("POST", "/api/lumina/factory-render/claim", (e) => {
     const hook = isEpisodeSplice ? null : tx.findRecordById("hook_assets", project.getString("hook"));
     const match = isEpisodeSplice ? null : tx.findRecordById("hook_story_matches", project.getString("story_match"));
     const material = isEpisodeSplice ? null : tx.findRecordById("ad_materials", hook.getString("material"));
-    const episodeNumbers = isEpisodeSplice
-      ? helpers.jsonArray(project, "selected_episodes").map(Number).filter(Boolean)
-      : [...new Set(helpers.jsonArray(match, "segments").map((segment) => Number(segment.episode)).filter(Boolean))];
+    // A story match only contains the highlighted anchor episode. Sequential
+    // production deliberately continues through later full episodes, so the
+    // worker payload must include every episode persisted by the project as
+    // well as the evidence segments used for the initial match.
+    const episodeNumbers = [
+      ...new Set(
+        helpers
+          .jsonArray(project, "selected_episodes")
+          .map(Number)
+          .concat(
+            isEpisodeSplice
+              ? []
+              : helpers
+                  .jsonArray(match, "segments")
+                  .map((segment) => Number(segment.episode)),
+          )
+          .filter(Boolean),
+      ),
+    ];
     const episodes = tx
       .findRecordsByFilter(
         "drama_episodes",

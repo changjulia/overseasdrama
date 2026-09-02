@@ -1,0 +1,19 @@
+FROM debian:bookworm-slim
+
+ARG POCKETBASE_VERSION=0.39.9
+ARG TARGETARCH
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl unzip \
+    && case "$TARGETARCH" in amd64) PB_ARCH=amd64 ;; arm64) PB_ARCH=arm64 ;; *) echo "Unsupported architecture: $TARGETARCH" >&2; exit 1 ;; esac \
+    && curl -fsSL "https://github.com/pocketbase/pocketbase/releases/download/v${POCKETBASE_VERSION}/pocketbase_${POCKETBASE_VERSION}_linux_${PB_ARCH}.zip" -o /tmp/pocketbase.zip \
+    && unzip /tmp/pocketbase.zip -d /usr/local/bin \
+    && chmod +x /usr/local/bin/pocketbase \
+    && rm -rf /tmp/pocketbase.zip /var/lib/apt/lists/*
+
+WORKDIR /pb
+COPY pb_hooks ./pb_hooks
+COPY pb_migrations ./pb_migrations
+
+EXPOSE 8090
+CMD ["pocketbase", "serve", "--http=0.0.0.0:8090", "--dir=/pb/pb_data", "--hooksDir=/pb/pb_hooks", "--migrationsDir=/pb/pb_migrations", "--hooksWatch=false", "--automigrate=false"]

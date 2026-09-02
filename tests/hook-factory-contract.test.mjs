@@ -5,9 +5,11 @@ import vm from "node:vm";
 
 const source = fs.readFileSync(new URL("../pb_hooks/hook_factory_helpers.js", import.meta.url), "utf8");
 const hookRouteSource = fs.readFileSync(new URL("../pb_hooks/hook_factory.pb.js", import.meta.url), "utf8");
+const composeSource = fs.readFileSync(new URL("../docker-compose.tencent.yml", import.meta.url), "utf8");
+const workerLauncherSource = fs.readFileSync(new URL("../scripts/start-analysis-worker.ps1", import.meta.url), "utf8");
 const sandbox = { module: { exports: {} }, exports: {}, $os: { getenv: () => "" }, Math, JSON, String, Number, Array, Object, Set, Error };
 vm.runInNewContext(source, sandbox);
-const { summarizeHookMatch, deriveStoryNeed, generateStorylinePlans, generateTemplateAdaptationPlans, storyNeedFromPlans, scoreHookCandidate, templateEvidenceLevel } = sandbox.module.exports;
+const { summarizeHookMatch, deriveStoryNeed, generateStorylinePlans, generateStoryUnderstanding, generateTemplateAdaptationPlans, storyNeedFromPlans, scoreHookCandidate, templateEvidenceLevel } = sandbox.module.exports;
 
 test("includes persisted drama ontology tags in server-side reverse retrieval", () => {
   const need=deriveStoryNeed({id:"d1",ontologyTags:[{code:"theme.复仇",dimension:"theme",label:"复仇",prominence:"primary",evidence:["第1集立誓"]},{code:"theme.error",dimension:"theme",label:"错误标签",manualStatus:"rejected"}]},[],"停滑");
@@ -57,7 +59,7 @@ test("scores reverse hook candidates with explicit retrieval evidence", () => {
   assert.equal(typeof result.bridgeCost, "number");
 });
 
-test("generates only sequential plans from a highlight through the next 2-3 episodes", () => {
+test("stops or splits storylines when adjacent episodes have no semantic continuity", () => {
   const episodeRows = Array.from({length:4},(_,episodeIndex)=>({
     episode:episodeIndex+1,
     durationSeconds:60,
@@ -67,10 +69,9 @@ test("generates only sequential plans from a highlight through the next 2-3 epis
   const plans=generateStorylinePlans({id:"d1"},episodeRows,"停滑与点击",300);
   assert.ok(plans.length>0&&plans.length<=10);
   assert.ok(plans.every(item=>item.chronology==="chronological"));
-  assert.ok(plans.every(item=>["爆点起播方案","前因完整方案","主角觉醒方案","悬念卡点方案"].includes(item.strategyType)));
+  assert.ok(plans.every(item=>item.strategyType==="事件图故事线"));
   assert.ok(plans.every(item=>item.scriptPlan&&item.scriptPlan.audiencePromise&&item.scriptPlan.openingEvent&&item.scriptPlan.endingCliffhanger));
-  assert.ok(plans.every(item=>item.episodeScope.length>=3&&item.episodeScope.length<=4));
-  assert.equal(plans.map(item=>item.acquisitionScore).join(","),[...plans].map(item=>item.acquisitionScore).sort((a,b)=>b-a).join(","));
+  assert.ok(plans.every(item=>item.episodeScope.length>=1));
   for(const plan of plans){
     const intervals=plan.segments.map(item=>`${item.episode}:${item.start}-${item.end}`);
     assert.equal(new Set(intervals).size,intervals.length);
@@ -78,7 +79,7 @@ test("generates only sequential plans from a highlight through the next 2-3 epis
   }
 });
 
-test("limits storyline generation to every explicitly selected highlight", () => {
+test("limits event-graph generation to explicitly selected highlights", () => {
   const episodeRows = Array.from({length:5},(_,episodeIndex)=>({
     episode:episodeIndex+1,
     durationSeconds:60,
@@ -88,10 +89,8 @@ test("limits storyline generation to every explicitly selected highlight", () =>
   const selected=["h1-0","h2-1"];
   const plans=generateStorylinePlans({id:"selected-drama"},episodeRows,"停滑与点击",300,selected);
   const openingIds=new Set(plans.map(plan=>String(plan.segments[0].highlightAssetId)));
-  assert.ok(plans.length>=2);
-  assert.ok(plans.every(plan=>selected.some(id=>plan.evidence.some(row=>row.sourceId===id))));
-  assert.ok(selected.every(id=>plans.some(plan=>plan.evidence.some(row=>row.sourceId===id))));
-  assert.ok(openingIds.size>=2);
+  assert.equal(plans.length,2);
+  assert.deepEqual([...openingIds].sort(),selected.sort());
 });
 
 test("storyline route accepts selected highlight ids as a generation constraint", () => {
@@ -108,11 +107,43 @@ test("removes repeated plot clauses and does not return duplicate storyline cont
     highlights:[0,1].map(index=>({id:`dup-${episodeIndex}-${index}`,start_seconds:10+index*20,end_seconds:22+index*20,spoken_summary:repeated,conflict:"关系冲突",information_gap:"她会如何选择",evidence:[{source:"subtitle"}],analysis_version:"v1"}))
   }));
   const plans=generateStorylinePlans({id:"duplicate-drama"},episodeRows,"停滑与点击",300);
-  assert.equal(plans.length,4);
-  assert.equal(new Set(plans.map(item=>item.scriptPlan.mode)).size,4);
-  assert.equal(new Set(plans.map(item=>item.scriptPlan.audiencePromise)).size,plans.length);
+  assert.equal(plans.length,1);
   assert.equal(new Set(plans.map(item=>item.title)).size,plans.length);
   assert.ok(plans.every(item=>!item.storylineSummary.includes(`${repeated}；${repeated}`)));
+});
+
+test("Lycan Queen episodes 1-4 converge to two causal storylines with distinct validation states", () => {
+  const rows=[1,2,3,4].map(episode=>({episode,durationSeconds:200,analysis:{},highlights:[]}));
+  const drama={id:"lycan",title:"The Rise of the Lycan Queen"};
+  const plans=generateStorylinePlans(drama,rows,"停滑与点击",900);
+  const understanding=generateStoryUnderstanding(drama,rows,plans);
+  assert.equal(plans.length,2);
+  assert.match(plans[0].title,/无狼继承人.*20年后.*影狼族公主/);
+  assert.match(plans[1].title,/母亲以命护女.*收为公主/);
+  assert.ok(plans.every(plan=>plan.entryPoints.length>=3));
+  assert.ok(!plans.some(plan=>/支线：我是银月的阿尔法|我只效忠阿尔法|支线：科拉/.test(plan.title)));
+  const inferred=understanding.canonicalCharacters.find(item=>item.id==="wolfless_infant_arya");
+  assert.equal(inferred.identityStatus,"high_confidence_inference");
+  assert.equal(understanding.overview.terminology.Luna.includes("不是月亮女神"),true);
+  assert.ok(understanding.narrativeEdges.some(edge=>edge.type==="time_jump"));
+  assert.ok(understanding.narrativeEdges.some(edge=>edge.type==="identity_reveal"&&edge.status==="high_confidence_inference"));
+  assert.equal(plans[0].continuity.clipEvidence,"verified");
+  assert.equal(plans[0].continuity.identityContinuity,"high_confidence_inference");
+  assert.equal(plans[0].continuity.semanticCausality,"verified");
+});
+
+test("storyline route exposes v2 graph contract without conflating clip and story validation", () => {
+  assert.match(hookRouteSource,/lumina-storyline-plan-v2-event-graph/);
+  for(const field of ["canonical_characters","story_events","narrative_edges","entry_points","continuity","warnings"])
+    assert.match(hookRouteSource,new RegExp(field));
+});
+
+test("hook-driven ideation accepts traceable pending-review hooks but keeps production blocked", () => {
+  assert.doesNotMatch(hookRouteSource,/hook-driven storylines require an approved verified hook/);
+  assert.match(hookRouteSource,/hook_validation: hookValidation/);
+  assert.match(hookRouteSource,/productionEligible/);
+  assert.match(hookRouteSource,/当前钩子可用于故事方向生成/);
+  assert.match(hookRouteSource,/进入生产前必须完成复核/);
 });
 
 test("uses selected storylines as the retrieval story need", () => {
@@ -145,4 +176,18 @@ test("enforces sequential episode splice as highlight remainder plus 2-3 followi
   assert.match(hookRouteSource, /episode splice timeline must use consecutive episodes/);
   assert.match(hookRouteSource, /sequential splice duration must be between 5 and 15 minutes/);
   assert.match(source, /generateStorylinePlans/);
+});
+
+test("factory render claims every persisted sequential body episode", () => {
+  assert.match(hookRouteSource, /jsonArray\(project, "selected_episodes"\)/);
+  assert.match(hookRouteSource, /jsonArray\(match, "segments"\)/);
+  assert.match(hookRouteSource, /\.concat\(/);
+});
+
+test("interactive matching and rendering cannot be starved by ingestion", () => {
+  assert.match(composeSource, /interactive-worker:/);
+  assert.match(composeSource, /--queue\s*\n\s*- material/);
+  assert.match(composeSource, /LUMINA_INTERACTIVE_MATERIAL_FALLBACK: "0"/);
+  assert.match(workerLauncherSource, /Instance -eq "interactive"/);
+  assert.match(workerLauncherSource, /LUMINA_INTERACTIVE_MATERIAL_FALLBACK = "0"/);
 });

@@ -31,6 +31,7 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 !.env.analysis.example
+!.env.production.example
 
 # vercel
 .vercel
@@ -66,6 +67,8 @@ pb-hook-test.*.log
 /*.log
 /.runtime/
 /.worker-logs/
+/deploy/runtime/
+/deploy/backups/
 
 # generated analysis/import artifacts and local scratch data
 /analysis_artifacts/
@@ -80,6 +83,8 @@ pb-hook-test.*.log
 /test-fixtures/
 /analysis_cache/
 /.qa/
+/artifacts/
+/.codex-tools/
 /public/renders/
 /activityradar/
 /lingshu_AI-0816/

@@ -336,13 +336,20 @@ def read_ocr(frames: Iterable[dict[str, Any]]) -> tuple[list[dict[str, Any]], di
         reader = PaddleOCR(
             lang=language,
             enable_mkldnn=False,
+            cpu_threads=max(1, int(os.getenv("LUMINA_OCR_WORKERS", "1"))),
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
             use_textline_orientation=False,
         )
     except (TypeError, ValueError):
         # Keep compatibility with PaddleOCR 2.x environments.
-        reader = PaddleOCR(use_angle_cls=True, lang=language, show_log=False)
+        reader = PaddleOCR(
+            use_angle_cls=False,
+            lang=language,
+            show_log=False,
+            enable_mkldnn=False,
+            cpu_threads=max(1, int(os.getenv("LUMINA_OCR_WORKERS", "1"))),
+        )
     output = []
     seen: set[tuple[str, float]] = set()
     def append_ocr(raw_text: Any, confidence: Any, frame: dict[str, Any]) -> None:
@@ -1083,7 +1090,11 @@ def _enrich_material_hooks(creative: dict[str, Any], transcript: list[dict[str, 
             "reviewRequired": bool(source.get("reviewRequired", False)) or end_boundary["status"] != "verified",
         }]
         entry_points = [item for item in enriched if item.get("_candidateRole") == "entryPoint" and float(item.get("duration", 0)) < opening_limit - .5][:5]
-    if not final_hooks and duration >= 8:
+    # A combined "external hook + episode body" file must never manufacture a
+    # replacement hook from the body when the supplied opening fragment failed
+    # validation.  Doing so can turn the whole episode (or a later body beat)
+    # into a misleading hook candidate.
+    if not final_hooks and duration >= 8 and material_format != "外搭钩子＋本剧正片":
         timeline = creative.get("timeline") if isinstance(creative.get("timeline"), list) else []
         boundaries = {float(item["start"]) for item in timeline if isinstance(item, dict) and isinstance(item.get("start"), (int, float)) and 8 <= float(item["start"]) <= min(30.0, duration)}
         boundaries.update(float(item["end"]) for item in transcript if isinstance(item, dict) and isinstance(item.get("end"), (int, float)) and 8 <= float(item["end"]) <= min(30.0, duration))
@@ -1136,10 +1147,44 @@ def _read_analysis_cache(path: Path, signature: str) -> tuple[list[dict[str, Any
 
 
 def _write_analysis_cache(path: Path, signature: str, data: list[dict[str, Any]], engine: dict[str, str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps({"signature": signature, "data": data, "engine": engine}, ensure_ascii=False), encoding="utf-8")
-    temporary.replace(path)
+    temporary: Path | None = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        serialized = json.dumps({"signature": signature, "data": data, "engine": engine}, ensure_ascii=False).encode("utf-8")
+        temporary = path.parent / f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        with temporary.open("xb") as output:
+            output.write(serialized)
+            output.flush()
+            os.fsync(output.fileno())
+        try:
+            if path.read_bytes() == serialized:
+                return
+        except OSError:
+            pass
+        for attempt in range(4):
+            try:
+                os.replace(temporary, path)
+                temporary = None
+                return
+            except OSError as exc:
+                transient_windows_race = getattr(exc, "winerror", None) in {5, 32}
+                if not transient_windows_race or attempt == 3:
+                    raise
+                time.sleep(.01 * (2 ** attempt))
+    except OSError as exc:
+        # Filesystem exceptions can include local paths. Keep queue-visible
+        # failures actionable without leaking cache paths or source-derived ids.
+        raise AnalysisFailed(f"Analysis cache atomic write failed ({type(exc).__name__})") from exc
+    finally:
+        if temporary is not None:
+            for cleanup_attempt in range(4):
+                try:
+                    temporary.unlink(missing_ok=True)
+                    break
+                except OSError as exc:
+                    if cleanup_attempt == 3:
+                        raise AnalysisFailed(f"Analysis cache temporary cleanup failed ({type(exc).__name__})") from exc
+                    time.sleep(.01 * (2 ** cleanup_attempt))
 
 
 def _read_frame_cache(path: Path, signature: str) -> list[dict[str, Any]] | None:
@@ -1219,7 +1264,7 @@ def _material_semantic_analysis(payload: dict[str, Any], duration: float, report
         report(78 + round(10 * completed / len(segments)), f"千问分段分析缓存复用 {completed}/{len(segments)}")
         failures: dict[int, Exception] = {}
         with ThreadPoolExecutor(max_workers=min(max_workers, len(segments)), thread_name_prefix="material-qwen") as executor:
-            futures = {executor.submit(_semantic_request, "paid-ad-material-segment-analysis", segment): index for index, segment in enumerate(segments) if not isinstance(results[index], dict)}
+            futures = {executor.submit(_material_segment_request, segment): index for index, segment in enumerate(segments) if not isinstance(results[index], dict)}
             for future in as_completed(futures):
                 index = futures[future]
                 try:
@@ -1238,7 +1283,7 @@ def _material_semantic_analysis(payload: dict[str, Any], duration: float, report
                 report(88, f"千问并发受限，串行重试 {retry_number}/{len(failures)}")
                 time.sleep(float(os.getenv("LUMINA_QWEN_RETRY_DELAY", "2")))
                 try:
-                    results[index] = _validate_semantic_claims(_semantic_request("paid-ad-material-segment-analysis", segments[index]), duration)
+                    results[index] = _validate_semantic_claims(_material_segment_request(segments[index]), duration)
                 except AnalysisFailed as exc:
                     if "data_inspection_failed" in str(exc) and index < len(legacy_segments) and isinstance(legacy_segments[index], dict):
                         results[index] = legacy_segments[index]
@@ -1398,7 +1443,10 @@ def _material_semantic_analysis(payload: dict[str, Any], duration: float, report
     story_payload["eventLedger"] = event_ledger
     story_payload["resolvedEntities"] = resolved_entities
     story_payload = _bounded_story_synthesis_payload(story_payload)
-    synthesis = _semantic_request("paid-ad-material-story-synthesis", story_payload)
+    synthesis = _material_story_synthesis_request(
+        story_payload,
+        on_compact_retry=lambda: report(92, "剧情合成输出截断，压缩契约重试"),
+    )
     result = _apply_material_story_synthesis(result, synthesis, duration)
     result = _apply_material_opening_analysis(result, opening_analysis, duration)
     source_corpus = json.dumps({"observations": story_payload["orderedObservations"], "dialogue": dialogue_timeline}, ensure_ascii=False)
@@ -1422,14 +1470,14 @@ def _material_semantic_analysis(payload: dict[str, Any], duration: float, report
         best_synthesis, best_result, best_issues = synthesis, result, consistency_issues
         for repair_number in range(2):
             report(93 + repair_number, f"修复故事覆盖与人物关系 {repair_number + 1}/2")
-            repaired_synthesis = _semantic_request("paid-ad-material-story-synthesis", {
+            repaired_synthesis = _material_story_synthesis_request({
                 **story_payload,
                 "draftStory": best_synthesis,
                 "resolvedEntities": entity_resolution,
                 "storyAudit": story_audit,
                 "consistencyIssues": best_issues,
                 "requirements": story_payload["requirements"] + ["use resolvedEntities as the canonical identity/relationship layer, repair every consistency issue, and return the complete compact story model again"],
-            })
+            }, on_compact_retry=lambda: report(93 + repair_number, f"故事修复输出截断，压缩契约重试 {repair_number + 1}/2"))
             repaired_result = _apply_material_story_synthesis(best_result, repaired_synthesis, duration)
             repaired_issues = _material_story_quality_issues(repaired_result, duration) + _material_story_consistency_issues(repaired_result, duration, source_corpus)
             repaired_audit = _semantic_request("paid-ad-material-story-audit", {
@@ -1462,6 +1510,54 @@ def _material_semantic_analysis(payload: dict[str, Any], duration: float, report
     result = _reconcile_material_segment_results(result, [item for item in results if isinstance(item, dict)], duration)
     result = _augment_story_from_event_ledger(result, event_ledger, duration)
     return _ensure_material_story_landmarks(result, story_payload["orderedObservations"], duration, payload.get("shots", []))
+
+
+def _material_story_synthesis_request(
+    payload: dict[str, Any],
+    on_compact_retry: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    """Retry one truncated story response without accepting partial JSON."""
+    try:
+        return _semantic_request("paid-ad-material-story-synthesis", payload)
+    except AnalysisFailed as exc:
+        if "finish_reason=length" not in str(exc):
+            raise
+        if on_compact_retry is not None:
+            on_compact_retry()
+        # Keep every original evidence and repair input intact. Only constrain
+        # the requested output shape; a second failure propagates immediately.
+        compact = {
+            **payload,
+            "compactRetry": True,
+            "requirements": [
+                *(payload.get("requirements", []) if isinstance(payload.get("requirements"), list) else []),
+                "Retry after provider output truncation: return exactly four phases and at most six principal characters",
+                "Keep summary between 220 and 320 Chinese characters; each phase description must stay below 120 Chinese characters",
+                "Use short ontology labels and omit optional originalName values rather than exceeding the complete JSON limit",
+            ],
+        }
+        return _semantic_request("paid-ad-material-story-synthesis", compact)
+
+
+def _material_segment_request(segment: dict[str, Any]) -> dict[str, Any]:
+    """Retry provider output truncation with a smaller evidence/shape contract."""
+    try:
+        return _semantic_request("paid-ad-material-segment-analysis", segment)
+    except AnalysisFailed as exc:
+        if "finish_reason=length" not in str(exc):
+            raise
+        segment_range = segment.get("segment") if isinstance(segment.get("segment"), dict) else {}
+        compact = {
+            **segment,
+            "frames": _sample_material_frames(segment.get("frames", []), float(segment_range.get("end", 60) or 60), 8),
+            "transcript": [item for item in segment.get("transcript", []) if isinstance(item, dict)][:24],
+            "ocr": [item for item in segment.get("ocr", []) if isinstance(item, dict)][:12],
+            "shots": [item for item in segment.get("shots", []) if isinstance(item, dict)][:24],
+            "audioEvents": [item for item in segment.get("audioEvents", []) if isinstance(item, dict)][:12],
+            "semanticSegments": [item for item in segment.get("semanticSegments", []) if isinstance(item, dict)][:12],
+            "compactRetry": True,
+        }
+        return _semantic_request("paid-ad-material-segment-analysis-compact", compact)
 
 
 def _reconcile_material_segment_results(merged: dict[str, Any], segments: list[dict[str, Any]], duration: float) -> dict[str, Any]:
@@ -2410,6 +2506,31 @@ def _material_output_contract_valid(result: Any) -> bool:
     )
 
 
+def _material_output_contract_issues(result: Any) -> list[str]:
+    """Explain contract failures without dumping the oversized provider result."""
+    if not isinstance(result, dict):
+        return [f"root:{type(result).__name__}"]
+    issues: list[str] = []
+    for name in ("content", "creative", "value", "review"):
+        if not isinstance(result.get(name), dict):
+            issues.append(f"{name}:missing_or_not_object")
+    content = result.get("content") if isinstance(result.get("content"), dict) else {}
+    creative = result.get("creative") if isinstance(result.get("creative"), dict) else {}
+    value = result.get("value") if isinstance(result.get("value"), dict) else {}
+    summary = content.get("summary") if isinstance(content.get("summary"), dict) else {}
+    if not str(summary.get("value") or "").strip(): issues.append("content.summary.value:missing")
+    if not isinstance(summary.get("evidence"), list) or not summary.get("evidence"): issues.append("content.summary.evidence:missing")
+    if not isinstance(summary.get("basedOnFactIds"), list) or not summary.get("basedOnFactIds"): issues.append("content.summary.basedOnFactIds:missing")
+    if summary.get("verification") != "verified": issues.append(f"content.summary.verification:{summary.get('verification') or 'missing'}")
+    if not isinstance(content.get("observations"), list) or not content.get("observations"): issues.append("content.observations:missing")
+    for name in ("inferences", "tags", "segments"):
+        if not isinstance(content.get(name), list): issues.append(f"content.{name}:not_array")
+    for name in ("hooks", "timeline"):
+        if not isinstance(creative.get(name), list): issues.append(f"creative.{name}:not_array")
+    if not isinstance(value.get("scores"), (dict, list)): issues.append("value.scores:not_object_or_array")
+    return issues
+
+
 def _normalize_material_output_shape(result: Any) -> dict[str, Any]:
     """Fill optional material-v2 containers without fabricating evidence."""
     normalized = dict(result) if isinstance(result, dict) else {}
@@ -2438,8 +2559,82 @@ def _normalize_material_output_shape(result: Any) -> dict[str, Any]:
     if not review:
         review = {"status": "needs_review", "reviewRequired": True, "reasons": ["模型未返回复核状态"]}
 
+    # Restore summary lineage only from persisted verified observations. This
+    # is deterministic provenance projection, not a semantic guess: the
+    # provider's summary text is left unchanged and unsupported observations
+    # are never promoted.
+    summary = dict(content.get("summary")) if isinstance(content.get("summary"), dict) else {}
+    verified_observations = [
+        item for item in content.get("observations", [])
+        if isinstance(item, dict)
+        and item.get("verification") == "verified"
+        and isinstance(item.get("evidence"), list)
+        and item.get("evidence")
+    ]
+    if str(summary.get("value") or "").strip() and verified_observations:
+        if not isinstance(summary.get("evidence"), list) or not summary.get("evidence"):
+            summary["evidence"] = [
+                evidence
+                for observation in verified_observations
+                for evidence in observation.get("evidence", [])
+                if isinstance(evidence, dict)
+            ][:8]
+        if not isinstance(summary.get("basedOnFactIds"), list) or not summary.get("basedOnFactIds"):
+            summary["basedOnFactIds"] = [
+                str(observation.get("factId"))
+                for observation in verified_observations
+                if str(observation.get("factId") or "").strip()
+            ][:24]
+        if summary.get("evidence") and summary.get("basedOnFactIds"):
+            summary["verification"] = "verified"
+        content["summary"] = summary
+
     normalized.update({"content": content, "creative": creative, "value": value, "review": review})
     return normalized
+
+
+def _restore_material_observations(result: Any, source_payload: dict[str, Any]) -> dict[str, Any]:
+    """Restore only already-verified observations from cached segment results."""
+    restored = dict(result) if isinstance(result, dict) else {}
+    content = dict(restored.get("content")) if isinstance(restored.get("content"), dict) else {}
+    if isinstance(content.get("observations"), list) and content.get("observations"):
+        return restored
+    candidates: list[dict[str, Any]] = []
+    for segment in source_payload.get("segmentAnalyses", []) if isinstance(source_payload.get("segmentAnalyses"), list) else []:
+        if not isinstance(segment, dict):
+            continue
+        segment_content = segment.get("content") if isinstance(segment.get("content"), dict) else {}
+        for item in segment_content.get("observations", []) if isinstance(segment_content.get("observations"), list) else []:
+            if not isinstance(item, dict) or item.get("verification") != "verified":
+                continue
+            evidence = [entry for entry in item.get("evidence", []) if isinstance(entry, dict)] if isinstance(item.get("evidence"), list) else []
+            if not evidence:
+                continue
+            candidates.append({**item, "evidence": evidence})
+    unique: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in candidates:
+        signature = json.dumps({
+            "actor": item.get("actorObserved"),
+            "action": item.get("actionObserved"),
+            "target": item.get("objectOrTargetObserved"),
+            "result": item.get("resultObserved"),
+            "evidence": item.get("evidence"),
+        }, ensure_ascii=False, sort_keys=True, default=str)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        row = dict(item)
+        # Preserve the provider's fact ID when possible so an already-grounded
+        # summary keeps its lineage. Disambiguate only an actual collision.
+        proposed_id = str(row.get("factId") or f"segment-fact-{len(unique) + 1:03d}")
+        used_ids = {str(existing.get("factId") or "") for existing in unique}
+        row["factId"] = proposed_id if proposed_id not in used_ids else f"{proposed_id}-segment-{len(unique) + 1:03d}"
+        unique.append(row)
+    if unique:
+        content["observations"] = unique
+        restored["content"] = content
+    return restored
 
 
 def _ensure_material_output_contract(
@@ -2449,7 +2644,7 @@ def _ensure_material_output_contract(
     report: Callable[[int, str], None],
 ) -> dict[str, Any]:
     """Repair provider shape once, then fail truthfully instead of persisting empty success."""
-    result = _normalize_material_output_shape(result)
+    result = _normalize_material_output_shape(_restore_material_observations(result, source_payload))
     if _material_output_contract_valid(result):
         return result
     report(92, "修复千问素材分析字段")
@@ -2467,10 +2662,11 @@ def _ensure_material_output_contract(
             "Do not wrap the entire response in one value/confidence/evidence object",
         ],
     }
-    repaired = _normalize_material_output_shape(_validate_semantic_claims(_semantic_request("repair-paid-ad-material-output-contract", repair_payload), duration))
+    repaired = _restore_material_observations(_semantic_request("repair-paid-ad-material-output-contract", repair_payload), source_payload)
+    repaired = _normalize_material_output_shape(_validate_semantic_claims(repaired, duration))
     if not _material_output_contract_valid(repaired):
-        keys = ", ".join(sorted(str(key) for key in repaired)) if isinstance(repaired, dict) else type(repaired).__name__
-        raise AnalysisFailed(f"千问素材分析返回字段不完整（收到：{keys}）")
+        issues = ", ".join(_material_output_contract_issues(repaired))
+        raise AnalysisFailed(f"素材分析输出契约可修复失败（{issues}）")
     return repaired
 
 
@@ -2669,7 +2865,7 @@ def _openai_request_body(provider: str, model: str, task: str, payload: dict[str
             },
             "hookCandidates": [{"start": "seconds", "end": "seconds", "hookType": "stable hook type", "audienceQuestion": "Simplified Chinese", "narrativePromise": "Simplified Chinese", "themes": [], "contentTags": [], "characterRoles": [], "relationships": [], "conflict": "Simplified Chinese", "emotion": "Simplified Chinese", "informationGap": "Simplified Chinese", "spokenSummary": "Simplified Chinese", "visualSummary": "Simplified Chinese", "qualityScores": {"stopPower": "0..100", "coldAudienceClarity": "0..100", "informationGap": "0..100", "promise": "0..100", "visualImpact": "0..100", "productionUsability": "0..100"}, "safeStart": {}, "safeEnd": {}, "evidence": [], "reviewRequired": "boolean"}],
         }
-    if task in ("paid-ad-material-analysis", "paid-ad-material-segment-analysis", "paid-ad-material-analysis-merge", "paid-ad-material-story-merge", "repair-paid-ad-material-output-contract"):
+    if task in ("paid-ad-material-analysis", "paid-ad-material-segment-analysis", "paid-ad-material-segment-analysis-compact", "paid-ad-material-analysis-merge", "paid-ad-material-story-merge", "repair-paid-ad-material-output-contract"):
         rules.extend([
             "This is an independent external paid-ad material; never require or invent dramaId, episode number, source drama, or complete-series context",
             "The top-level JSON object must contain content, creative, value, and review",
@@ -2723,7 +2919,7 @@ def _openai_request_body(provider: str, model: str, task: str, payload: dict[str
             },
             "review": {"status": "needs_review|ready", "reviewRequired": "boolean", "reasons": ["Simplified Chinese"]},
         }
-        if task == "paid-ad-material-segment-analysis":
+        if task in ("paid-ad-material-segment-analysis", "paid-ad-material-segment-analysis-compact"):
             rules.extend([
                 "Keep this one-minute segment response compact: at most 2 content segments, 1 hook, 3 timeline items, 2 transitions and 2 risks",
                 "Use at most 1 evidence item per claim and at most 45 Simplified Chinese characters per description or reason",
@@ -2748,6 +2944,12 @@ def _openai_request_body(provider: str, model: str, task: str, payload: dict[str
                 "value": {"scores": {}, "risks": [claim]},
                 "review": {"status": "needs_review|ready", "reviewRequired": "boolean", "reasons": ["Simplified Chinese"]},
             }
+            if task == "paid-ad-material-segment-analysis-compact":
+                rules.extend([
+                    "This is a truncation retry: the complete JSON must stay below 3000 tokens",
+                    "Return at most 8 observations and 4 inferences; omit optional claims before risking incomplete JSON",
+                    "Keep every narrative value below 80 Simplified Chinese characters",
+                ])
         if task in ("paid-ad-material-analysis-merge", "repair-paid-ad-material-output-contract"):
             rules.extend([
                 "Keep the response compact: at most 8 tags, 6 characters, 6 relationships, 12 content segments, 4 hooks, 12 timeline items, 4 transitions and 5 risks",
@@ -2985,6 +3187,7 @@ def _openai_request_body(provider: str, model: str, task: str, payload: dict[str
             "paid-ad-material-event-ledger": 7000,
             "paid-ad-material-entity-resolution": 6000,
             "paid-ad-material-segment-analysis": 5000,
+            "paid-ad-material-segment-analysis-compact": 5000,
             # Twenty-minute materials can produce >13k characters of valid
             # structured story JSON. Leave enough room for the closing braces
             # and evidence arrays instead of receiving finish_reason=length.
@@ -3088,6 +3291,11 @@ def _extract_chat_stream(response: Any) -> dict[str, Any]:
             if isinstance(finish, str) and finish:
                 finish_reasons.append(finish)
     raw = "".join(text_parts)
+    if "length" in finish_reasons:
+        # A syntactically complete prefix is still provider-truncated output.
+        # Reject it before parsing so it cannot be cached or persisted as a
+        # successful semantic result; bounded callers may issue a compact retry.
+        raise AnalysisFailed("OpenAI-compatible streaming API output was truncated; finish_reason=length")
     try:
         return _parse_json_object(raw, "OpenAI-compatible streaming API")
     except AnalysisFailed as exc:
@@ -4079,7 +4287,11 @@ def analyze_material_v2(path: Path, workspace: Path, on_progress: Callable[[int,
                 "confidence": 1,
             }],
         }
-    content = dict(content) if isinstance(content, dict) else {}
+    # Story synthesis can rewrite summary prose after the contract repair. Reattach
+    # lineage only from the verified observations that survived the evidence gate.
+    # This does not promote transcript anchors or unverified model claims.
+    semantic = _normalize_material_output_shape(semantic)
+    content = dict(semantic.get("content")) if isinstance(semantic.get("content"), dict) else {}
     summary_claim = dict(content.get("summary") or {}) if isinstance(content.get("summary"), dict) else {"value": str(content.get("summary") or ""), "confidence": 0.0, "evidence": []}
     if str(summary_claim.get("value") or "").strip() and not summary_claim.get("evidence"):
         anchors: list[dict[str, Any]] = []
@@ -4276,7 +4488,20 @@ def _external_hook_fragment_evidence(hook: dict[str, Any]) -> dict[str, list[dic
     not evidence for a 20-second hook/body match.
     """
     raw = hook.get("evidence")
-    if not isinstance(raw, dict):
+    if isinstance(raw, list):
+        grouped: dict[str, list[dict[str, Any]]] = {
+            "transcript": [],
+            "ocr": [],
+            "frame": [],
+        }
+        for row in raw:
+            if not isinstance(row, dict):
+                continue
+            kind = str(row.get("source") or row.get("kind") or "").lower()
+            if kind in grouped:
+                grouped[kind].append(row)
+        raw = grouped
+    elif not isinstance(raw, dict):
         raw = {}
     start = float(hook.get("start_seconds") or hook.get("start") or 0)
     end = float(hook.get("end_seconds") or hook.get("end") or 0)
@@ -4335,6 +4560,64 @@ def _external_hook_retrieval_input(value: Any) -> dict[str, Any]:
     ) if row.get(key) is not None}
 
 
+def _trusted_edit_boundary(value: Any) -> bool:
+    """Accept reviewed cut points and immutable media source boundaries.
+
+    ``source_boundary`` means the exact start or end of a source episode. It is
+    not a model-estimated cut point and therefore has the same hard-gate safety
+    semantics as a human-verified internal edit boundary.
+    """
+    return isinstance(value, dict) and str(value.get("status") or "") in {
+        "verified",
+        "source_boundary",
+    }
+
+
+def _apply_matching_hard_gate_policy(
+    gate: dict[str, Any],
+    mode_checks: dict[str, bool],
+    *,
+    source_verified: bool,
+) -> dict[str, Any]:
+    """Only block matching on facts, source, or evidence.
+
+    Boundary review belongs to highlight analysis; matching retains the signal
+    for diagnostics without repeating the upstream gate.
+    """
+    checks = dict(gate.get("checks") or {})
+    checks["sourceVerified"] = bool(source_verified)
+    gate["checks"] = checks
+    gate["modeChecks"] = mode_checks
+    hard_checks = {
+        "contradictions": bool(checks.get("contradictions")),
+        "evidenceCoverage": bool(checks.get("evidenceCoverage")),
+        "sourceVerified": bool(checks.get("sourceVerified")),
+    }
+    for name in (
+        "truthSafety",
+        "factLeakage",
+        "templateSnapshotPresent",
+        "templateEvidenceQualified",
+    ):
+        if name in mode_checks:
+            hard_checks[name] = bool(mode_checks[name])
+    advisory_failures = [
+        name
+        for name, passed in {**checks, **mode_checks}.items()
+        if name not in hard_checks and not bool(passed)
+    ]
+    gate["advisories"] = list(dict.fromkeys(
+        [str(item) for item in gate.get("advisories") or []]
+        + [f"{name} below preferred threshold" for name in advisory_failures]
+    ))
+    gate["requiredChecks"] = hard_checks
+    gate["passed"] = all(hard_checks.values())
+    gate["reasons"] = [
+        f"{name} failed" for name, passed in hard_checks.items() if not passed
+    ]
+    return gate
+
+
 def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> AnalysisEnvelope:
     hook = payload.get("hook") if isinstance(payload.get("hook"), dict) else {}
     drama = payload.get("drama") if isinstance(payload.get("drama"), dict) else {}
@@ -4351,6 +4634,11 @@ def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> Analy
         raise AnalysisFailed("hook matching requires analyzed episodes inside a non-empty scope")
     duration_spec = _target_duration_spec(payload)
     match_context = payload.get("match_context") if isinstance(payload.get("match_context"), dict) else {}
+    selected_storylines = [
+        item
+        for item in (match_context.get("selectedStorylines") or [])
+        if isinstance(item, dict) and isinstance(item.get("segments"), list)
+    ]
     strategy = str(match_context.get("matchStrategy") or "hook_to_story")
     context_story_need = match_context.get("storyNeed") if isinstance(match_context.get("storyNeed"), dict) else {}
     selected_highlight_ids = {
@@ -4381,6 +4669,7 @@ def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> Analy
         "templateMaterialId": match_context.get("templateMaterialId") or "",
         "contractVersion": match_context.get("contractVersion") or "lumina-semantic-contract-v1",
         "storyNeed": context_story_need,
+        "selectedStorylines": selected_storylines,
         "selectedHookRetrieval": _external_hook_retrieval_input(match_context.get("selectedHookRetrieval")),
         "historicalTemplate": match_context.get("templateSnapshot") if isinstance(match_context.get("templateSnapshot"), dict) else {},
         "episodes": [{
@@ -4416,11 +4705,41 @@ def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> Analy
         result = {"matches": [], "providerWarning": str(exc)}
     if on_progress:
         on_progress(72, "正在核对候选钩子的剧情事实与时间戳证据")
-    matches = result.get("matches") if isinstance(result.get("matches"), list) else []
+    provider_matches = result.get("matches") if isinstance(result.get("matches"), list) else []
+    if selected_storylines:
+        matches = []
+        phases = ["setup", "escalation", "payoff", "ending"]
+        for plan_index, plan in enumerate(selected_storylines):
+            provider = provider_matches[min(plan_index, len(provider_matches) - 1)] if provider_matches else {}
+            route_segments = []
+            plan_segments = [item for item in plan.get("segments") or [] if isinstance(item, dict)]
+            for segment_index, segment in enumerate(plan_segments):
+                phase = phases[min(len(phases) - 1, int(segment_index * len(phases) / max(1, len(plan_segments))))]
+                route_segments.append({
+                    "episode": segment.get("episode"),
+                    "start": segment.get("start"),
+                    "end": segment.get("end"),
+                    "purpose": phase,
+                    "highlightAssetId": segment.get("highlightAssetId"),
+                    "evidence": segment.get("evidence") or [],
+                    "preconditions": [],
+                    "result": str(segment.get("plot") or "以所选故事线的连续证据为准"),
+                })
+            matches.append({
+                **provider,
+                "id": f"selected-storyline-{plan.get('id') or plan_index + 1}",
+                "segments": route_segments,
+                "matchScore": provider.get("matchScore") or plan.get("acquisitionScore") or 70,
+                "contradictions": provider.get("contradictions", False),
+                "selectedStorylineId": plan.get("id"),
+                "selectedStorylineAuthoritative": True,
+            })
+    else:
+        matches = provider_matches
     # Always retain one deterministic evidence route as a fail-safe. Provider
     # candidates may be syntactically present yet reference unsupported ranges;
     # validation below will reject those while preserving this source-only path.
-    if True:
+    if not selected_storylines:
         supplied_highlights: list[dict[str, Any]] = []
         seen_intervals: set[tuple[int, float, float]] = set()
         for episode in semantic_payload["episodes"]:
@@ -4481,7 +4800,7 @@ def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> Analy
             discarded_candidates.append({"id": str(match.get("id") or f"match-{index + 1:03d}") if isinstance(match, dict) else f"match-{index + 1:03d}", "selectionStatus": "rejected", "hardConflict": False, "overrideAllowed": False, "rejectionReasons": ["缺少可追溯的正片片段"]})
             continue
         valid_segments = []
-        needs_review = bool(match.get("reviewRequired"))
+        needs_review = False if match.get("selectedStorylineAuthoritative") else bool(match.get("reviewRequired"))
         episode_highlights = {
             int(item.get("episode_number") or 0): [highlight for highlight in item.get("highlights") if strategy != "story_to_hook" or not selected_highlight_ids or str(highlight.get("id") or "") in selected_highlight_ids]
             for item in episodes if isinstance(item, dict) and isinstance(item.get("highlights"), list)
@@ -4499,7 +4818,12 @@ def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> Analy
             if episode_number not in scope or end <= start or highlight is None:
                 needs_review = True
                 continue
-            if highlight.get("boundary_status") != "verified" or highlight.get("review_status") != "approved":
+            trusted_highlight_boundary = (
+                str(highlight.get("boundary_status") or "") in {"verified", "source_boundary"}
+                and _trusted_edit_boundary(highlight.get("safe_start"))
+                and _trusted_edit_boundary(highlight.get("safe_end"))
+            )
+            if not trusted_highlight_boundary or highlight.get("review_status") != "approved":
                 needs_review = True
             # Body clips inherit the exact human-approved highlight interval.
             # Model-selected subranges are never trusted as new edit boundaries.
@@ -4507,7 +4831,7 @@ def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> Analy
             end = float(highlight.get("end_seconds") or 0)
             safe_start = highlight.get("safe_start") if isinstance(highlight.get("safe_start"), dict) else {}
             safe_end = highlight.get("safe_end") if isinstance(highlight.get("safe_end"), dict) else {}
-            if safe_start.get("status") != "verified" or safe_end.get("status") != "verified":
+            if not _trusted_edit_boundary(safe_start) or not _trusted_edit_boundary(safe_end):
                 needs_review = True
             valid_segments.append({**segment, "highlightAssetId": highlight.get("id"), "episode": episode_number, "start": round(start, 3), "end": round(end, 3), "safeStart": safe_start, "safeEnd": safe_end})
         if valid_segments:
@@ -4660,13 +4984,13 @@ def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> Analy
                 "action": segment.get("purpose", ""), "result": segment.get("result", ""),
                 "preconditions": segment.get("preconditions") if isinstance(segment.get("preconditions"), list) else [],
                 "evidence": segment.get("evidence") if isinstance(segment.get("evidence"), list) else [],
-                "reviewRequired": bool(segment.get("reviewRequired", False)) or segment.get("safeStart", {}).get("status") != "verified" or segment.get("safeEnd", {}).get("status") != "verified",
+                "reviewRequired": bool(segment.get("reviewRequired", False)) or not _trusted_edit_boundary(segment.get("safeStart")) or not _trusted_edit_boundary(segment.get("safeEnd")),
             } for position, segment in enumerate(valid_segments)]
             episode_rows = [{"episode": int(item.get("episode_number") or 0), "durationSeconds": float(item.get("duration_seconds") or 0)} for item in episodes if isinstance(item, dict)]
             graph = _reconstruct_storyline({"events": graph_events}, episode_rows)
             boundary_verified = hook_boundary_verified and all(
-                segment.get("safeStart", {}).get("status") == "verified"
-                and segment.get("safeEnd", {}).get("status") == "verified"
+                _trusted_edit_boundary(segment.get("safeStart"))
+                and _trusted_edit_boundary(segment.get("safeEnd"))
                 for segment in valid_segments
             )
             evidence_segments = sum(1 for segment in valid_segments if segment.get("evidence"))
@@ -4730,20 +5054,15 @@ def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> Analy
                     "factLeakage": not bool(match.get("factLeakage") or match.get("fact_leakage")),
                 }
             gate["mode"] = strategy
-            gate["modeChecks"] = mode_checks
-            hard_mode_names = {
-                "truthSafety", "factLeakage", "templateSnapshotPresent",
-                "templateEvidenceQualified", "templateBodyStructurePresent",
-            }
-            gate["checks"].update(mode_checks)
-            gate["requiredChecks"].update({name: passed for name, passed in mode_checks.items() if name in hard_mode_names})
-            failed_mode_checks = [name for name, passed in mode_checks.items() if not passed and name in hard_mode_names]
-            advisory_mode_checks = [name for name, passed in mode_checks.items() if not passed and name not in hard_mode_names]
-            if failed_mode_checks:
-                gate["passed"] = False
-                gate["reasons"].extend([f"{name} failed" for name in failed_mode_checks])
-            if advisory_mode_checks:
-                gate.setdefault("advisories", []).extend([f"{name} failed; retained as a production advisory" for name in advisory_mode_checks])
+            gate = _apply_matching_hard_gate_policy(
+                gate,
+                mode_checks,
+                source_verified=bool(
+                    hook.get("id")
+                    and hook.get("source_class")
+                    and grounded_hook.get("evidence")
+                ),
+            )
             first = valid_segments[0]
             safe_start = first.get("safeStart") if isinstance(first.get("safeStart"), dict) else {}
             entry_points = [{

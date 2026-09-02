@@ -1,0 +1,32 @@
+# This file is mounted by the Caddy service in docker-compose.tencent.yml.
+{$DOMAIN} {
+	tls {$ACME_EMAIL}
+	encode zstd gzip
+
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+
+	request_body {
+		max_size 4GB
+	}
+
+	handle_path /pb/* {
+		reverse_proxy pocketbase:8090 {
+			# The entire public surface is authenticated before this trusted hop.
+			header_up Origin http://localhost:3000
+			header_up X-Lumina-Ui local
+		}
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+}

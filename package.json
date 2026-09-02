@@ -12,6 +12,7 @@
     "pocketbase:start": "bash scripts/start-pocketbase.sh",
     "build": "vinext build",
     "start": "vinext start",
+    "release:preflight": "python deploy/preflight.py",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"

@@ -1,5 +1,5 @@
 param(
-  [ValidateSet("drama", "material", "both")]
+  [ValidateSet("drama", "material", "material-batch", "both")]
   [string]$Queue = $(if ($env:LUMINA_WORKER_QUEUE) { $env:LUMINA_WORKER_QUEUE } else { "both" }),
   [ValidatePattern("^[A-Za-z0-9_-]*$")]
   [string]$Instance = "",
@@ -63,6 +63,19 @@ $env:LUMINA_OCR_WORKERS = if ($env:LUMINA_OCR_WORKERS) { $env:LUMINA_OCR_WORKERS
 $env:LUMINA_QWEN_SEGMENT_SECONDS = if ($env:LUMINA_QWEN_SEGMENT_SECONDS) { $env:LUMINA_QWEN_SEGMENT_SECONDS } else { "60" }
 $env:LUMINA_QWEN_SEGMENT_MIN_DURATION = if ($env:LUMINA_QWEN_SEGMENT_MIN_DURATION) { $env:LUMINA_QWEN_SEGMENT_MIN_DURATION } else { "75" }
 $env:LUMINA_QWEN_SEGMENT_WORKERS = if ($env:LUMINA_QWEN_SEGMENT_WORKERS) { $env:LUMINA_QWEN_SEGMENT_WORKERS } else { "1" }
+if ($Queue -eq "material-batch") {
+  # Material batch currently runs with an eight-process global ceiling.
+  # Keeping each worker's segment fan-out at one prevents hidden 3x
+  # provider/ONNX concurrency on top of those eight processes.
+  $env:LUMINA_QWEN_SEGMENT_WORKERS = "1"
+}
+# The dedicated interactive instance must remain idle after serving matching,
+# boundary refinement, or rendering work. If it falls back to ingestion, a
+# newly submitted UI task can sit at interactive_queued until a long OCR job
+# finishes.
+if ($Queue -eq "material" -and $Instance -eq "interactive") {
+  $env:LUMINA_INTERACTIVE_MATERIAL_FALLBACK = "0"
+}
 $env:LUMINA_QWEN_RETRY_DELAY = if ($env:LUMINA_QWEN_RETRY_DELAY) { $env:LUMINA_QWEN_RETRY_DELAY } else { "2" }
 $env:LUMINA_MATERIAL_MAX_EVIDENCE_FRAMES = if ($env:LUMINA_MATERIAL_MAX_EVIDENCE_FRAMES) { $env:LUMINA_MATERIAL_MAX_EVIDENCE_FRAMES } else { "36" }
 $env:LUMINA_MATERIAL_MAX_OCR_FRAMES = if ($env:LUMINA_MATERIAL_MAX_OCR_FRAMES) { $env:LUMINA_MATERIAL_MAX_OCR_FRAMES } else { "48" }

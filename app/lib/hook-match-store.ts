@@ -111,6 +111,27 @@ export type StorylinePlanSegment = {
   safeStart: Record<string, unknown>;
   safeEnd: Record<string, unknown>;
   evidence: unknown[];
+  eventId?: string;
+  validation?: StoryValidationStatus;
+};
+export type StoryValidationValue =
+  | "verified"
+  | "high_confidence_inference"
+  | "inferred"
+  | "unknown";
+export type StoryValidationStatus = {
+  clipEvidence: StoryValidationValue;
+  identityContinuity: StoryValidationValue;
+  semanticCausality: StoryValidationValue;
+};
+export type StorylineEntryPoint = {
+  id: string;
+  eventId: string;
+  episode: number;
+  start: number;
+  end: number;
+  label: string;
+  evidenceStatus: StoryValidationValue;
 };
 export type StorylinePlan = {
   id: string;
@@ -152,6 +173,25 @@ export type StorylinePlan = {
     connectionPoint: string;
   };
   evidence: unknown[];
+  entryPoints?: StorylineEntryPoint[];
+  beats?: Array<{
+    id: string;
+    eventId: string;
+    episode: number;
+    start: number;
+    end: number;
+    stage: "setup" | "development" | "cliffhanger";
+    summary: string;
+  }>;
+  continuity?: {
+    clipEvidence: StoryValidationValue;
+    identityContinuity: StoryValidationValue;
+    semanticCausality: StoryValidationValue;
+    timeContinuity: StoryValidationValue;
+    connectedEvents: number;
+    rejectedAdjacentEvents: number;
+  };
+  warnings?: string[];
   scriptPlan?: {
     mode: "impact" | "context" | "awakening" | "suspense" | string;
     label: string;
@@ -227,7 +267,10 @@ export type StoryBeatUnderstanding = {
   stage: "setup" | "escalation" | "turn" | "payoff";
   event: string;
   characters: string[];
-  evidenceStatus: "verified" | "partial" | "insufficient";
+  evidenceStatus: StoryValidationValue;
+  identityStatus?: StoryValidationValue;
+  causalityStatus?: StoryValidationValue;
+  eventId?: string;
 };
 export type StorylineThread = {
   id: string;
@@ -239,13 +282,67 @@ export type StorylineThread = {
   progression: StoryBeatUnderstanding[];
   unresolvedQuestion: string;
   evidenceStatus: "verified" | "partial" | "insufficient";
+  identityStatus?: StoryValidationValue;
+  causalityStatus?: StoryValidationValue;
   sourcePlanIds: string[];
+  entryPoints?: StorylineEntryPoint[];
+};
+export type CanonicalStoryCharacter = {
+  id: string;
+  canonicalName: string;
+  aliases: string[];
+  identityStatus: StoryValidationValue;
+  confidence?: number;
+  roles: string[];
+  evidence: unknown[];
+  warning?: string;
+};
+export type StoryEvent = {
+  id: string;
+  episode: number;
+  start: number;
+  end: number;
+  characters: string[];
+  action: string;
+  object: string;
+  cause: string;
+  result: string;
+  unresolvedQuestions: string[];
+  timeType: "linear" | "time_jump" | "flashback";
+  evidence: unknown[];
+  validation: StoryValidationStatus;
+};
+export type NarrativeEdge = {
+  from: string;
+  to: string;
+  type:
+    | "causes"
+    | "continues"
+    | "resolves"
+    | "escalates"
+    | "identity_reveal"
+    | "time_jump"
+    | "flashback"
+    | "unrelated";
+  status: StoryValidationValue;
+  rationale: string;
 };
 export type SelectedRangeStoryUnderstanding = {
   contractVersion: string;
   dramaId: string;
   episodeRange: number[];
   storylines: StorylineThread[];
+  overview?: {
+    title: string;
+    summary: string;
+    terminology: Record<string, string>;
+  };
+  canonicalCharacters?: CanonicalStoryCharacter[];
+  storyEvents?: StoryEvent[];
+  narrativeEdges?: NarrativeEdge[];
+  beats?: StoryBeatUnderstanding[];
+  entryPoints?: Array<StorylineEntryPoint & { storylineId: string }>;
+  continuity?: Record<string, number>;
   warnings: string[];
 };
 export type StrategyHookRecommendation = {
@@ -278,6 +375,10 @@ async function request(path: string, init?: RequestInit) {
   const response = await fetch(`${PB_URL}${path}`, {
     cache: "no-store",
     ...init,
+    headers: {
+      "x-lumina-ui": "local",
+      ...(init?.headers || {}),
+    },
   });
   if (!response.ok) {
     const value = (await response.json().catch(() => null)) as {
@@ -412,6 +513,7 @@ export async function listStorylinePlans(
   deliveryGoal: string,
   targetDurationSeconds: number,
   selectedHighlightIds: string[] = [],
+  variationIndex = 0,
   signal?: AbortSignal,
 ): Promise<{
   storyNeed: StoryNeed;
@@ -428,6 +530,7 @@ export async function listStorylinePlans(
       delivery_goal: deliveryGoal,
       target_duration_seconds: targetDurationSeconds,
       selected_highlight_ids: selectedHighlightIds,
+      variation_index: variationIndex,
     }),
     signal,
   })) as Record<string, unknown>;
@@ -439,6 +542,13 @@ export async function listStorylinePlans(
     dramaId: String(rawUnderstanding.dramaId || dramaId),
     episodeRange: list(rawUnderstanding.episodeRange).map(Number),
     storylines: list(rawUnderstanding.storylines) as StorylineThread[],
+    overview: object(rawUnderstanding.overview) as SelectedRangeStoryUnderstanding["overview"],
+    canonicalCharacters: list(rawUnderstanding.canonicalCharacters) as CanonicalStoryCharacter[],
+    storyEvents: list(rawUnderstanding.storyEvents) as StoryEvent[],
+    narrativeEdges: list(rawUnderstanding.narrativeEdges) as NarrativeEdge[],
+    beats: list(rawUnderstanding.beats) as StoryBeatUnderstanding[],
+    entryPoints: list(rawUnderstanding.entryPoints) as Array<StorylineEntryPoint & { storylineId: string }>,
+    continuity: object(rawUnderstanding.continuity) as Record<string, number>,
     warnings: list(rawUnderstanding.warnings).map(String),
   };
   return {

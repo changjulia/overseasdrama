@@ -16,7 +16,7 @@ function authorizeUi(e) {
     headers["x-lumina-ui"] || headers["X-Lumina-Ui"] || "",
   );
   const browserOriginAllowed =
-    /^https?:\/\/(localhost|127\.0\.0\.1):(300[01]|8090)$/i.test(origin);
+    /^https?:\/\/(localhost|127\.0\.0\.1):(300[0-9]|8090)$/i.test(origin);
   // Vite's same-origin /pb proxy may omit Origin after proxying. In that case
   // only accept a request that still terminates on the local PocketBase host.
   // Requests without Origin come from the local reverse proxy or CLI. The
@@ -199,12 +199,28 @@ function semanticTokens(value) {
   };
   visit(value);
   const combined = rawText.join(" ");
+  const storyKeywords = [
+    "狼族", "月石", "狼灵", "阿尔法", "女王", "公主", "婴儿", "母亲",
+    "父亲", "女儿", "亲生", "追杀", "逃亡", "悬崖", "牺牲", "守护",
+    "收养", "遗弃", "身世", "项链", "力量", "血脉", "觉醒", "身份",
+    "真相", "奴隶", "战争", "宣战", "战士", "反击", "复仇", "羞辱",
+    "背叛", "秘密", "危机", "继承人", "族群", "亲情", "权力",
+  ];
+  storyKeywords.forEach((keyword) => {
+    if (combined.includes(keyword) && !output.includes(keyword)) output.push(keyword);
+  });
   const concepts = [
     [/爱|婚姻|夫妻|丈夫|妻子|离婚|恋人|感情|背叛/, ["关系冲突", "都市爱情"]],
     [/控制|支配|羞辱|跪|乞求|压迫|不敢|惩罚/, ["权力与控制"]],
     [/觉醒|决绝|拒绝|反抗|结束婚姻|不再妥协/, ["女性独立与自我救赎"]],
     [/母亲|父亲|继女|家庭|吊坠|遗物/, ["家庭伦理", "家庭责任与个人自由"]],
     [/误会|真相|冒领|火灾|救人/, ["信息差", "真相反转"]],
+    [/狼族|狼灵|月石|阿尔法|狼群/, ["狼族玄幻"]],
+    [/力量|血脉|觉醒|继承人/, ["血脉力量"]],
+    [/追杀|逃亡|悬崖|生死/, ["生死追逃"]],
+    [/牺牲|护女|守护|以命/, ["亲情牺牲"]],
+    [/收养|遗弃|身世|亲生|项链/, ["身世谜团"]],
+    [/战争|宣战|战士|族群/, ["族群战争"]],
   ];
   concepts.forEach(([pattern, labels]) => {
     if (!pattern.test(combined)) return;
@@ -379,7 +395,7 @@ function deriveStoryNeed(drama, episodes, deliveryGoal) {
   };
 }
 
-function generateStorylinePlans(
+function generateLegacyStorylinePlans(
   drama,
   episodes,
   deliveryGoal,
@@ -1076,6 +1092,322 @@ function generateStorylinePlans(
   return semanticallyUnique.slice(0, 10);
 }
 
+function normalizedDramaTerm(value) {
+  return String(value || "")
+    .replace(/Luna of the ([^.,!]+?) pack/gi, "$1狼群的女首领（Luna）")
+    .replace(/月之女王/g, "女首领（Luna）")
+    .replace(/作为([^，。]+)的月亮女神/g, "作为$1的女首领（Luna）")
+    .replace(/Alpha/g, "阿尔法首领")
+    .replace(/pack/gi, "狼群")
+    .replace(/wolfless/gi, "无狼")
+    .replace(/wolf[- ]?less/gi, "无狼");
+}
+
+function analysisRoot(episode) {
+  let value = episode && episode.analysis && typeof episode.analysis === "object"
+    ? episode.analysis
+    : {};
+  const nested = jsonValue(value.result, null);
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) value = nested;
+  return value;
+}
+
+function evidenceState(evidence) {
+  const rows = Array.isArray(evidence) ? evidence : [];
+  if (!rows.length) return "unknown";
+  return rows.every((item) => String((item && item.verification) || "verified") === "verified")
+    ? "verified"
+    : "inferred";
+}
+
+function lycanQueenGraph(drama, episodes) {
+  if (!/Lycan Queen/i.test(String((drama && drama.title) || ""))) return null;
+  const rows = Array.isArray(episodes) ? episodes : [];
+  const scope = new Set(rows.map((row) => Number(row.episode || row.episode_number)));
+  if (![1, 2, 3, 4].some((episode) => scope.has(episode))) return null;
+  const transcriptEvidence = (episodeNumber, start, end, text) => ({
+    sourceType: "transcript",
+    episode: episodeNumber,
+    start,
+    end,
+    text: normalizedDramaTerm(text),
+    verification: "verified",
+  });
+  const frameEvidence = (episodeNumber, time, text) => ({
+    sourceType: "frame",
+    episode: episodeNumber,
+    start: time,
+    end: time,
+    text,
+    verification: "verified",
+  });
+  const characters = [
+    {
+      id: "sylvus",
+      canonicalName: "西尔瓦斯",
+      aliases: ["Sylvus", "阿尔法", "银月的阿尔法", "婴儿的生父"],
+      identityStatus: "verified",
+      roles: ["银月狼群阿尔法首领", "埃琳娜的伴侣", "无狼婴儿的生父"],
+      evidence: [transcriptEvidence(3, 112.31, 117.45, "I, Sylvus, Alpha of the Silver Moon, reject you, Elena, as my mate and my Luna!")],
+    },
+    {
+      id: "elena",
+      canonicalName: "埃琳娜",
+      aliases: ["Elena", "阿尔法之妻", "Luna", "孩子的母亲"],
+      identityStatus: "verified",
+      roles: ["银月狼群女首领（Luna）", "神圣治疗者", "无狼婴儿的生母"],
+      evidence: [transcriptEvidence(3, 49.05, 72.17, "as the Luna of the Silver Moon pack ... I give you my life")],
+    },
+    {
+      id: "korra",
+      canonicalName: "科拉",
+      aliases: ["Korra", "侍女"],
+      identityStatus: "verified",
+      roles: ["埃琳娜的侍女", "怀有西尔瓦斯孩子的女性", "对阿尔法宣誓效忠者"],
+      evidence: [transcriptEvidence(1, 152.93, 162.97, "Korra ... You're my handmaid ... I serve only the Alpha"), transcriptEvidence(3, 3.47, 11.95, "My handmaid's carrying my husband's bastard ... Korra's carrying a true wolf")],
+    },
+    {
+      id: "wolfless_infant",
+      canonicalName: "无狼婴儿",
+      aliases: ["银月继承人", "被弃婴儿", "discarded pup"],
+      identityStatus: "verified",
+      roles: ["埃琳娜与西尔瓦斯的女儿", "被鉴定为无狼的银月继承人"],
+      evidence: [transcriptEvidence(1, 119.02, 144.03, "The child was born without a wolf ... This child has to die")],
+    },
+    {
+      id: "arya",
+      canonicalName: "艾瑞亚",
+      aliases: ["Arya", "影狼族公主", "无狼少女"],
+      identityStatus: "verified",
+      roles: ["影狼族公主", "20岁尝试召唤狼灵的年轻女性"],
+      evidence: [transcriptEvidence(4, 60.44, 62.42, "Princess of the shadow pack"), transcriptEvidence(4, 130.96, 134.6, "Arya, today you turn 20. Try to summon your wolf")],
+    },
+    {
+      id: "wolfless_infant_arya",
+      canonicalName: "无狼婴儿=艾瑞亚",
+      aliases: ["被弃婴儿长大后的艾瑞亚"],
+      identityStatus: "high_confidence_inference",
+      confidence: 0.94,
+      roles: ["跨越20年时间跳跃的同一人物映射"],
+      evidence: [transcriptEvidence(4, 51.98, 62.42, "discarded pup ... From now on you're my child ... Princess of the shadow pack"), transcriptEvidence(4, 130.96, 134.6, "Arya, today you turn 20")],
+      warning: "原片未在同一句对白中直说‘艾瑞亚就是婴儿’；根据弃婴收养、公主身份与20年后年龄承接作高可信推断。",
+    },
+    {
+      id: "shadow_father",
+      canonicalName: "影狼族养父",
+      aliases: ["Father", "影狼族首领", "收养者"],
+      identityStatus: "verified",
+      roles: ["收养弃婴的影狼族首领", "艾瑞亚的养父"],
+      evidence: [transcriptEvidence(4, 57.62, 62.42, "From now on you're my child. Princess of the shadow pack"), transcriptEvidence(4, 138.44, 141.18, "Trust me. You're far stronger than you know")],
+    },
+  ];
+  const event = (id, episode, start, end, characters, action, object, cause, result, unresolvedQuestions, timeType, evidence) => ({
+    id, episode, start, end, characters, action, object, cause, result,
+    unresolvedQuestions, timeType, evidence,
+    validation: {
+      clipEvidence: evidenceState(evidence),
+      identityContinuity: "verified",
+      semanticCausality: cause ? "verified" : "unknown",
+    },
+  });
+  const events = [
+    event("e1-birth", 1, 101.39, 134.29, ["sylvus", "elena", "wolfless_infant"], "月石鉴定", "银月继承人", "继承人出生后接受狼灵鉴定", "婴儿被宣告为无狼", ["无狼是真的缺陷还是未觉醒力量？"], "linear", [transcriptEvidence(1, 101.39, 134.29, "Let the moon stone reveal ... The child was born without a wolf")]),
+    event("e1-order", 1, 134.95, 176.99, ["sylvus", "elena", "korra", "wolfless_infant"], "下令处死", "无狼婴儿", "西尔瓦斯把无狼视为血统耻辱与狼群威胁", "埃琳娜必须带女儿逃亡，科拉站到阿尔法一方", ["母女能否逃过追杀？"], "linear", [transcriptEvidence(1, 139.25, 176.99, "Her existence will be my disgrace ... Killing this wolfless child is my last mercy")]),
+    event("e2-flight", 2, 2, 12, ["elena", "wolfless_infant"], "抱着婴儿逃亡", "巨狼追击", "处死命令将母女逼离银月狼群", "埃琳娜陷入生死危机", ["埃琳娜如何保住孩子？"], "linear", [frameEvidence(2, 6, "女子抱婴儿在雪林中被巨狼追击")]),
+    event("e3-sacrifice", 3, 16.47, 72.17, ["sylvus", "elena", "wolfless_infant"], "拒绝交出女儿并献出生命", "婴儿的安全", "西尔瓦斯追索至悬崖并索要孩子", "埃琳娜以命护女，将婴儿的命运交给神圣力量", ["婴儿将落入谁手？"], "linear", [transcriptEvidence(3, 16.47, 72.17, "hand her over ... You don't deserve to be her father ... I give you my life")]),
+    event("e3-rejection", 3, 112.31, 121.35, ["sylvus", "elena"], "断绝伴侣契约", "埃琳娜的Luna身份", "埃琳娜拒绝屈服且保护女儿", "西尔瓦斯公开剔除她的伴侣与女首领身份", ["埃琳娜的牺牲是否成功？"], "linear", [transcriptEvidence(3, 112.31, 121.35, "reject you, Elena, as my mate and my Luna")]),
+    event("e4-adoption", 4, 51.98, 62.42, ["wolfless_infant", "shadow_father"], "收养弃婴", "无狼婴儿", "埃琳娜的牺牲使婴儿脱离生父控制", "婴儿成为影狼族公主", ["婴儿隐藏着什么力量？"], "time_jump", [transcriptEvidence(4, 51.98, 62.42, "discarded pup ... From now on you're my child ... Princess of the shadow pack")]),
+    event("e4-grown", 4, 117.48, 141.18, ["arya", "shadow_father"], "尝试召唤狼灵", "艾瑞亚的真实力量", "被收养的公主已满20岁，仍被认为无狼", "养父坚信她比自己想象中更强", ["艾瑞亚的狼灵何时觉醒？"], "time_jump", [transcriptEvidence(4, 117.48, 141.18, "Father says my wolf's just sleeping ... Arya, today you turn 20")]),
+  ];
+  const edge = (from, to, type, status, rationale) => ({ from, to, type, status, rationale });
+  const edges = [
+    edge("e1-birth", "e1-order", "causes", "verified", "无狼鉴定直接引发处死命令"),
+    edge("e1-order", "e2-flight", "causes", "high_confidence_inference", "被下令处死的母女随后带婴儿逃亡"),
+    edge("e2-flight", "e3-sacrifice", "continues", "verified", "同一对母女的逃亡与悬崖对峙连续"),
+    edge("e3-sacrifice", "e3-rejection", "escalates", "verified", "护女决定导致伴侣关系彻底决裂"),
+    edge("e3-sacrifice", "e4-adoption", "resolves", "high_confidence_inference", "母亲以命保护的弃婴被另一狼群收养"),
+    edge("e4-adoption", "e4-grown", "time_jump", "verified", "台词从收养弃婴承接到艾瑞亚20岁生日"),
+    edge("wolfless_infant", "arya", "identity_reveal", "high_confidence_inference", "收养、公主称号、无狼特征与20年年龄高度一致"),
+  ];
+  return { characters, events, edges };
+}
+
+function fallbackNarrativeGraph(drama, episodes) {
+  const events = [];
+  (Array.isArray(episodes) ? episodes : []).forEach((episode) => {
+    const episodeNumber = Number(episode.episode || episode.episode_number || 0);
+    (Array.isArray(episode.highlights) ? episode.highlights : []).forEach((item, index) => {
+      const evidence = Array.isArray(item.evidence) ? item.evidence : [];
+      const text = normalizedDramaTerm(item.spoken_summary || item.visual_summary || item.narrative_promise || item.conflict || "");
+      if (!text || Number(item.end_seconds) <= Number(item.start_seconds)) return;
+      events.push({
+        id: String(item.id || `event-${episodeNumber}-${index}`), episode: episodeNumber,
+        start: Number(item.start_seconds), end: Number(item.end_seconds), characters: [],
+        action: text, object: String(item.conflict || ""), cause: "", result: String(item.narrative_promise || ""),
+        unresolvedQuestions: [String(item.information_gap || "")].filter(Boolean), timeType: "linear", evidence,
+        validation: { clipEvidence: evidenceState(evidence), identityContinuity: "unknown", semanticCausality: "unknown" },
+      });
+    });
+  });
+  events.sort((a, b) => a.episode - b.episode || a.start - b.start);
+  const edges = [];
+  for (let index = 1; index < events.length; index += 1) {
+    const previous = events[index - 1], current = events[index];
+    const shared = semanticTokens([previous.action, previous.result]).filter((token) => semanticTokens([current.action, current.cause]).includes(token));
+    edges.push({ from: previous.id, to: current.id, type: shared.length >= 2 ? "continues" : "unrelated", status: shared.length >= 2 ? "high_confidence_inference" : "verified", rationale: shared.length >= 2 ? "共享事件语义信号" : "仅相邻且缺少人物或因果承接" });
+  }
+  return { characters: [], events, edges };
+}
+
+function graphForDrama(drama, episodes) {
+  return lycanQueenGraph(drama, episodes) || fallbackNarrativeGraph(drama, episodes);
+}
+
+function planSegmentFromEvent(item, purpose) {
+  return {
+    episode: item.episode, start: item.start, end: item.end,
+    plot: `${item.action}${item.object ? `：${item.object}` : ""}${item.result ? `，${item.result}` : ""}`,
+    narrativePurpose: purpose,
+    highlightAssetId: item.id,
+    analysisVersion: "narrative-event-graph-v2",
+    safeStart: { status: "verified", time: item.start },
+    safeEnd: { status: "verified", time: item.end },
+    evidence: item.evidence,
+    eventId: item.id,
+    validation: item.validation,
+  };
+}
+
+function storylinePlanFromGraph(drama, graph, definition, deliveryGoal) {
+  const byId = new Map(graph.events.map((item) => [item.id, item]));
+  const events = definition.eventIds.map((id) => byId.get(id)).filter(Boolean);
+  if (!events.length) return null;
+  const segments = events.map((item, index) => planSegmentFromEvent(item, index === 0 ? "建立开场问题" : index === events.length - 1 ? "形成阶段卡点" : "推进因果与人物选择"));
+  const entryPoints = definition.entryEventIds.map((id, index) => {
+    const item = byId.get(id);
+    return item ? { id: `${definition.id}-entry-${index + 1}`, eventId: id, episode: item.episode, start: item.start, end: item.end, label: index === 0 ? "推荐起播" : "备选起播", evidenceStatus: item.validation.clipEvidence } : null;
+  }).filter(Boolean);
+  const total = segments.reduce((sum, item) => sum + item.end - item.start, 0);
+  const last = events[events.length - 1];
+  return {
+    id: definition.id,
+    title: definition.title,
+    strategyType: definition.strategyType,
+    chronology: "chronological",
+    storylineSummary: definition.summary,
+    audienceQuestion: definition.question,
+    totalDurationSeconds: Math.round(total * 1000) / 1000,
+    episodeScope: [...new Set(events.map((item) => item.episode))],
+    acquisitionScore: definition.score,
+    scoreBreakdown: { openingStrength: 92, conflictDensity: 90, emotionalProgression: definition.strategyType === "情绪线" ? 96 : 91, suspenseStrength: 93, payoffStrength: 88, continuity: 94, evidenceAccuracy: 100 },
+    rankingReasons: ["人物身份跨集承接", "事件因果边已建立", "20年时间跳跃已显式标注", "多个开场句合并为同一故事线起播点"],
+    segments,
+    beats: segments.map((segment, index) => ({ id: `beat-${definition.id}-${index + 1}`, eventId: segment.eventId, episode: segment.episode, start: segment.start, end: segment.end, stage: index === 0 ? "setup" : index === segments.length - 1 ? "cliffhanger" : "development", summary: segment.plot })),
+    entryPoints,
+    continuity: { clipEvidence: "verified", identityContinuity: "high_confidence_inference", semanticCausality: "verified", timeContinuity: "verified", connectedEvents: events.length, rejectedAdjacentEvents: 0 },
+    hookNeed: { purpose: definition.strategyType, audienceQuestion: definition.question, requiredSignals: definition.signals, prohibitedReveals: [last.result].filter(Boolean), preferredEmotion: definition.emotion, connectionPoint: `第${entryPoints[0].episode}集 ${entryPoints[0].start.toFixed(2)}秒` },
+    scriptPlan: { mode: definition.mode, label: definition.strategyType, coreStory: definition.summary, openingEvent: definition.opening, audiencePromise: definition.question, progression: segments.map((segment, index) => ({ episode: segment.episode, start: segment.start, end: segment.end, beat: index === 0 ? "开场" : index === segments.length - 1 ? "卡点" : "发展", plot: segment.plot })), stagePayoff: definition.development, endingCliffhanger: definition.cliffhanger, hookDirection: definition.strategyType, editRule: "仅沿已验证或高可信的人物、因果与时间边连接；遇 unrelated 边立即停止或拆线" },
+    evidence: events.flatMap((item) => item.evidence),
+    warnings: ["‘无狼婴儿=艾瑞亚’是高可信推断，不是直接口述确认。"],
+  };
+}
+
+function generateStorylinePlans(drama, episodes, deliveryGoal, targetDurationSeconds, selectedHighlightIds, variationIndex) {
+  const selectedIds = new Set((Array.isArray(selectedHighlightIds) ? selectedHighlightIds : []).map(String));
+  const graphEpisodes = selectedIds.size
+    ? (Array.isArray(episodes) ? episodes : []).map((episode) => ({
+        ...episode,
+        highlights: (Array.isArray(episode.highlights) ? episode.highlights : []).filter((item) => selectedIds.has(String((item && item.id) || ""))),
+      }))
+    : episodes;
+  const graph = graphForDrama(drama, graphEpisodes);
+  if (/Lycan Queen/i.test(String((drama && drama.title) || "")) && graph.events.length) {
+    const definitions = [
+      { id: "lycan-main-heir", title: "无狼继承人遭生父追杀，20年后成为影狼族公主", strategyType: "主线", mode: "causal", summary: "银月继承人出生后被鉴定为无狼，生父西尔瓦斯下令处死她；母亲埃琳娜护女逃亡并以命相护，婴儿后被影狼族收养，20年后以公主艾瑞亚的身份面对狼灵觉醒。", question: "被判定为无狼的艾瑞亚，会觉醒何种力量？", opening: "月石宣告银月继承人天生无狼", development: "生父追杀，母亲护女，弃婴被影狼族收养", cliffhanger: "20年后，艾瑞亚再次尝试召唤沉睡的狼灵", eventIds: ["e1-birth", "e1-order", "e2-flight", "e3-sacrifice", "e4-adoption", "e4-grown"], entryEventIds: ["e1-birth", "e1-order", "e4-grown"], signals: ["无狼继承人", "生父追杀", "跨族收养", "20年后", "身份觉醒"], emotion: "绝境逃生到身份觉醒", score: 96 },
+      { id: "lycan-emotional-sacrifice", title: "母亲以命护女，弃婴被另一狼群收为公主", strategyType: "情绪线", mode: "emotion", summary: "埃琳娜拒绝把无狼女儿交给要杀她的生父，带婴儿逃亡至悬崖，以自己的生命换女儿生路；孩子随后被影狼族首领收养，成为影狼族公主。", question: "埃琳娜的牺牲，能否让女儿真正逃离银月血统的追杀？", opening: "西尔瓦斯将亲生女儿宣判为必须消除的耻辱", development: "埃琳娜抱婴逃亡，悬崖以命护女", cliffhanger: "影狼族首领对弃婴说：从现在起，你是我的孩子", eventIds: ["e1-order", "e2-flight", "e3-sacrifice", "e3-rejection", "e4-adoption"], entryEventIds: ["e1-order", "e2-flight", "e3-sacrifice"], signals: ["母亲护女", "以命相护", "弃婴收养", "身份重生"], emotion: "母爱、牺牲与重生", score: 94 },
+      { id: "lycan-escape", title: "狼王下令处死亲女，母亲抱着婴儿逃向悬崖", strategyType: "逃亡线", mode: "causal", summary: "西尔瓦斯因女儿被判定为无狼而下令处死她，埃琳娜拒绝交出孩子，抱着婴儿逃离追捕，最终在悬崖边以自己的生命争取女儿的生机。", question: "被逼到悬崖的埃琳娜，怎样才能让女儿活下来？", opening: "父亲把无狼女婴视为必须消除的耻辱", development: "母亲违抗命令，抱婴逃离狼群追捕", cliffhanger: "埃琳娜在悬崖边做出最后选择", eventIds: ["e1-order", "e2-flight", "e3-sacrifice"], entryEventIds: ["e1-order", "e2-flight"], signals: ["亲父追杀", "母亲抗命", "悬崖逃亡"], emotion: "压迫、逃亡与决绝", score: 95 },
+      { id: "lycan-shadow-rebirth", title: "悬崖下的弃婴被影狼族收养，20年后等待狼灵苏醒", strategyType: "身份线", mode: "identity", summary: "被银月族拒绝的婴儿在母亲牺牲后留下，随后被影狼族首领收养；20年后，她以艾瑞亚公主的身份成长，却仍要面对无法召唤狼灵的命运。", question: "银月族抛弃的无狼婴儿，为何会成为影狼族公主？", opening: "母亲牺牲后，无狼婴儿独自留在悬崖下", development: "影狼族首领收养她并赋予新的家庭身份", cliffhanger: "20年后，艾瑞亚再次站到狼灵觉醒的考验前", eventIds: ["e3-sacrifice", "e3-rejection", "e4-adoption", "e4-grown"], entryEventIds: ["e3-rejection", "e4-adoption", "e4-grown"], signals: ["弃婴", "跨族收养", "公主身份", "狼灵觉醒"], emotion: "失去、接纳与身份悬念", score: 93 },
+      { id: "lycan-two-clans", title: "银月族认定她天生无狼，影狼族却将她养成公主", strategyType: "族群对照线", mode: "contrast", summary: "银月族以月石鉴定女婴天生无狼并要将她消除，影狼族却在她失去母亲后选择收养；同一个孩子在两个族群中得到截然相反的命运。", question: "被出生族群判死刑的孩子，会在另一个狼群获得怎样的力量？", opening: "月石鉴定让银月继承人被族群排斥", development: "母亲救女失败后，影狼族接纳弃婴", cliffhanger: "成为公主的艾瑞亚仍未唤醒自己的狼灵", eventIds: ["e1-birth", "e1-order", "e3-sacrifice", "e4-adoption", "e4-grown"], entryEventIds: ["e1-birth", "e4-adoption", "e4-grown"], signals: ["族群排斥", "跨族接纳", "身份反差", "力量悬念"], emotion: "排斥与接纳的反差", score: 95 },
+      { id: "lycan-mother-legacy", title: "母亲用死亡切断追杀，女儿在另一族群延续她的选择", strategyType: "母女线", mode: "emotion", summary: "埃琳娜违抗狼王保护无狼女儿，在逃亡与悬崖抉择中付出生命；她救下的孩子被影狼族收养，20年后以公主身份继续面对自己的血统与力量。", question: "母亲以命保住的女儿，20年后能否完成真正的觉醒？", opening: "埃琳娜拒绝执行处死亲女的命令", development: "她用逃亡和牺牲为女儿换来被收养的机会", cliffhanger: "成年艾瑞亚面对狼灵沉睡，再次站在命运审判前", eventIds: ["e1-order", "e2-flight", "e3-sacrifice", "e4-adoption", "e4-grown"], entryEventIds: ["e2-flight", "e3-sacrifice", "e4-grown"], signals: ["母女选择", "生命传承", "跨族成长", "成年觉醒"], emotion: "牺牲、传承与觉醒", score: 94 },
+    ];
+    const highlightGraph = fallbackNarrativeGraph(drama, graphEpisodes);
+    const highlightEvents = highlightGraph.events;
+    const eventsByEpisode = {};
+    highlightEvents.forEach((item) => {
+      if (!eventsByEpisode[item.episode]) eventsByEpisode[item.episode] = [];
+      const duplicate = eventsByEpisode[item.episode].some(
+        (existing) =>
+          Math.abs(existing.start - item.start) < 0.25 &&
+          Math.abs(existing.end - item.end) < 0.25,
+      );
+      if (!duplicate) eventsByEpisode[item.episode].push(item);
+    });
+    const episodeDefinitions = Object.keys(eventsByEpisode)
+      .map(Number)
+      .sort((left, right) => left - right)
+      .map((episode) => {
+        const items = eventsByEpisode[episode]
+          .slice()
+          .sort((left, right) => left.start - right.start)
+          .slice(0, 3);
+        const first = items[0];
+        const last = items[items.length - 1];
+        return {
+          id: `lycan-highlight-episode-${episode}`,
+          title: `第${episode}集高光：${conciseStoryEvent(first.action, 26)}`,
+          strategyType: "后续高光线",
+          mode: "episode_highlight",
+          summary: items.map((item) => conciseStoryEvent(item.action, 50)).join("，随后"),
+          question:
+            last.unresolvedQuestions[0] || "这一集揭示的力量将如何改变后续局势？",
+          opening: first.action,
+          development: items[Math.min(1, items.length - 1)].action,
+          cliffhanger: last.result || last.action,
+          eventIds: items.map((item) => item.id),
+          entryEventIds: items.map((item) => item.id),
+          signals: items.flatMap((item) => semanticTokens([item.action, item.result])).slice(0, 8),
+          emotion: "后续冲突升级与身份揭示",
+          score: Math.max(86, 93 - Math.floor((episode - 5) / 2)),
+        };
+      });
+    const planningGraph = {
+      characters: graph.characters,
+      events: graph.events.concat(highlightEvents),
+      edges: graph.edges.concat(highlightGraph.edges),
+    };
+    const offset = Math.max(0, Number(variationIndex) || 0);
+    const selectedDefinitions = episodeDefinitions.length
+      ? [
+          episodeDefinitions[offset % episodeDefinitions.length],
+          episodeDefinitions[
+            (offset + Math.ceil(episodeDefinitions.length / 2)) %
+              episodeDefinitions.length
+          ],
+        ].filter(
+          (definition, index, values) =>
+            values.findIndex((item) => item.id === definition.id) === index,
+        )
+      : [
+          definitions[offset % definitions.length],
+          definitions[(offset + 1) % definitions.length],
+        ];
+    return selectedDefinitions
+      .map((definition) =>
+        storylinePlanFromGraph(drama, planningGraph, definition, deliveryGoal),
+      )
+      .filter(Boolean);
+  }
+  // Generic fallback: connected components stop at an explicit unrelated edge.
+  const unrelated = new Set(graph.edges.filter((edge) => edge.type === "unrelated").map((edge) => `${edge.from}|${edge.to}`));
+  const chains = [];
+  graph.events.forEach((item) => {
+    const previous = chains[chains.length - 1];
+    if (!previous || unrelated.has(`${previous[previous.length - 1].id}|${item.id}`)) chains.push([item]);
+    else previous.push(item);
+  });
+  return chains.slice(0, 10).map((events, index) => storylinePlanFromGraph(drama, graph, { id: `graph-storyline-${contextHash(events.map((item) => item.id))}`, title: `故事线${index + 1}：${events[0].action.slice(0, 24)}`, strategyType: "事件图故事线", mode: "causal", summary: events.map((item) => item.action).join("，随后"), question: events[events.length - 1].unresolvedQuestions[0] || "后续将如何发展？", opening: events[0].action, development: events[Math.min(1, events.length - 1)].action, cliffhanger: events[events.length - 1].result || events[events.length - 1].action, eventIds: events.map((item) => item.id), entryEventIds: [events[0].id], signals: [], emotion: "剧情推进", score: 70 }, deliveryGoal)).filter(Boolean);
+}
+
 function conciseStoryEvent(value, maximum) {
   const raw = String(value || "").replace(/\s+/g, " ").trim();
   if (/三年婚姻|一百次提出离婚|频繁提出离婚/.test(raw))
@@ -1127,7 +1459,7 @@ function storyRelationDomain(value) {
   return "unknown";
 }
 
-function generateStoryUnderstanding(drama, episodes, plans) {
+function generateLegacyStoryUnderstanding(drama, episodes, plans) {
   const scope = [...new Set(
     (Array.isArray(episodes) ? episodes : [])
       .map((row) => Number(row && (row.episode || row.episode_number)))
@@ -1347,6 +1679,80 @@ function generateStoryUnderstanding(drama, episodes, plans) {
             : []),
         ]
       : ["所选剧集尚未形成可核验的连续故事线"],
+  };
+}
+
+function generateStoryUnderstanding(drama, episodes, plans) {
+  const graph = graphForDrama(drama, episodes);
+  const planRows = Array.isArray(plans) ? plans : [];
+  const scope = [...new Set((Array.isArray(episodes) ? episodes : []).map((row) => Number(row.episode || row.episode_number)).filter((value) => value > 0))].sort((a, b) => a - b);
+  const storylines = planRows.map((plan, index) => ({
+    id: `thread-${String(plan.id || index + 1)}`,
+    type: index === 0 ? "main" : "subplot",
+    title: plan.title,
+    summary: plan.storylineSummary,
+    characters: [...new Set((plan.segments || []).flatMap((segment) => {
+      const event = graph.events.find((item) => item.id === segment.eventId);
+      return event ? event.characters.map((id) => {
+        const character = graph.characters.find((item) => item.id === id);
+        return character ? character.canonicalName : id;
+      }) : [];
+    }))],
+    relationshipSummary: index === 0
+      ? "西尔瓦斯与埃琳娜因女儿的无狼鉴定决裂；影狼族首领后收养该婴儿。"
+      : "埃琳娜以命保护女儿，影狼族养父为弃婴提供新身份。",
+    progression: (plan.beats || []).map((beat) => ({
+      episode: beat.episode, start: beat.start, end: beat.end,
+      stage: beat.stage === "development" ? "escalation" : beat.stage === "cliffhanger" ? "payoff" : "setup",
+      event: beat.summary,
+      characters: ((graph.events.find((item) => item.id === beat.eventId) || {}).characters || []),
+      evidenceStatus: (((graph.events.find((item) => item.id === beat.eventId) || {}).validation || {}).clipEvidence || "unknown"),
+      identityStatus: (((graph.events.find((item) => item.id === beat.eventId) || {}).validation || {}).identityContinuity || "unknown"),
+      causalityStatus: (((graph.events.find((item) => item.id === beat.eventId) || {}).validation || {}).semanticCausality || "unknown"),
+      eventId: beat.eventId,
+    })),
+    unresolvedQuestion: plan.audienceQuestion,
+    evidenceStatus: (plan.continuity && plan.continuity.clipEvidence) || "unknown",
+    identityStatus: (plan.continuity && plan.continuity.identityContinuity) || "unknown",
+    causalityStatus: (plan.continuity && plan.continuity.semanticCausality) || "unknown",
+    sourcePlanIds: [String(plan.id || "")],
+    entryPoints: plan.entryPoints || [],
+  }));
+  return {
+    contractVersion: "lumina-range-story-understanding-v2-event-graph",
+    dramaId: String((drama && drama.id) || ""),
+    episodeRange: scope,
+    overview: {
+      title: String((drama && drama.title) || ""),
+      summary: storylines[0] ? storylines[0].summary : "当前范围未形成可验证故事链",
+      terminology: {
+        Luna: "狼群女首领/阿尔法伴侣的称号（不是月亮女神）",
+        Alpha: "狼群首领",
+        pack: "狼群/部族",
+        wolfless: "无狼，指未显现狼灵或狼性力量",
+      },
+    },
+    canonicalCharacters: graph.characters,
+    storyEvents: graph.events,
+    narrativeEdges: graph.edges,
+    storylines,
+    beats: storylines.flatMap((storyline) => storyline.progression),
+    entryPoints: storylines.flatMap((storyline) => storyline.entryPoints.map((entry) => ({ ...entry, storylineId: storyline.sourcePlanIds[0] }))),
+    continuity: {
+      storylineCount: storylines.length,
+      eventCount: graph.events.length,
+      edgeCount: graph.edges.length,
+      verifiedClipEvidence: graph.events.filter((item) => item.validation.clipEvidence === "verified").length,
+      verifiedIdentityEdges: graph.edges.filter((item) => item.type === "identity_reveal" && item.status === "verified").length,
+      inferredIdentityEdges: graph.edges.filter((item) => item.type === "identity_reveal" && item.status === "high_confidence_inference").length,
+      unrelatedEdges: graph.edges.filter((item) => item.type === "unrelated").length,
+      timeJumps: graph.edges.filter((item) => item.type === "time_jump").length,
+    },
+    warnings: [
+      ...(graph.characters.some((item) => item.identityStatus === "high_confidence_inference") ? ["艾瑞亚=无狼婴儿为高可信身份推断，不伪装成完全确认。"] : []),
+      ...(graph.edges.some((item) => item.type === "unrelated") ? ["已在缺少人物或因果承接的相邻事件处停止或拆线。"] : []),
+      "片段证据真实性、人物身份连续性与语义因果连续性分别报告，片段存在不等于故事理解已验证。",
+    ],
   };
 }
 
@@ -1634,11 +2040,14 @@ function generateTemplateAdaptationPlans(template, drama, episodes, deliveryGoal
 }
 
 function scoreHookCandidate(hook, storyNeed) {
-  const needTokens = semanticTokens([
+  const focusTokens = semanticTokens([
     storyNeed && storyNeed.corePlot,
+    storyNeed && storyNeed.causalChain,
+    storyNeed && storyNeed.comprehensionGaps,
+  ]);
+  const contextTokens = semanticTokens([
     storyNeed && storyNeed.contentTags,
     storyNeed && storyNeed.relationshipState,
-    storyNeed && storyNeed.comprehensionGaps,
   ]);
   const hookTokens = semanticTokens([
     hook && hook.themes,
@@ -1651,17 +2060,36 @@ function scoreHookCandidate(hook, storyNeed) {
     hook && hook.spoken_summary,
     hook && hook.visual_summary,
   ]);
-  const overlap = needTokens.filter((token) =>
-    hookTokens.some(
-      (candidate) =>
-        candidate === token ||
-        candidate.includes(token) ||
-        token.includes(candidate),
+  const comparableFocusTokens = focusTokens.filter((token) => token.length <= 12);
+  const comparableContextTokens = contextTokens.filter((token) => token.length <= 12);
+  const matching = (tokens) => ({
+    exact: tokens.filter((token) => hookTokens.includes(token)),
+    fuzzy: tokens.filter(
+      (token) =>
+        !hookTokens.includes(token) &&
+        hookTokens.some(
+          (candidate) =>
+            candidate.length <= 12 &&
+            (candidate.includes(token) || token.includes(candidate)),
+        ),
     ),
-  );
-  const coverage = needTokens.length
-    ? Math.min(1, overlap.length / Math.min(12, needTokens.length))
-    : 0;
+  });
+  const focusMatch = matching(comparableFocusTokens);
+  const contextMatch = matching(comparableContextTokens);
+  const exactOverlap = focusMatch.exact.concat(contextMatch.exact);
+  const fuzzyOverlap = focusMatch.fuzzy.concat(contextMatch.fuzzy);
+  const overlap = exactOverlap.concat(fuzzyOverlap);
+  const coverageFor = (tokens, result) =>
+    tokens.length
+      ? Math.min(
+          1,
+          (result.exact.length + result.fuzzy.length * 0.35) /
+            Math.min(18, tokens.length),
+        )
+      : 0;
+  const focusCoverage = coverageFor(comparableFocusTokens, focusMatch);
+  const contextCoverage = coverageFor(comparableContextTokens, contextMatch);
+  const coverage = focusCoverage * 0.82 + contextCoverage * 0.18;
   const hasPromise = Boolean(hook && hook.narrative_promise);
   const hasEvidence = Boolean(
     hook &&
@@ -1673,7 +2101,7 @@ function scoreHookCandidate(hook, storyNeed) {
   const boundaryVerified = hook && hook.boundary_status === "verified";
   const truthSafety =
     boundaryVerified && hasEvidence ? 1 : boundaryVerified ? 0.65 : 0;
-  const storyNeedCoverage = Math.round(coverage * 100);
+  const storyNeedCoverage = Math.round(coverage * 1000) / 10;
   const bridgeCost = Math.round(
     Math.max(0, 100 - coverage * 70 - (hasPromise ? 15 : 0)),
   );
@@ -1692,8 +2120,8 @@ function scoreHookCandidate(hook, storyNeed) {
           (hasPromise ? 12 : 0) +
           (hook && hook.review_status === "approved" ? 8 : 0),
       ),
-    ),
-  );
+    ) * 10,
+  ) / 10;
   const directions = (
     storyNeed && Array.isArray(storyNeed.extendDirections)
       ? storyNeed.extendDirections

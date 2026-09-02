@@ -54,17 +54,17 @@ test("keeps the documented frontend modules integrated", async () => {
   assert.match(inspiration, /ontologyValues\("emotion"\)/);
   assert.match(inspiration, /canonicalHookType/);
   assert.match(inspiration, /isKnownOntologyTag/);
-  assert.match(inspiration, /compactTags=.*\["theme","relation","emotion"\]/);
+  assert.match(inspiration, /compactTags\s*=\s*\[[\s\S]*?\["theme",\s*"relation",\s*"emotion"\]/);
   assert.doesNotMatch(inspiration, /\.slice\(0,7\)\.map/);
   assert.doesNotMatch(inspiration, /检测到镜头切换，回看片段确认/);
   assert.doesNotMatch(inspiration, /该素材已完成旧版分析，但尚未生成 material-v2/);
-  assert.match(inspiration, /正在读取 material-v2 分析详情/);
+  assert.match(inspiration, /正在读取分析详情/);
   assert.match(inspiration, /detailed\.analysisStatus !== "succeeded"/);
   assert.match(inspiration, /url\.searchParams\.delete\("analysis"\)/);
   assert.match(inspiration, /detailRequests/);
-  assert.match(inspiration, /existing\?\.analysisV2&&!item\.analysisV2/);
+  assert.match(inspiration, /existing\?\.analysisV2\s*&&\s*!item\.analysisV2/);
   assert.match(inspiration, /仅看分析完成/);
-  assert.match(inspiration, /analysisFilter==="全部分析状态"\|\|item\.analysisStatus==="succeeded"/);
+  assert.match(inspiration, /analysisFilter\s*===\s*"全部分析状态"\s*\|\|\s*item\.analysisStatus\s*===\s*"succeeded"/);
   assert.match(inspiration, /分段剧情时间线/);
   assert.match(inspiration, /全片剧情理解/);
   assert.doesNotMatch(inspiration, /详细剧情概况/);
@@ -72,23 +72,26 @@ test("keeps the documented frontend modules integrated", async () => {
   assert.doesNotMatch(inspiration, /每条推断必须引用已验证事实/);
   assert.doesNotMatch(inspiration, /支撑上述结论的关键证据/);
   assert.match(inspiration, /拉片预览/);
-  assert.match(inspiration, /video\.currentTime=target/);
+  assert.match(inspiration, /video\.currentTime\s*=\s*target/);
   assert.match(inspiration, /钩子分析与拉片/);
   assert.match(inspiration, /剧情设定/);
   assert.match(inspiration, /声音与对白/);
   assert.match(inspiration, /画面与运镜/);
-  assert.match(inspiration, /从钩子起点播放/);
-  assert.match(inspiration, /time>=end/);
+  assert.match(inspiration, /播放钩子/);
+  assert.match(inspiration, /time\s*>=\s*end/);
   assert.match(inspiration, /同一原片的限定钩子区间/);
   assert.match(inspiration, /aria-label="钩子区间进度"/);
-  assert.match(inspiration, /Math\.max\(start,Math\.min\(end,seconds\)\)/);
-  assert.match(inspiration, /duration\(relativeTime\).*duration\(hookLength\)/);
+  assert.match(inspiration, /Math\.max\(start,\s*Math\.min\(end,\s*seconds\)\)/);
+  assert.match(inspiration, /duration\(relativeTime\)[\s\S]*duration\(hookLength\)/);
   assert.match(inspirationStore, /splitNarrativeClauses/);
-  assert.match(inspirationStore, /opening=new Set\(\["“","‘","\\\""\]\)/);
+  assert.match(inspirationStore, /opening\s*=\s*new Set\(\["“",\s*"‘",\s*'"'\]\)/);
   assert.doesNotMatch(inspiration, /buildStoryboardPhases/);
   assert.match(inspiration, /全片因果情节点/);
   assert.match(inspiration, /暂无可信结论/);
-  assert.ok(inspirationStore.indexOf("pbFetch(`/api/collections/ad_materials/records/") < inspirationStore.indexOf("fetch(`/material-analysis/"), "material detail must prefer the live material-v2 record before static cache fallback");
+  const detailStart = inspirationStore.indexOf("export async function getInspirationMaterial");
+  const liveDetail = inspirationStore.indexOf("/api/collections/ad_materials/records/", detailStart);
+  const cachedDetail = inspirationStore.indexOf("/material-analysis/${", detailStart);
+  assert.ok(detailStart >= 0 && liveDetail > detailStart && cachedDetail > liveDetail, "material detail must prefer the live material-v2 record before static cache fallback");
   assert.match(library, /三级解析/);
   assert.match(library, /可投放区间/);
   assert.match(factory, /episode-narration/);
@@ -105,7 +108,7 @@ test("keeps the external-hook production workflow explicit and evidence-backed",
     readFile(new URL("../app/features/factory/components/ExternalHookAnalysis.tsx", import.meta.url), "utf8"),
   ]);
 
-  for (const step of ["选择剧目与高光", "生成并选择高光故事线", "逐故事线召回钩子", "设计过渡", "成片时间线", "质检", "预览和审核", "保存和导出"]) {
+  for (const step of ["选择剧目与高光", "生成并选择高光故事线", "故事线与钩子组合", "设计过渡", "成片时间线", "质检", "预览和审核", "保存和导出"]) {
     assert.ok(factory.includes(step), `missing production workflow step: ${step}`);
   }
   assert.match(factory, /productionGate/);

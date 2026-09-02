@@ -2,9 +2,11 @@ import copy
 import base64
 import io
 import json
+import os
 import tempfile
 import unittest
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from pathlib import Path
@@ -14,9 +16,9 @@ from PIL import Image
 from processor.pack import group_phrases, pack_transcripts
 from processor.scribe import is_cache_valid, source_fingerprint
 from processor.batch_transcribe import select_free_episodes
-from processor.job_worker import ApiRequestError, classify_failure, envelope_from_dict, execute_entry_precision_job, execute_semantic_job, process_available, process_one_endpoint
+from processor.job_worker import ApiRequestError, DownloadIntegrityError, api_request, classify_failure, download, envelope_from_dict, execute_entry_precision_job, execute_semantic_job, process_available, process_one_endpoint
 from processor.factory_render import build_render_quality_report
-from processor.semantic_analysis import AnalysisFailed, AnalysisEnvelope, Evidence, Timecode, _apply_material_evidence_gate, _compact_hook_highlight, _complete_sentence_limit, _downgrade_unsupported_external_hook, _enrich_material_hooks, _external_hook_fragment_evidence, _external_hook_match_input, _extract_chat_stream, _extract_provider_result, _material_evidence_timestamps, _material_output_contract_valid, _material_semantic_analysis, _material_story_consistency_issues, _material_story_quality_issues, _normalize_material_format, _normalize_precision_hooks, _openai_request_body, _opening_preface_boundary, _precision_candidates, _reconstruct_storyline, _reconstruct_highlights, _sanitize_material_provider_input, _semantic_frame_base64, _semantic_request, _story_duration_validation, _storyboard_quality_issues, _storyboard_units_from_event_ledger, _strict_safety_provider_input, _target_duration_spec, _validate_semantic_claims, analyze_coarse, analyze_detail, analyze_hook_entry_points, analyze_hook_story_match, analyze_material, failed_envelope, transcribe
+from processor.semantic_analysis import AnalysisFailed, AnalysisEnvelope, Evidence, Timecode, _apply_material_evidence_gate, _compact_hook_highlight, _complete_sentence_limit, _downgrade_unsupported_external_hook, _enrich_material_hooks, _external_hook_fragment_evidence, _external_hook_match_input, _extract_chat_stream, _extract_provider_result, _material_evidence_timestamps, _material_output_contract_issues, _material_output_contract_valid, _material_semantic_analysis, _material_story_consistency_issues, _material_story_quality_issues, _material_story_synthesis_request, _normalize_material_format, _normalize_material_output_shape, _normalize_precision_hooks, _openai_request_body, _opening_preface_boundary, _precision_candidates, _read_analysis_cache, _reconstruct_storyline, _reconstruct_highlights, _restore_material_observations, _sanitize_material_provider_input, _semantic_frame_base64, _semantic_request, _story_duration_validation, _storyboard_quality_issues, _storyboard_units_from_event_ledger, _strict_safety_provider_input, _target_duration_spec, _validate_semantic_claims, _write_analysis_cache, analyze_coarse, analyze_detail, analyze_hook_entry_points, analyze_hook_story_match, analyze_material, failed_envelope, transcribe
 
 MATERIAL_CONTRACT = {
     "content": {"summary": {"value": "摘要", "confidence": 0.9, "evidence": [{"source": "transcript", "timecode": {"start": 0, "end": 1}, "confidence": 0.9, "text": "开场对白"}], "basedOnFactIds": ["F1"], "verification": "verified"}, "observations": [{"factId": "F1", "actorObserved": "说话者", "actionObserved": "说出开场对白", "evidence": [{"source": "transcript", "timecode": {"start": 0, "end": 1}, "confidence": 0.9, "text": "开场对白"}], "verification": "verified"}], "inferences": [], "tags": [], "characters": [], "relationships": [], "segments": [], "completeness": {"value": "完整", "confidence": 0.9, "evidence": []}},
@@ -27,6 +29,111 @@ MATERIAL_CONTRACT = {
 
 
 class ProcessorTests(unittest.TestCase):
+    def test_analysis_cache_allows_eight_concurrent_writers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "semantic-segments-v6.json"
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                futures = [
+                    executor.submit(_write_analysis_cache, cache, "same-content-hash", [{"segment": 1}], {"backend": "test"})
+                    for _ in range(8)
+                ]
+                for future in futures:
+                    future.result()
+            self.assertEqual(_read_analysis_cache(cache, "same-content-hash"), ([{"segment": 1}], {"backend": "test"}))
+            self.assertEqual(list(cache.parent.glob(f".{cache.name}.*.tmp")), [])
+
+    @patch("processor.semantic_analysis.os.replace")
+    def test_analysis_cache_cleans_unique_temporary_after_replace_failure(self, replace):
+        replace.side_effect = OSError("replace failed")
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "semantic-segments-v6.json"
+            with self.assertRaisesRegex(AnalysisFailed, r"atomic write failed \(OSError\)") as raised:
+                _write_analysis_cache(cache, "signature", [{"segment": 1}], {"backend": "test"})
+            self.assertNotIn(str(cache), str(raised.exception))
+            self.assertFalse(cache.exists())
+            self.assertEqual(list(cache.parent.glob(f".{cache.name}.*.tmp")), [])
+
+    @patch("processor.semantic_analysis.os.replace")
+    def test_analysis_cache_preserves_existing_target_when_replace_fails(self, replace):
+        replace.side_effect = OSError("replace failed")
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "semantic-segments-v6.json"
+            original = b'{"signature":"old","data":[],"engine":{"backend":"old"}}'
+            cache.write_bytes(original)
+            with self.assertRaises(AnalysisFailed):
+                _write_analysis_cache(cache, "new", [{"segment": 2}], {"backend": "new"})
+            self.assertEqual(cache.read_bytes(), original)
+            self.assertEqual(list(cache.parent.glob(f".{cache.name}.*.tmp")), [])
+
+    @patch("processor.semantic_analysis.time.sleep")
+    def test_analysis_cache_retries_transient_windows_replace_race(self, _sleep):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "semantic-segments-v6.json"
+            real_replace = os.replace
+            attempts = []
+
+            def transient_once(source, destination):
+                attempts.append(True)
+                if len(attempts) == 1:
+                    error = PermissionError("sharing violation")
+                    error.winerror = 5
+                    raise error
+                real_replace(source, destination)
+
+            with patch("processor.semantic_analysis.os.replace", side_effect=transient_once):
+                _write_analysis_cache(cache, "signature", [{"segment": 1}], {"backend": "test"})
+            self.assertEqual(len(attempts), 2)
+            self.assertEqual(_read_analysis_cache(cache, "signature"), ([{"segment": 1}], {"backend": "test"}))
+            self.assertEqual(list(cache.parent.glob(f".{cache.name}.*.tmp")), [])
+
+    @patch("processor.semantic_analysis._semantic_request")
+    def test_material_story_synthesis_retries_length_once_with_compact_contract(self, semantic_request):
+        repair_payload = {
+            "requirements": ["repair every consistency issue"],
+            "draftStory": {"summary": "原始草稿"},
+            "resolvedEntities": {"characters": [{"name": "角色甲"}]},
+            "storyAudit": {"missingEvents": [{"eventId": "E1"}]},
+            "consistencyIssues": ["缺少事件 E1"],
+        }
+        repaired = {"summary": "完整修复结果"}
+        semantic_request.side_effect = [AnalysisFailed("provider response is incomplete; finish_reason=length"), repaired]
+        retried = []
+
+        result = _material_story_synthesis_request(repair_payload, on_compact_retry=lambda: retried.append(True))
+
+        self.assertEqual(result, repaired)
+        self.assertEqual(semantic_request.call_count, 2)
+        first_task, first_payload = semantic_request.call_args_list[0].args
+        second_task, compact_payload = semantic_request.call_args_list[1].args
+        self.assertEqual(first_task, "paid-ad-material-story-synthesis")
+        self.assertEqual(second_task, first_task)
+        self.assertIs(first_payload, repair_payload)
+        self.assertTrue(compact_payload["compactRetry"])
+        self.assertEqual(compact_payload["draftStory"], repair_payload["draftStory"])
+        self.assertEqual(compact_payload["resolvedEntities"], repair_payload["resolvedEntities"])
+        self.assertEqual(compact_payload["storyAudit"], repair_payload["storyAudit"])
+        self.assertEqual(compact_payload["consistencyIssues"], repair_payload["consistencyIssues"])
+        self.assertEqual(repair_payload["requirements"], ["repair every consistency issue"])
+        self.assertEqual(retried, [True])
+
+    @patch("processor.semantic_analysis._semantic_request")
+    def test_material_story_synthesis_stops_after_one_compact_retry(self, semantic_request):
+        semantic_request.side_effect = AnalysisFailed("provider response is incomplete; finish_reason=length")
+
+        with self.assertRaisesRegex(AnalysisFailed, "finish_reason=length"):
+            _material_story_synthesis_request({"requirements": []})
+
+        self.assertEqual(semantic_request.call_count, 2)
+
+    @patch("processor.semantic_analysis._semantic_request")
+    def test_material_story_synthesis_does_not_retry_non_length_failure(self, semantic_request):
+        semantic_request.side_effect = AnalysisFailed("schema validation failed")
+
+        with self.assertRaisesRegex(AnalysisFailed, "schema validation failed"):
+            _material_story_synthesis_request({"requirements": []})
+
+        semantic_request.assert_called_once()
+
     def test_material_primary_hook_prefers_complete_opening_over_later_climax(self):
         claim = {"confidence": .9, "evidence": [], "verification": "unverified"}
         creative = {
@@ -195,7 +302,12 @@ class ProcessorTests(unittest.TestCase):
         model.transcribe.return_value = (missing_audio(), SimpleNamespace(language=""))
         runtime = SimpleNamespace(device="cpu", compute_type="int8", fallback_reason="")
         create_model.return_value = (model, runtime)
-        with patch.dict("os.environ", {"LUMINA_WHISPER_MODEL": "tiny", "LUMINA_WHISPER_DEVICE": "cpu", "LUMINA_WHISPER_COMPUTE_TYPE": "int8"}, clear=False):
+        fake_whisper = SimpleNamespace(WhisperModel=MagicMock())
+        with patch.dict("sys.modules", {"faster_whisper": fake_whisper}), patch.dict(
+            "os.environ",
+            {"LUMINA_WHISPER_MODEL": "tiny", "LUMINA_WHISPER_DEVICE": "cpu", "LUMINA_WHISPER_COMPUTE_TYPE": "int8"},
+            clear=False,
+        ):
             transcript, engine = transcribe(Path("silent.mp4"))
         self.assertEqual(transcript, [])
         self.assertEqual(engine["status"], "no_audio")
@@ -212,6 +324,21 @@ class ProcessorTests(unittest.TestCase):
         self.assertTrue(retryable)
         self.assertEqual(delay, 30)
 
+    def test_failure_classifier_retries_explicit_winsock_interruptions_despite_mojibake(self):
+        failures=[
+            OSError(10053,"����������������"),
+            RuntimeError("[WinError 10054] ������������"),
+            RuntimeError("WSA socket error 10060: ��������"),
+        ]
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__):
+                self.assertEqual(classify_failure(failure),("transient",True,30))
+
+    def test_failure_classifier_does_not_retry_unscoped_number_or_invalid_media(self):
+        self.assertEqual(classify_failure(RuntimeError("frame 10053 is malformed")),("permanent",False,0))
+        kind,retryable,delay=classify_failure(RuntimeError("ffprobe.exe failed: Invalid data found when processing input"))
+        self.assertEqual((kind,retryable,delay),("permanent",False,0))
+
     def test_failure_classifier_retries_ssl_eof(self):
         kind, retryable, delay = classify_failure(RuntimeError("SSL: UNEXPECTED_EOF_WHILE_READING"))
         self.assertEqual(kind, "transient")
@@ -223,6 +350,84 @@ class ProcessorTests(unittest.TestCase):
         self.assertEqual(kind, "transient")
         self.assertTrue(retryable)
         self.assertEqual(delay, 30)
+
+    def test_failure_classifier_retries_windows_native_loader_error(self):
+        kind, retryable, delay = classify_failure(
+            OSError(127, "[WinError 127] The specified procedure could not be found")
+        )
+        self.assertEqual(kind, "transient")
+        self.assertTrue(retryable)
+        self.assertEqual(delay, 60)
+
+    def test_failure_classifier_retries_material_contract_repairs(self):
+        kind, retryable, delay = classify_failure(RuntimeError("素材分析输出契约可修复失败（content.summary.evidence:missing）"))
+        self.assertEqual(kind, "validation")
+        self.assertTrue(retryable)
+        self.assertEqual(delay, 120)
+
+    def test_failure_classifier_retries_empty_ffprobe_failure_but_not_invalid_media(self):
+        for executable in ("ffprobe", "ffprobe.exe"):
+            with self.subTest(executable=executable):
+                kind, retryable, delay = classify_failure(RuntimeError(f"{executable} failed: "))
+                self.assertEqual((kind, retryable, delay), ("transient", True, 30))
+        kind, retryable, delay = classify_failure(RuntimeError("ffprobe.exe failed: Invalid data found when processing input"))
+        self.assertEqual(kind, "permanent");self.assertFalse(retryable);self.assertEqual(delay, 0)
+
+    def test_download_validates_content_length_then_atomically_replaces_destination(self):
+        class Response(io.BytesIO):
+            def __init__(self,value):super().__init__(value);self.headers={"Content-Length":str(len(value))}
+            def __enter__(self):return self
+            def __exit__(self,*_):self.close();return False
+        with tempfile.TemporaryDirectory() as directory:
+            destination=Path(directory)/"source.mp4";destination.write_bytes(b"old")
+            with patch("processor.job_worker.urllib.request.urlopen",return_value=Response(b"complete-media")):
+                download("https://media.invalid/hidden",destination)
+            self.assertEqual(destination.read_bytes(),b"complete-media")
+            self.assertEqual(list(Path(directory).glob("*.part")),[])
+
+    def test_download_rejects_truncation_without_replacing_existing_file(self):
+        class Response(io.BytesIO):
+            headers={"Content-Length":"99"}
+            def __enter__(self):return self
+            def __exit__(self,*_):self.close();return False
+        with tempfile.TemporaryDirectory() as directory:
+            destination=Path(directory)/"source.mp4";destination.write_bytes(b"known-good")
+            with patch("processor.job_worker.urllib.request.urlopen",return_value=Response(b"short")):
+                with self.assertRaisesRegex(DownloadIntegrityError,"declared content length"):
+                    download("https://media.invalid/hidden",destination)
+            self.assertEqual(destination.read_bytes(),b"known-good")
+            self.assertEqual(list(Path(directory).glob("*.part")),[])
+
+    def test_download_without_content_length_streams_to_atomic_destination(self):
+        class Response(io.BytesIO):
+            headers={}
+            def __enter__(self):return self
+            def __exit__(self,*_):self.close();return False
+        with tempfile.TemporaryDirectory() as directory:
+            destination=Path(directory)/"source.mp4"
+            with patch("processor.job_worker.urllib.request.urlopen",return_value=Response(b"streamed-media")):
+                download("https://media.invalid/hidden",destination)
+            self.assertEqual(destination.read_bytes(),b"streamed-media")
+            self.assertEqual(list(Path(directory).glob("*.part")),[])
+
+    def test_download_failure_does_not_expose_signed_url(self):
+        signed="https://media.invalid/video.mp4?signature=secret-token"
+        with tempfile.TemporaryDirectory() as directory,patch("processor.job_worker.urllib.request.urlopen",side_effect=urllib.error.URLError(signed)):
+            with self.assertRaises(DownloadIntegrityError) as raised:
+                download(signed,Path(directory)/"source.mp4")
+            self.assertEqual(list(Path(directory).glob("*.part")),[])
+        self.assertNotIn("signature",str(raised.exception));self.assertNotIn("secret-token",str(raised.exception))
+        self.assertEqual(classify_failure(raised.exception),("transient",True,30))
+
+    @patch("processor.job_worker.urllib.request.urlopen")
+    def test_api_request_replaces_nonfinite_numbers_before_pocketbase(self, mocked_urlopen):
+        response = MagicMock()
+        response.status = 200
+        response.read.return_value = b"{}"
+        mocked_urlopen.return_value.__enter__.return_value = response
+        api_request("http://pb", "token", "/jobs/1", "PATCH", {"score": float("nan"), "nested": [float("inf")]})
+        request = mocked_urlopen.call_args.args[0]
+        self.assertEqual(json.loads(request.data), {"score": None, "nested": [None]})
 
     @patch("processor.job_worker._entry_frame_quality", return_value={"passed": True})
     @patch("processor.job_worker.extract_frames", return_value=[{"path": "frame.jpg", "timecode": {"start": 5, "end": 5}}])
@@ -576,6 +781,14 @@ class ProcessorTests(unittest.TestCase):
         ]
         self.assertEqual(_extract_chat_stream(stream), {"summary": {}})
 
+    def test_openai_chat_stream_rejects_parseable_json_finished_by_length(self):
+        stream = [
+            b'data: {"choices":[{"delta":{"content":"{\\"summary\\":{}}"},"finish_reason":"length"}]}\n',
+            b'data: [DONE]\n',
+        ]
+        with self.assertRaisesRegex(AnalysisFailed, "finish_reason=length"):
+            _extract_chat_stream(stream)
+
     def test_material_prompt_requires_field_level_output_contract(self):
         body = _openai_request_body("openai-chat-completions", "qwen-vl-max", "paid-ad-material-analysis-merge", {"segmentAnalyses": []})
         prompt = body["messages"][1]["content"][0]["text"]
@@ -597,6 +810,31 @@ class ProcessorTests(unittest.TestCase):
         empty_summary["content"]["summary"] = {"value": "", "confidence": 0.9, "evidence": []}
         self.assertFalse(_material_output_contract_valid(empty_summary))
         self.assertTrue(_material_output_contract_valid(MATERIAL_CONTRACT))
+
+    def test_material_contract_diagnostics_name_missing_lineage(self):
+        value = copy.deepcopy(MATERIAL_CONTRACT)
+        value["content"]["summary"].pop("evidence")
+        value["content"]["summary"].pop("basedOnFactIds")
+        issues = _material_output_contract_issues(value)
+        self.assertIn("content.summary.evidence:missing", issues)
+        self.assertIn("content.summary.basedOnFactIds:missing", issues)
+
+    def test_material_shape_restores_summary_lineage_only_from_verified_observations(self):
+        value = copy.deepcopy(MATERIAL_CONTRACT)
+        value["content"]["summary"] = {"value": "基于已验证事实形成的剧情摘要"}
+        normalized = _normalize_material_output_shape(value)
+        summary = normalized["content"]["summary"]
+        self.assertEqual(summary["basedOnFactIds"], ["F1"])
+        self.assertEqual(summary["verification"], "verified")
+        self.assertEqual(summary["evidence"][0]["source"], "transcript")
+
+    def test_material_observations_restore_only_verified_cached_segment_facts(self):
+        result = copy.deepcopy(MATERIAL_CONTRACT)
+        result["content"]["observations"] = []
+        verified = copy.deepcopy(MATERIAL_CONTRACT["content"]["observations"][0])
+        unverified = {**verified, "factId": "F2", "verification": "unverified"}
+        restored = _restore_material_observations(result, {"segmentAnalyses": [{"content": {"observations": [verified, unverified]}}]})
+        self.assertEqual([item["factId"] for item in restored["content"]["observations"]], ["F1"])
 
     def test_material_story_gate_rejects_hollow_evidence_copy(self):
         result = {
@@ -778,14 +1016,30 @@ class ProcessorTests(unittest.TestCase):
         process_available("http://pb", "token", "drama-worker", "drama")
         self.assertEqual(process_mock.call_args.args[3:5], ("/api/lumina/analysis", "drama"))
         process_mock.reset_mock()
-        process_available("http://pb", "token", "material-worker", "material")
-        self.assertEqual([call.args[3:5] for call in process_mock.call_args_list], [("/api/lumina/hook-matching", "hook_match"), ("/api/lumina/entry-precision", "entry_precision"), ("/api/lumina/factory-render", "factory_render"), ("/api/lumina/supplemental-highlights", "supplemental_highlight"), ("/api/lumina/material-analysis", "material")])
+        with patch.dict("os.environ", {"LUMINA_INTERACTIVE_MATERIAL_FALLBACK":"0"}, clear=False):
+            process_available("http://pb", "token", "material-worker", "material")
+        self.assertEqual([call.args[3:5] for call in process_mock.call_args_list], [("/api/lumina/hook-matching", "hook_match"), ("/api/lumina/entry-precision", "entry_precision"), ("/api/lumina/factory-render", "factory_render"), ("/api/lumina/supplemental-highlights", "supplemental_highlight")])
+
+    @patch("processor.job_worker.process_one_endpoint")
+    def test_interactive_worker_only_falls_back_to_batch_with_explicit_opt_in(self, process_mock):
+        process_mock.return_value=False
+        with patch.dict("os.environ", {"LUMINA_INTERACTIVE_MATERIAL_FALLBACK":"1"}, clear=False):
+            process_available("http://pb", "token", "material-worker", "material")
+        self.assertEqual(process_mock.call_args_list[-1].args[3:5],("/api/lumina/material-analysis","material"))
 
     @patch("processor.job_worker.process_one_endpoint")
     def test_worker_can_claim_one_exact_material_job(self, process_mock):
         process_mock.return_value = False
-        process_available("http://pb", "token", "material-worker", "material", "job-123")
-        self.assertEqual(process_mock.call_args.kwargs["job_id"], "job-123")
+        with patch.dict("os.environ", {"LUMINA_INTERACTIVE_MATERIAL_FALLBACK":"0"}, clear=False):
+            process_available("http://pb", "token", "material-worker", "material", "job-123")
+        self.assertEqual([call.args[3:5] for call in process_mock.call_args_list],[("/api/lumina/hook-matching","hook_match"),("/api/lumina/entry-precision","entry_precision"),("/api/lumina/factory-render","factory_render"),("/api/lumina/supplemental-highlights","supplemental_highlight")])
+        self.assertTrue(all(call.kwargs["job_id"]=="job-123" for call in process_mock.call_args_list))
+
+    @patch("processor.job_worker.process_one_endpoint")
+    def test_material_batch_queue_keeps_dedicated_material_analysis_path(self, process_mock):
+        process_mock.return_value=False
+        process_available("http://pb","token","batch-worker","material-batch")
+        self.assertEqual(process_mock.call_args.args[3:5],("/api/lumina/material-analysis","material"))
 
     @patch.dict("os.environ", {"LUMINA_SEMANTIC_MODEL": "test-model", "LUMINA_WHISPER_MODEL": "test-whisper"})
     @patch("processor.semantic_analysis._semantic_request", side_effect=lambda *_args, **_kwargs: copy.deepcopy(MATERIAL_CONTRACT))

@@ -63,6 +63,14 @@
 .defaultTransition blockquote { margin: 0; padding: 8px; border-radius: 7px; color: #4f6074; background: #fff; font-size: 9px; line-height: 1.5; }
 .defaultTransition > div { display: flex; gap: 6px; }
 .defaultTransition button { padding: 7px 9px; border: 1px solid #b9d2ef; border-radius: 7px; color: var(--blue); background: #fff; font-size: 8px; font-weight: 750; }
+.transitionChoices { display: grid !important; grid-template-columns: 1fr; gap: 5px !important; }
+.transitionChoices button { display: flex; align-items: center; justify-content: space-between; width: 100%; text-align: left; }
+.transitionChoices button[data-selected="true"] { border-color: var(--blue); background: #eaf3ff; box-shadow: inset 3px 0 0 var(--blue); }
+.transitionChoices em { color: #7a8798; font-size: 8px; font-style: normal; font-weight: 600; }
+.transitionFacts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0; }
+.transitionFacts div { padding: 7px; border-radius: 7px; background: #fff; }
+.transitionFacts dt { color: #7a8798; font-size: 7px; }
+.transitionFacts dd { margin: 3px 0 0; color: #34445a; font-size: 8px; font-weight: 750; }
 .blockerSection { margin: 0 24px; padding: 17px; border-top: 1px solid var(--line); }
 .blockerList { display: grid; gap: 7px; }
 .blockerList article,

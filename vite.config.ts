@@ -1,5 +1,7 @@
 import vinext from "vinext";
 import { defineConfig } from "vite";
+import { createReadStream, existsSync, statSync } from "node:fs";
+import { resolve, sep } from "node:path";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 
@@ -10,6 +12,46 @@ const { d1, r2 } = hostingConfig;
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
+
+const localRenderFiles = () => ({
+  name: "lumina-local-render-files",
+  configureServer(server: { middlewares: { use: (fn: (req: { url?: string; method?: string }, res: { statusCode: number; setHeader: (name: string, value: string | number) => void; end: (body?: string) => void }, next: () => void) => void) => void } }) {
+    attachRenderMiddleware(server);
+  },
+  configurePreviewServer(server: { middlewares: { use: (fn: (req: { url?: string; method?: string }, res: { statusCode: number; setHeader: (name: string, value: string | number) => void; end: (body?: string) => void }, next: () => void) => void) => void } }) {
+    attachRenderMiddleware(server);
+  },
+});
+
+const attachRenderMiddleware = (server: { middlewares: { use: (fn: (req: { url?: string; method?: string }, res: { statusCode: number; setHeader: (name: string, value: string | number) => void; end: (body?: string) => void }, next: () => void) => void) => void } }) => {
+    const renderRoot = resolve(
+      process.env.LUMINA_FACTORY_RENDER_DIR ||
+        resolve(process.cwd(), "public", "renders"),
+    );
+    server.middlewares.use((req, res, next) => {
+      const pathname = (req.url || "").split("?", 1)[0];
+      if (!pathname.startsWith("/renders/")) return next();
+      let decoded = "";
+      try {
+        decoded = decodeURIComponent(pathname.slice("/renders/".length));
+      } catch {
+        res.statusCode = 400;
+        return res.end("Invalid render path");
+      }
+      const filePath = resolve(renderRoot, decoded);
+      if (!filePath.startsWith(`${renderRoot}${sep}`) || !existsSync(filePath) || !statSync(filePath).isFile()) {
+        res.statusCode = 404;
+        return res.end("Not Found");
+      }
+      const stat = statSync(filePath);
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "video/mp4");
+      res.setHeader("Content-Length", stat.size);
+      res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(decoded)}`);
+      if (req.method === "HEAD") return res.end();
+      createReadStream(filePath).pipe(res as never);
+    });
+};
 
 const localBindingConfig = {
   main: "./worker/index.ts",
@@ -66,6 +108,7 @@ export default defineConfig(async () => {
         : {}),
     },
     plugins: [
+      localRenderFiles(),
       vinext(),
       sites(),
       cloudflare({

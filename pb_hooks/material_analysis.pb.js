@@ -16,19 +16,22 @@ routerAdd("POST", "/api/lumina/material-analysis/claim", (e) => {
   if (!workerId) throw new BadRequestError("worker_id is required");
   let claimed = null;
   e.app.runInTransaction((tx) => {
-    const candidates = tx.findRecordsByFilter("material_analysis_jobs", "status = 'queued' || status = 'running' || status = 'failed'", "-priority,id", 200, 0).filter(Boolean);
+    const candidates = tx.findRecordsByFilter("material_analysis_jobs", "status = 'queued' || status = 'running' || status = 'failed'", "-priority,id", 2000, 0).filter(Boolean);
     const now = Date.now();
-    const job = candidates.find((item) => {
-      if (requestedJobId && item.id !== requestedJobId) return false;
-      if (item.getString("status") === "queued") return true;
-      if (item.getString("status") === "failed") {
-        if (["permanent", "media", "validation"].includes(item.getString("error_kind"))) return false;
-        const nextAttempt = Date.parse(item.getString("next_attempt_at"));
-        return item.getInt("attempt") < item.getInt("max_attempts") && (!nextAttempt || nextAttempt <= now);
-      }
+    const isStaleRunning = (item) => {
+      if (item.getString("status") !== "running") return false;
       const lease = Date.parse(item.getString("lease_until"));
       return !lease || lease <= now;
-    });
+    };
+    const isDueFailure = (item) => {
+      if (item.getString("status") !== "failed" || ["permanent", "media"].includes(item.getString("error_kind"))) return false;
+      const nextAttempt = Date.parse(item.getString("next_attempt_at"));
+      return item.getInt("attempt") < item.getInt("max_attempts") && (!nextAttempt || nextAttempt <= now);
+    };
+    const isClaimable = (item) => item.getString("status") === "queued" || isStaleRunning(item) || isDueFailure(item);
+    const job = requestedJobId
+      ? candidates.find((item) => item.id === requestedJobId && isClaimable(item))
+      : candidates.find(isStaleRunning) || candidates.find(isDueFailure) || candidates.find((item) => item.getString("status") === "queued");
     if (!job) return;
     const token = $security.randomString(40);
     job.set("status", "running");
@@ -98,10 +101,13 @@ routerAdd("PATCH", "/api/lumina/material-analysis/jobs/{id}", (e) => {
     job.set("progress", progress);
     job.set("error", nextStatus === "failed" ? String(body.error || "analysis failed").slice(0, 4000) : "");
     if (nextStatus === "failed") {
-      const errorKind = String(body.error_kind || "permanent");
+      const errorText = String(body.error || "analysis failed");
+      const nativeLoaderRetry = errorText.toLowerCase().includes("winerror 127");
+      const errorKind = nativeLoaderRetry ? "transient" : String(body.error_kind || "permanent");
       job.set("error_kind", errorKind);
-      const retryable = body.retryable === true && !["permanent", "media", "validation"].includes(errorKind);
-      const delay = Math.max(0, Math.min(1800, Number(body.retry_after_seconds || 0)));
+      const retryable = nativeLoaderRetry || (body.retryable === true && !["permanent", "media"].includes(errorKind));
+      const delay = nativeLoaderRetry ? 60 : Math.max(0, Math.min(1800, Number(body.retry_after_seconds || 0)));
+      if (nativeLoaderRetry && job.getInt("max_attempts") < 3) job.set("max_attempts", 3);
       job.set("next_attempt_at", retryable && delay ? new Date(Date.now() + delay * 1000).toISOString() : "");
       if (!retryable) job.set("max_attempts", job.getInt("attempt"));
     } else {
@@ -138,7 +144,7 @@ routerAdd("PATCH", "/api/lumina/material-analysis/jobs/{id}", (e) => {
       material.set("type", projection.format);
       material.set("review_flags", projection.reviewFlags);
       material.set("prototype_inputs", projection.prototypeInputs);
-      material.set("source_attribution", projection.sourceAttribution);
+      if (material.getString("video")) material.set("source_attribution", helpers.mergeSourceAttribution(material.get("source_attribution"), projection.sourceAttribution));
       material.set("ontology_tags", projection.ontologyTags);
       const detectedLanguage = String(helpers.resultValue(materialResult, ["detectedLanguage", "language"], helpers.resultValue(materialFields, ["detectedLanguage", "language"], "")) || "");
       if (detectedLanguage) material.set("language", detectedLanguage.slice(0, 80));
@@ -165,6 +171,7 @@ routerAdd("POST", "/api/lumina/material-analysis/jobs/{id}/retry", (e) => {
   const leaseUntil = Date.parse(job.getString("lease_until"));
   const staleRunning = status === "running" && (!leaseUntil || leaseUntil <= Date.now());
   if (status !== "failed" && !staleRunning) throw new BadRequestError("only failed or lease-expired running jobs can be retried");
+  job.set("logs", helpers.appendRetryLineage(job.get("logs"), job, "worker_job_retry", true));
   job.set("status", "queued");
   job.set("progress", 0);
   job.set("attempt", 0);
@@ -176,6 +183,7 @@ routerAdd("POST", "/api/lumina/material-analysis/jobs/{id}/retry", (e) => {
   job.set("current_stage", "queued");
   e.app.save(job);
   const material = e.app.findRecordById("ad_materials", job.getString("material"));
+  helpers.resetMaterialPublishedAnalysis(material);
   material.set("analysis_status", "queued");
   material.set("analysis_progress", 0);
   material.set("analysis_error", "");
@@ -279,6 +287,7 @@ routerAdd("POST", "/api/lumina/material-analysis/jobs/{id}/reset", (e) => {
   helpers.authorize(e);
   const job = e.app.findRecordById("material_analysis_jobs", e.request.pathValue("id"));
   if (job.getString("status") === "succeeded") throw new BadRequestError("succeeded jobs cannot be reset");
+  job.set("logs", helpers.appendRetryLineage(job.get("logs"), job, "worker_job_reset", true));
   job.set("status", "queued");
   job.set("progress", 0);
   job.set("attempt", 0);
@@ -290,6 +299,7 @@ routerAdd("POST", "/api/lumina/material-analysis/jobs/{id}/reset", (e) => {
   job.set("current_stage", "queued");
   e.app.save(job);
   const material = e.app.findRecordById("ad_materials", job.getString("material"));
+  helpers.resetMaterialPublishedAnalysis(material);
   material.set("analysis_status", "queued");
   material.set("analysis_progress", 0);
   material.set("analysis_error", "");
@@ -303,7 +313,7 @@ routerAdd("POST", "/api/lumina/material-analysis/materials/{id}/retry", (e) => {
   helpers.authorizeLocalUi(e);
   const body = e.requestInfo().body || {};
   const force = body.force === true;
-  const forceSemanticRefresh = body.force_semantic_refresh === true || force;
+  const forceSemanticRefresh = body.force_semantic_refresh === true || (force && body.force_semantic_refresh === undefined);
   const material = e.app.findRecordById("ad_materials", e.request.pathValue("id"));
   const jobs = e.app.findRecordsByFilter("material_analysis_jobs", "material = {:material}", "-id", 1, 0, { material: material.id }).filter(Boolean);
   const job = jobs[0];
@@ -318,15 +328,16 @@ routerAdd("POST", "/api/lumina/material-analysis/materials/{id}/retry", (e) => {
   job.set("status", "queued");
   job.set("progress", 0);
   job.set("attempt", 0);
+  if (force && job.getInt("max_attempts") < 3) job.set("max_attempts", 3);
   job.set("worker_id", "");
   job.set("lease_token", "");
   job.set("lease_until", "");
   job.set("error", "");
   job.set("result", null);
   job.set("current_stage", "queued");
-  const previousLogs = job.get("logs");
-  job.set("logs", { ...(previousLogs && typeof previousLogs === "object" ? previousLogs : {}), force_semantic_refresh: forceSemanticRefresh });
+  job.set("logs", helpers.appendRetryLineage(job.get("logs"), job, "ui_material_retry", forceSemanticRefresh));
   e.app.save(job);
+  helpers.resetMaterialPublishedAnalysis(material);
   material.set("analysis_status", "queued");
   material.set("analysis_progress", 0);
   material.set("analysis_error", "");

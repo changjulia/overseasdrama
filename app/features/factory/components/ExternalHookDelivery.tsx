@@ -10,9 +10,10 @@ export type DeliveryVersion = {
   id: string;
   label: string;
   createdAt: string;
-  status: "draft" | "reviewing" | "approved" | "rejected" | "exported";
+  status: "draft" | "reviewing" | "approved" | "rejected" | "failed" | "exported";
   note?: string;
   previewUrl?: string;
+  outputUrl?: string;
 };
 
 export type DeliveryExportConfig = {
@@ -20,6 +21,8 @@ export type DeliveryExportConfig = {
   resolution: "1080 × 1920" | "720 × 1280";
   quality: "标准" | "高质量";
   fileName: string;
+  selectedVersionIds?: string[];
+  versionFileNames?: Record<string, string>;
 };
 
 export type ExternalHookDeliveryProps = {
@@ -67,6 +70,7 @@ const versionStatusLabels: Record<DeliveryVersion["status"], string> = {
   reviewing: "待审核",
   approved: "已通过",
   rejected: "已驳回",
+  failed: "生成失败",
   exported: "已导出",
 };
 
@@ -109,10 +113,27 @@ export function ExternalHookDelivery({
   const [quality, setQuality] = useState<DeliveryExportConfig["quality"]>("高质量");
   const safeProjectName = useMemo(() => projectName.trim().replace(/[\\/:*?"<>|]/g, "-") || "未命名项目", [projectName]);
   const [fileName, setFileName] = useState(`${safeProjectName}_外搭钩子_v01`);
+  const [selectedVersionIds, setSelectedVersionIds] = useState<string[]>([]);
+  const [versionFileNames, setVersionFileNames] = useState<Record<string, string>>({});
   const hasPlayablePreview = Boolean(previewUrl);
   const visibleRenderStatus: DeliveryRenderStatus = hasPlayablePreview ? "ready" : renderStatus;
   const visibleProgress = hasPlayablePreview ? 100 : progress;
   const canExport = (exportableVersionCount > 0 || hasPlayablePreview) && !disabled;
+
+  useEffect(() => {
+    const exportable = versions.filter((version) => Boolean(version.outputUrl));
+    setSelectedVersionIds((current) => {
+      const retained = current.filter((id) => exportable.some((version) => version.id === id));
+      return retained.length ? retained : exportable.map((version) => version.id);
+    });
+    setVersionFileNames((current) => {
+      const next = { ...current };
+      exportable.forEach((version, index) => {
+        if (!next[version.id]) next[version.id] = `${safeProjectName}_外搭钩子_v${String(index + 1).padStart(2, "0")}`;
+      });
+      return next;
+    });
+  }, [safeProjectName, versions]);
 
   useEffect(() => {
     setReviewStatus(initialReviewStatus);
@@ -182,6 +203,8 @@ export function ExternalHookDelivery({
     resolution,
     quality,
     fileName: `${fileName.trim() || safeProjectName}.${format.toLowerCase()}`,
+    selectedVersionIds,
+    versionFileNames,
   };
   const submitExport = async () => {
     try {
@@ -252,14 +275,18 @@ export function ExternalHookDelivery({
         <section className={styles.card}>
           <div className={styles.cardTitle}><div><span>导出规格</span><h3>命名与交付设置</h3></div><b>9:16</b></div>
           <div className={styles.exportFields}>
-            <label><span>格式</span><select value={format} onChange={(event) => setFormat(event.target.value as DeliveryExportConfig["format"])}><option>MP4</option><option>MOV</option></select></label>
-            <label><span>分辨率</span><select value={resolution} onChange={(event) => setResolution(event.target.value as DeliveryExportConfig["resolution"])}><option>1080 × 1920</option><option>720 × 1280</option></select></label>
-            <label><span>质量</span><select value={quality} onChange={(event) => setQuality(event.target.value as DeliveryExportConfig["quality"])}><option>高质量</option><option>标准</option></select></label>
+            <label><span>格式</span><select value={format} disabled aria-label="格式（当前渲染规格）"><option>MP4</option></select></label>
+            <label><span>分辨率</span><select value={resolution} disabled aria-label="分辨率（当前渲染规格）"><option>1080 × 1920</option></select></label>
+            <label><span>质量</span><select value={quality} disabled aria-label="质量（当前渲染规格）"><option>高质量</option></select></label>
             <label className={styles.nameField}><span>文件名</span><div><input value={fileName} onChange={(event) => setFileName(event.target.value)} /><i>.{format.toLowerCase()}</i></div></label>
           </div>
+          {versions.some((version) => version.outputUrl) && <div className={styles.batchVersionNames}>
+            <header><div><b>批量导出版本</b><span>勾选版本并在前端分别命名</span></div><button type="button" onClick={()=>setSelectedVersionIds(selectedVersionIds.length===versions.filter(version=>version.outputUrl).length?[]:versions.filter(version=>version.outputUrl).map(version=>version.id))}>{selectedVersionIds.length===versions.filter(version=>version.outputUrl).length?"取消全选":"全选可导出版本"}</button></header>
+            {versions.filter(version=>version.outputUrl).map((version)=><label key={version.id}><input type="checkbox" checked={selectedVersionIds.includes(version.id)} onChange={()=>setSelectedVersionIds(current=>current.includes(version.id)?current.filter(id=>id!==version.id):[...current,version.id])}/><span>{version.label}</span><div><input value={versionFileNames[version.id]||""} onChange={(event)=>setVersionFileNames(current=>({...current,[version.id]:event.target.value}))}/><i>.{format.toLowerCase()}</i></div></label>)}
+          </div>}
           <div className={styles.exportActions}>
             <button type="button" onClick={() => { onSaveDraft?.(); onNotify?.("草稿与交付配置已保存"); }} disabled={disabled}>保存草稿</button>
-            <button className={styles.exportButton} type="button" onClick={() => void submitExport()} disabled={!canExport} title={!canExport ? "渲染服务尚未返回真实文件" : undefined}>批量导出 {Math.max(exportableVersionCount, hasPlayablePreview ? 1 : 0)} 个版本</button>
+            <button className={styles.exportButton} type="button" onClick={() => void submitExport()} disabled={!canExport || (versions.some(version=>version.outputUrl) && !selectedVersionIds.length)} title={!canExport ? "渲染服务尚未返回真实文件" : undefined}>批量导出 {versions.some(version=>version.outputUrl) ? selectedVersionIds.length : Math.max(exportableVersionCount, hasPlayablePreview ? 1 : 0)} 个版本</button>
           </div>
           {!canExport && <small className={styles.exportHint}>等待至少一个真实预览文件后开放批量导出</small>}
         </section>

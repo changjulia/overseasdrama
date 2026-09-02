@@ -6,6 +6,10 @@ const factorySource = await readFile(
   new URL("../app/features/factory/FactoryWorkspace.tsx", import.meta.url),
   "utf8",
 );
+const librarySource = await readFile(
+  new URL("../app/features/library/DramaLibraryWorkspace.tsx", import.meta.url),
+  "utf8",
+);
 
 test("keeps story-to-hook selection multi-select", () => {
   assert.match(
@@ -36,6 +40,17 @@ test("keeps story-to-hook selection multi-select", () => {
   );
 });
 
+test("resolves semantic highlight ranges back to persisted hook assets", () => {
+  assert.match(
+    librarySource,
+    /highlightAssetIds=record\.highlightCandidates\.filter\(asset=>asset\.episode===episode&&asset\.end>start&&asset\.start<end\)/,
+  );
+  assert.match(
+    factorySource,
+    /item\.highlightAssetIds\?\.length[\s\S]*?item\.highlightAssetIds[\s\S]*?item\.highlightAssetId \|\| String\(item\.id\)/,
+  );
+});
+
 test("matches each selected storyline with an isolated semantic context", () => {
   assert.match(
     factorySource,
@@ -58,10 +73,19 @@ test("persists per-storyline hook pairs and match caches", () => {
   assert.match(factorySource, /activeStorylineId/);
 });
 
+test("keeps polling a live match even if the request effect is remounted", () => {
+  const restoredPoll = factorySource.slice(
+    factorySource.indexOf("Switching between storylines restores"),
+    factorySource.indexOf("entryPollAttemptsRef.current", factorySource.indexOf("Switching between storylines restores")),
+  );
+  assert.doesNotMatch(restoredPoll, /matchRequestToken !== 0/);
+  assert.match(restoredPoll, /getHookMatchJob\(matchJob\.id/);
+});
+
 test("creates and exports an independent render for every ready storyline", () => {
   assert.match(
     factorySource,
-    /for \(const plan of selectedStorylinePlans\)[\s\S]*?saveFactoryProject\([\s\S]*?storylineId: plan\.id[\s\S]*?startFactoryRender\(project\.id\)/,
+    /for \(const plan of plansForProduction\)[\s\S]*?saveFactoryProject\([\s\S]*?storylineId: plan\.id[\s\S]*?startFactoryRender\(project\.id\)/,
   );
   assert.match(
     factorySource,
@@ -73,4 +97,14 @@ test("does not label tag retrieval as the final story or production verdict", ()
   assert.match(factorySource, /一对一钩子召回，不会把多个故事强行合并/);
   assert.match(factorySource, /matchingDimensions/);
   assert.match(factorySource, /productionGate/);
+});
+
+test("maps one event-graph storyline to one compact card with selectable entry points", () => {
+  assert.match(factorySource, /storylinePlanGrid/);
+  assert.match(factorySource, /plan\.entryPoints\.map/);
+  assert.match(factorySource, /storylineEntryPointIds\[plan\.id\]/);
+  assert.match(factorySource, /开场[\s\S]*发展[\s\S]*卡点/);
+  assert.match(factorySource, /查看详细依据/);
+  assert.match(factorySource, /片段证据[\s\S]*人物身份承接[\s\S]*语义因果承接/);
+  assert.doesNotMatch(factorySource, /该独立支线在当前“高光起播＋顺序后续2–3集”/);
 });

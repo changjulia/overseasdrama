@@ -163,7 +163,9 @@ function syncPrecisionHookAssets(app, job, envelope) {
     record.set("conflict", String(item.conflict || "")); record.set("emotion", String(item.emotion || "")); record.set("narrative_promise", String(item.narrativePromise || ""));
     record.set("information_gap", String(item.informationGap || "")); record.set("spoken_summary", String(item.spokenSummary || "")); record.set("visual_summary", String(item.visualSummary || ""));
     record.set("quality_scores", item.qualityScores || {}); record.set("evidence", item.evidence || []); record.set("analysis", item);
-    record.set("rights_status", drama.getString("copyright_status")); record.set("review_status", verified ? "pending" : "needs_review"); record.set("analysis_version", generation);
+    // Precision analysis owns edit-boundary review. Once both cut points are
+    // verified against complete actions, the highlight is ready downstream.
+    record.set("rights_status", drama.getString("copyright_status")); record.set("review_status", verified ? "approved" : "needs_review"); record.set("analysis_version", generation);
     app.save(record); created.push(record.id);
   });
   return created;

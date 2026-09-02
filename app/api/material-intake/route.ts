@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const PB_URL=(process.env.NEXT_PUBLIC_POCKETBASE_URL||"http://127.0.0.1:8090").replace(/\/$/,"");
+const PB_URL=(process.env.POCKETBASE_URL||process.env.NEXT_PUBLIC_POCKETBASE_URL||"http://127.0.0.1:8090").replace(/\/$/,"");
 
 function safeName(value:string){return (value.replace(/[\\/:*?"<>|]/g,"_").slice(0,100)||"remote-material")+".mp4"}
 function escapeFilter(value:string){return value.replace(/"/g,'\\"')}

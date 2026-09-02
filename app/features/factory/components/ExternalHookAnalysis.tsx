@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { formatDurationZh } from "../../../lib/time-format";
 import styles from "./ExternalHookAnalysis.module.css";
 
@@ -120,6 +120,10 @@ export type ExternalHookAnalysisProps = {
   activeTab?: ExternalHookAnalysisTab;
   selectedClipId?: string;
   disabled?: boolean;
+  hookVideoUrl?: string;
+  hookStartSeconds?: number;
+  hookEndSeconds?: number;
+  hookTitle?: string;
   onTabChange?: (tab: ExternalHookAnalysisTab) => void;
   onSelectRecommendation?: (recommendation: HighlightRecommendation) => void;
   onOverrideRecommendation?: (recommendation: HighlightRecommendation) => void;
@@ -158,6 +162,16 @@ const concise = (value?: string, length = 90) => {
   return text.length > length ? `${text.slice(0, length)}…` : text;
 };
 
+const analysisStageLabel = (stage?: string) =>
+  ({
+    interactive_queued: "等待交互分析 Worker",
+    queued: "等待交互分析 Worker",
+    prepare: "正在准备分析证据",
+    matching: "正在评估剧情承接关系",
+    entry_precision: "正在复核精确起播点",
+    completed: "分析已完成",
+  })[stage || ""] || stage || "正在验证故事承接与安全边界";
+
 const recommendationKey = (item: HighlightRecommendation) => {
   const narrative = item.storyArc?.displayNarrativeZh;
   return [
@@ -171,7 +185,7 @@ const recommendationKey = (item: HighlightRecommendation) => {
 const optionLabel = (index: number) => ["最推荐", "快速起播", "强冲突备选"][index] || "备选";
 
 const primaryRisk = (item: HighlightRecommendation) =>
-  item.productionGate?.reasons?.[0] || item.risks[0] || "未发现明确阻断；仍需预览连接点。";
+  item.risks[0] || item.productionGate?.advisories?.[0] || "分析完成，默认支持进入后续生产。";
 
 const comprehensionLabel = (item: HighlightRecommendation) => {
   const coverage = item.calibration?.evidenceCoverage ?? item.completeness?.causalCoverage;
@@ -213,6 +227,10 @@ export function ExternalHookAnalysis({
   activeTab,
   selectedClipId,
   disabled = false,
+  hookVideoUrl,
+  hookStartSeconds = 0,
+  hookEndSeconds,
+  hookTitle = "外搭钩子",
   onSelectRecommendation,
   onSelectEntryPoint,
   onRequestMoreEntryPoints,
@@ -233,6 +251,9 @@ export function ExternalHookAnalysis({
   const [internalRecommendationId, setInternalRecommendationId] = useState<string>();
   const [internalTransitionId, setInternalTransitionId] = useState<string>();
   const [internalClipId, setInternalClipId] = useState<string>();
+  const [connectionPreviewing, setConnectionPreviewing] = useState(false);
+  const hookPreviewRef = useRef<HTMLVideoElement>(null);
+  const episodePreviewRef = useRef<HTMLVideoElement>(null);
   const currentTab = activeTab ?? internalTab;
   const currentRecommendationId = match?.selectedRecommendationId ?? internalRecommendationId;
   const currentTransitionId = selectedTransitionId ?? internalTransitionId;
@@ -270,6 +291,20 @@ export function ExternalHookAnalysis({
     onSelectClip?.(clip);
   };
 
+  const previewConnection = () => {
+    if (!selectedTransition) return;
+    onPreviewTransition?.(selectedTransition);
+    const hookVideo = hookPreviewRef.current;
+    const episodeVideo = episodePreviewRef.current;
+    if (!hookVideo || !episodeVideo) return;
+    const hookEnd = hookEndSeconds ?? Math.max(hookStartSeconds + 3, hookVideo.duration || 0);
+    hookVideo.currentTime = Math.max(hookStartSeconds, hookEnd - 3);
+    episodeVideo.pause();
+    episodeVideo.currentTime = selectedRecommendation?.startSeconds ?? 0;
+    setConnectionPreviewing(true);
+    void hookVideo.play().catch(() => setConnectionPreviewing(false));
+  };
+
   return <section className={styles.analysis} aria-label="外搭钩子与本剧正片分析">
 
     {currentTab === "match" && <div className={styles.matchDecision}>
@@ -280,7 +315,7 @@ export function ExternalHookAnalysis({
       <div className={styles.decisionBody}>
       <aside className={styles.recommendationList}>
         <div className={styles.sectionTitle}><div><span>TOP OPTIONS</span><h3>可用正片方案</h3></div><em>最多 3 个</em></div>
-        {resultState === "running" ? <div className={styles.resultState}><EmptyState title="正在寻找正片起播点" detail={`${match?.stage || "正在验证故事承接与安全边界"}${match?.progress != null ? ` · ${Math.round(match.progress)}%` : ""}`} /></div> : resultState === "waiting_supplemental" ? <div className={styles.resultState}><EmptyState title="正在补充正片证据" detail="当前范围缺少足够的已验证片段。补充完成后会自动继续匹配。"/><div className={styles.stateActions}><button type="button" onClick={onRetryMatch}>刷新分析状态</button><button type="button" onClick={onChangeEpisodeScope}>调整剧集范围</button></div></div> : resultState === "failed"?<div className={styles.resultState}><EmptyState title="本轮匹配未完成" detail={match?.summary||"分析任务失败，当前结果不能用于选择正片。"}/><div className={styles.stateActions}><button type="button" onClick={onRetryMatch}>重新匹配</button><button type="button" onClick={onChangeEpisodeScope}>调整范围</button><button type="button" onClick={onChangeHook}>更换钩子</button></div></div>:recommendationPool.length ? recommendationPool.map((recommendation, index) => <button type="button" key={recommendation.id} className={`${styles.recommendation} ${selectedRecommendation?.id === recommendation.id ? styles.selected : ""}`} onClick={() => selectRecommendation(recommendation)}>
+        {resultState === "running" ? <div className={styles.resultState}><EmptyState title="正在寻找正片起播点" detail={`${analysisStageLabel(match?.stage)}${match?.progress != null ? ` · ${Math.round(match.progress)}%` : ""}`} /></div> : resultState === "waiting_supplemental" ? <div className={styles.resultState}><EmptyState title="正在补充正片证据" detail="当前范围缺少足够的已验证片段。补充完成后会自动继续匹配。"/><div className={styles.stateActions}><button type="button" onClick={onRetryMatch}>刷新分析状态</button><button type="button" onClick={onChangeEpisodeScope}>调整剧集范围</button></div></div> : resultState === "failed"?<div className={styles.resultState}><EmptyState title="本轮匹配未完成" detail={match?.summary||"分析任务失败，当前结果不能用于选择正片。"}/><div className={styles.stateActions}><button type="button" onClick={onRetryMatch}>重新匹配</button><button type="button" onClick={onChangeEpisodeScope}>调整范围</button><button type="button" onClick={onChangeHook}>更换钩子</button></div></div>:recommendationPool.length ? recommendationPool.map((recommendation, index) => <button type="button" key={recommendation.id} className={`${styles.recommendation} ${selectedRecommendation?.id === recommendation.id ? styles.selected : ""}`} onClick={() => selectRecommendation(recommendation)}>
           <span className={styles.rank}>{index + 1}</span>
           <span className={styles.recommendationCopy}><strong>{optionLabel(index)}</strong><b>{candidateTitle(recommendation.storyArc?.displayNarrativeZh?.title || recommendation.title)}</b><small>{episodeLabel(recommendation.episode)} · 从 {recommendation.startTimecode} 起播</small><em>{concise(recommendation.storyArc?.displayNarrativeZh?.bodyConnection || recommendation.rationale, 42) || "点击查看承接理由"}</em></span>
           <span className={styles.optionArrow}>›</span>
@@ -305,11 +340,11 @@ export function ExternalHookAnalysis({
       <div className={styles.decisionHeader}><div><span>连接预览</span><h2>确认钩子接到正片是否成立</h2><p>只处理必要连接，不生成多套相似过渡文案。</p></div></div>
       {selectedRecommendation && selectedTransition ? <>
         <div className={styles.connectionPreview}>
-          <article><small>钩子结尾</small><div className={styles.connectionFrame}>{selectedTransition.hookEndFrameUrl?<span className={styles.connectionFrameImage} role="img" aria-label="钩子末帧" style={{backgroundImage:`url(${selectedTransition.hookEndFrameUrl})`}}/>:<span>HOOK END</span>}</div><p>保留钩子最后一个完整事件。</p></article>
+          <article><small>钩子结尾</small>{hookVideoUrl?<video ref={hookPreviewRef} className={styles.connectionFrame} src={`${hookVideoUrl}#t=${hookStartSeconds}${hookEndSeconds != null ? `,${hookEndSeconds}` : ""}`} muted controls playsInline preload="metadata" aria-label={`${hookTitle} 钩子片段`} onTimeUpdate={event=>{if(hookEndSeconds!=null&&event.currentTarget.currentTime>=hookEndSeconds){event.currentTarget.pause();if(connectionPreviewing&&episodePreviewRef.current){episodePreviewRef.current.currentTime=selectedRecommendation.startSeconds??0;void episodePreviewRef.current.play().catch(()=>setConnectionPreviewing(false))}}}}/>:<div className={styles.connectionFrame}>{selectedTransition.hookEndFrameUrl?<span className={styles.connectionFrameImage} role="img" aria-label="钩子末帧" style={{backgroundImage:`url(${selectedTransition.hookEndFrameUrl})`}}/>:<span>钩子视频暂不可用</span>}</div>}<p>组合预览从钩子结尾前 3 秒开始。</p></article>
           <i>→</i>
-          <article className={styles.defaultTransition}><small>默认连接</small><b>{selectedTransition.title}</b>{selectedTransition.copy&&<blockquote>“{selectedTransition.copy}”</blockquote>}<p>{selectedTransition.rationale}</p><div><button type="button" onClick={()=>onPreviewTransition?.(selectedTransition)}>预览连接</button>{transitions.find(item=>item.id==="hard-cut")&&<button type="button" onClick={()=>selectTransition(transitions.find(item=>item.id==="hard-cut")!)}>不要过渡</button>}</div></article>
+          <article className={styles.defaultTransition}><small>直接切入</small><b>{selectedTransition.title}</b><div className={styles.transitionChoices}>{transitions.map(item=><button type="button" key={item.id} data-selected={item.id===selectedTransition.id} onClick={()=>selectTransition(item)}>{item.title}<em>{item.durationSeconds ? `${item.durationSeconds}秒` : "0秒"}</em></button>)}</div>{selectedTransition.copy&&<blockquote>“{selectedTransition.copy}”</blockquote>}<p>{selectedTransition.rationale}</p><dl className={styles.transitionFacts}><div><dt>节奏影响</dt><dd>{selectedTransition.durationSeconds===0?"无":selectedTransition.durationSeconds<=0.25?"极低":"低"}</dd></div><div><dt>适用条件</dt><dd>{selectedTransition.id==="hard-cut"?"冲突强、切点完整":"人物或场景跨度较大"}</dd></div></dl><div><button type="button" onClick={previewConnection}>{connectionPreviewing?"正在预览…":"预览：钩子末尾3秒＋正片5秒"}</button></div></article>
           <i>→</i>
-          <article><small>正片起播</small>{selectedRecommendation.videoUrl?<video className={styles.connectionFrame} src={`${selectedRecommendation.videoUrl}#t=${selectedRecommendation.startSeconds??0}`} muted controls playsInline preload="metadata"/>:<div className={styles.connectionFrame}><span>{episodeLabel(selectedRecommendation.episode)}<br/>{selectedRecommendation.startTimecode}</span></div>}<p>{displayNarrativeZh?.bodyConnection||selectedRecommendation.rationale}</p></article>
+          <article><small>正片起播</small>{selectedRecommendation.videoUrl?<video ref={episodePreviewRef} className={styles.connectionFrame} src={`${selectedRecommendation.videoUrl}#t=${selectedRecommendation.startSeconds??0}`} muted controls playsInline preload="metadata" onTimeUpdate={event=>{if(connectionPreviewing&&event.currentTarget.currentTime>=(selectedRecommendation.startSeconds??0)+5){event.currentTarget.pause();setConnectionPreviewing(false)}}}/>:<div className={styles.connectionFrame}><span>{episodeLabel(selectedRecommendation.episode)}<br/>{selectedRecommendation.startTimecode}</span></div>}<p>{displayNarrativeZh?.bodyConnection||selectedRecommendation.rationale}</p></article>
         </div>
         <section className={styles.blockerSection}><div className={styles.storyDetailHeading}><h4>继续生成前只检查严重问题</h4><p>人物误认、事实冲突、承诺冲突与切点断裂。</p></div>{quality?.findings.filter(item=>item.severity!=="通过"&&["连续性","承诺兑现","货不对板"].includes(item.category)).slice(0,4).length?<div className={styles.blockerList}>{quality?.findings.filter(item=>item.severity!=="通过"&&["连续性","承诺兑现","货不对板"].includes(item.category)).slice(0,4).map(item=><article key={item.id} data-severity={item.severity}><i>{item.severity==="阻断"?"×":"!"}</i><div><b>{item.title}</b><p>{item.detail}</p></div></article>)}</div>:<div className={styles.connectionPass}><i>✓</i><div><b>连接可以继续</b><p>未发现明显人物误认、事实冲突、承诺冲突或边界断裂。</p></div></div>}</section>
         <footer className={styles.connectionFooter}><button type="button" onClick={onChangeHook}>返回更换方案</button><button type="button" disabled={disabled||quality?.findings.some(item=>item.severity==="阻断")} onClick={onGeneratePreview}>确认连接并生成草稿</button></footer>

@@ -1812,6 +1812,18 @@ function HookAnalysisReview({ item }: { item: Material }) {
               </b>
             </div>
           </div>
+          <article>
+            <span>剧情设定</span>
+            <p>{plot}</p>
+          </article>
+          <article>
+            <span>声音与对白</span>
+            <p>{spoken}</p>
+          </article>
+          <article>
+            <span>画面与运镜</span>
+            <p>{visual}</p>
+          </article>
           <HookLabelPanel hook={hook} />
         </div>
         <aside className={styles.hookAnalysisPlayer}>

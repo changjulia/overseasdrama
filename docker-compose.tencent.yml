@@ -1,0 +1,179 @@
+name: lumina-production
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+      pocketbase:
+        condition: service_healthy
+    networks: [lumina]
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    restart: unless-stopped
+    environment:
+      POCKETBASE_URL: http://pocketbase:8090
+      LUMINA_FACTORY_RENDER_DIR: /app/dist/client/renders
+      EXTERNAL_OPEN_API_BASE_URL: ${EXTERNAL_OPEN_API_BASE_URL}
+      EXTERNAL_OPEN_API_KEY: ${EXTERNAL_OPEN_API_KEY}
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    networks: [lumina]
+    volumes:
+      - factory_renders:/app/dist/client/renders:ro
+    ports:
+      - "127.0.0.1:${LUMINA_WEB_PORT:-3200}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  pocketbase:
+    build:
+      context: .
+      dockerfile: Dockerfile.pocketbase
+      args:
+        POCKETBASE_VERSION: "0.39.9"
+    restart: unless-stopped
+    environment:
+      LUMINA_WORKER_TOKEN: ${LUMINA_WORKER_TOKEN}
+      LUMINA_UI_MODE: local-loopback
+    volumes:
+      - ./deploy/runtime/pb_data:/pb/pb_data
+    networks: [lumina]
+    ports:
+      - "127.0.0.1:${LUMINA_POCKETBASE_PORT:-8190}:8090"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8090/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    mem_limit: 2560m
+    memswap_limit: 3g
+    cpus: 1.5
+    environment:
+      NEXT_PUBLIC_POCKETBASE_URL: http://pocketbase:8090
+      LUMINA_WORKER_TOKEN: ${LUMINA_WORKER_TOKEN}
+      LUMINA_SEMANTIC_PROVIDER: ${LUMINA_SEMANTIC_PROVIDER:-openai-chat-completions}
+      LUMINA_SEMANTIC_ENDPOINT: ${LUMINA_SEMANTIC_ENDPOINT}
+      LUMINA_SEMANTIC_API_KEY: ${LUMINA_SEMANTIC_API_KEY}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LUMINA_SEMANTIC_MODEL: ${LUMINA_SEMANTIC_MODEL}
+      LUMINA_SEMANTIC_TIMEOUT: ${LUMINA_SEMANTIC_TIMEOUT:-90}
+      LUMINA_SEMANTIC_REQUEST_ATTEMPTS: ${LUMINA_SEMANTIC_REQUEST_ATTEMPTS:-1}
+      LUMINA_SEMANTIC_DEBUG: ${LUMINA_SEMANTIC_DEBUG:-false}
+      LUMINA_WHISPER_MODEL: ${LUMINA_WHISPER_MODEL:-small}
+      LUMINA_WHISPER_DEVICE: ${LUMINA_WHISPER_DEVICE:-cpu}
+      LUMINA_WHISPER_COMPUTE_TYPE: ${LUMINA_WHISPER_COMPUTE_TYPE:-int8}
+      LUMINA_WHISPER_CPU_THREADS: ${LUMINA_WHISPER_CPU_THREADS:-2}
+      LUMINA_OCR_LANGUAGE: ${LUMINA_OCR_LANGUAGE:-en}
+      LUMINA_OCR_WORKERS: ${LUMINA_OCR_WORKERS:-1}
+      LUMINA_QWEN_SEGMENT_WORKERS: ${LUMINA_QWEN_SEGMENT_WORKERS:-1}
+      LUMINA_MATERIAL_FRAME_INTERVAL: ${LUMINA_MATERIAL_FRAME_INTERVAL:-10}
+      LUMINA_MATERIAL_MAX_OCR_FRAMES: ${LUMINA_MATERIAL_MAX_OCR_FRAMES:-24}
+      LUMINA_MATERIAL_MAX_SEMANTIC_FRAMES: ${LUMINA_MATERIAL_MAX_SEMANTIC_FRAMES:-12}
+      LUMINA_TEMP_DIR: /work/tmp
+      LUMINA_FACTORY_RENDER_DIR: /shared/renders
+      TMPDIR: /work/tmp
+    volumes:
+      - worker_cache:/root/.cache
+      - worker_tmp:/work/tmp
+      - factory_renders:/shared/renders
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    networks: [lumina]
+
+  # Interactive matching, boundary refinement and factory renders must never
+  # wait behind long-running ingestion/OCR jobs handled by the mixed worker.
+  interactive-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    command:
+      - python
+      - -m
+      - processor.job_worker
+      - --base-url
+      - http://pocketbase:8090
+      - --queue
+      - material
+      - --worker-id
+      - tencent-sg-interactive-worker
+    restart: unless-stopped
+    mem_limit: 2048m
+    memswap_limit: 2560m
+    cpus: 1.0
+    environment:
+      NEXT_PUBLIC_POCKETBASE_URL: http://pocketbase:8090
+      LUMINA_WORKER_TOKEN: ${LUMINA_WORKER_TOKEN}
+      LUMINA_SEMANTIC_PROVIDER: ${LUMINA_SEMANTIC_PROVIDER:-openai-chat-completions}
+      LUMINA_SEMANTIC_ENDPOINT: ${LUMINA_SEMANTIC_ENDPOINT}
+      LUMINA_SEMANTIC_API_KEY: ${LUMINA_SEMANTIC_API_KEY}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LUMINA_SEMANTIC_MODEL: ${LUMINA_SEMANTIC_MODEL}
+      LUMINA_SEMANTIC_TIMEOUT: ${LUMINA_SEMANTIC_TIMEOUT:-90}
+      LUMINA_SEMANTIC_REQUEST_ATTEMPTS: ${LUMINA_SEMANTIC_REQUEST_ATTEMPTS:-1}
+      LUMINA_SEMANTIC_DEBUG: ${LUMINA_SEMANTIC_DEBUG:-false}
+      LUMINA_WHISPER_MODEL: ${LUMINA_WHISPER_MODEL:-small}
+      LUMINA_WHISPER_DEVICE: ${LUMINA_WHISPER_DEVICE:-cpu}
+      LUMINA_WHISPER_COMPUTE_TYPE: ${LUMINA_WHISPER_COMPUTE_TYPE:-int8}
+      LUMINA_WHISPER_CPU_THREADS: ${LUMINA_WHISPER_CPU_THREADS:-2}
+      LUMINA_OCR_LANGUAGE: ${LUMINA_OCR_LANGUAGE:-en}
+      LUMINA_OCR_WORKERS: ${LUMINA_OCR_WORKERS:-1}
+      LUMINA_QWEN_SEGMENT_WORKERS: ${LUMINA_QWEN_SEGMENT_WORKERS:-1}
+      LUMINA_MATERIAL_FRAME_INTERVAL: ${LUMINA_MATERIAL_FRAME_INTERVAL:-10}
+      LUMINA_MATERIAL_MAX_OCR_FRAMES: ${LUMINA_MATERIAL_MAX_OCR_FRAMES:-24}
+      LUMINA_MATERIAL_MAX_SEMANTIC_FRAMES: ${LUMINA_MATERIAL_MAX_SEMANTIC_FRAMES:-12}
+      LUMINA_INTERACTIVE_MATERIAL_FALLBACK: "0"
+      LUMINA_TEMP_DIR: /work/tmp
+      LUMINA_FACTORY_RENDER_DIR: /shared/renders
+      TMPDIR: /work/tmp
+    volumes:
+      - worker_cache:/root/.cache
+      - worker_tmp:/work/tmp
+      - factory_renders:/shared/renders
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    networks: [lumina]
+
+networks:
+  lumina:
+
+volumes:
+  caddy_data:
+  caddy_config:
+  worker_cache:
+  worker_tmp:
+  factory_renders:

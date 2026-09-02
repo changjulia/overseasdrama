@@ -260,6 +260,7 @@ export type FactorySourceContext = {
     event?: string;
     emotion?: string;
     highlightAssetId?: string;
+    highlightAssetIds?: string[];
     analysisVersion?: string;
     ontologyVersion?: string;
     matchContextHash?: string;

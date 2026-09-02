@@ -6,6 +6,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import os
 import shutil
 import sys
@@ -30,9 +31,36 @@ class ApiRequestError(RuntimeError):
         self.status = status
 
 
+class DownloadIntegrityError(RuntimeError):
+    """A remote media transfer did not produce one complete local file."""
+
+
 def classify_failure(exc: Exception) -> tuple[str, bool, int]:
     """Return error kind, retryability and exponential backoff seconds."""
     message = str(exc).lower()
+    if isinstance(exc, DownloadIntegrityError):
+        return "transient", True, 30
+    # Winsock messages can be localized or mojibake, leaving only the numeric
+    # code reliable. Match codes only with an explicit OS/socket prefix so an
+    # unrelated media value cannot become retryable. These codes mean network
+    # down/unreachable/reset, connection aborted/reset/timeout/refused.
+    winsock_interruptions = (10050, 10051, 10052, 10053, 10054, 10060, 10061)
+    if any(any(marker in message for marker in (
+        f"[errno {code}]", f"[winerror {code}]", f"[wsaerror {code}]",
+        f"socket error {code}", f"socket {code}",
+    )) for code in winsock_interruptions):
+        return "transient", True, 30
+    # Some ffprobe process failures return no diagnostic text at all. That is
+    # not evidence of permanent media corruption. The queue still caps retry
+    # attempts, so this remains a failure unless a later probe succeeds.
+    if message.strip() in {"ffprobe failed:", "ffprobe.exe failed:"}:
+        return "transient", True, 30
+    # Windows error 127 ("the specified procedure could not be found") can be
+    # raised while loading native ASR/OCR dependencies.  Under concurrent
+    # workers this is not evidence that the media itself is permanently bad;
+    # allow the queue's finite retry policy to recover it.
+    if "winerror 127" in message:
+        return "transient", True, 60
     permanent_markers = ("non full-range yuv", "invalid argument", "missing required executable", "missing material", "validation_invalid_value")
     if any(marker in message for marker in permanent_markers):
         return "media" if "yuv" in message or "ffmpeg" in message else "validation", False, 0
@@ -40,6 +68,8 @@ def classify_failure(exc: Exception) -> tuple[str, bool, int]:
         return "transient", True, 30
     if any(marker in message for marker in ("provider", "dashscope", "arrearage", "quota")):
         return "provider", True, 120
+    if any(marker in message for marker in ("输出契约可修复失败", "返回字段不完整", "缺少可验证的中文摘要", "missing_or_not_object", "basedonfactids")):
+        return "validation", True, 120
     return "permanent", False, 0
 
 
@@ -55,7 +85,18 @@ def _detail_frame_payload(path: Path) -> str:
 
 
 def api_request(base_url: str, token: str, path: str, method: str = "GET", payload: dict[str, Any] | None = None) -> tuple[int, dict[str, Any] | None]:
-    body = json.dumps(payload).encode("utf-8") if payload is not None else None
+    def json_safe(value: Any) -> Any:
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
+        if isinstance(value, dict):
+            return {str(key): json_safe(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [json_safe(item) for item in value]
+        return value
+
+    # PocketBase/Go rejects non-finite JSON numbers during marshal and can
+    # terminate the request path after a large analysis has already finished.
+    body = json.dumps(json_safe(payload), allow_nan=False).encode("utf-8") if payload is not None else None
     request = urllib.request.Request(f"{base_url.rstrip('/')}{path}", data=body, method=method, headers={"authorization": f"Bearer {token}", "content-type": "application/json"})
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
@@ -69,8 +110,50 @@ def api_request(base_url: str, token: str, path: str, method: str = "GET", paylo
 
 
 def download(url: str, destination: Path) -> None:
-    with urllib.request.urlopen(url, timeout=120) as response, destination.open("wb") as output:
-        shutil.copyfileobj(response, output, length=1024 * 1024)
+    """Download one complete response before atomically publishing the file."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix=f".{destination.name}.", suffix=".part", dir=destination.parent, delete=False) as output:
+            temporary = Path(output.name)
+            with urllib.request.urlopen(url, timeout=120) as response:
+                raw_length = response.headers.get("Content-Length") if response.headers is not None else None
+                expected = None
+                if raw_length not in (None, ""):
+                    try:
+                        expected = int(raw_length)
+                    except (TypeError, ValueError) as exc:
+                        raise DownloadIntegrityError("remote media returned an invalid content length") from exc
+                    if expected < 0:
+                        raise DownloadIntegrityError("remote media returned an invalid content length")
+                written = 0
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    count = output.write(chunk)
+                    if count != len(chunk):
+                        raise DownloadIntegrityError("local media write was incomplete")
+                    written += count
+                    if expected is not None and written > expected:
+                        raise DownloadIntegrityError("remote media exceeded its declared content length")
+                if written == 0:
+                    raise DownloadIntegrityError("remote media response was empty")
+                if expected is not None and written != expected:
+                    raise DownloadIntegrityError("remote media ended before its declared content length")
+                output.flush()
+                os.fsync(output.fileno())
+        os.replace(temporary, destination)
+        temporary = None
+    except DownloadIntegrityError:
+        raise
+    except Exception as exc:
+        # Provider exceptions may embed the signed URL. Expose only the error
+        # type so queue reports and logs cannot persist credentials.
+        raise DownloadIntegrityError(f"remote media download failed ({type(exc).__name__})") from exc
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def envelope_from_dict(value: dict[str, Any]) -> AnalysisEnvelope:
@@ -602,10 +685,13 @@ def process_available(base_url: str, token: str, worker_id: str, queue: str = "b
     """Process only the configured queue so long jobs cannot starve each other."""
     if queue == "drama":
         return process_one_endpoint(base_url, token, worker_id, "/api/lumina/analysis", "drama", job_id=job_id)
+    if queue == "material-batch":
+        return process_one_endpoint(base_url, token, worker_id, "/api/lumina/material-analysis", "material", optional=True, job_id=job_id)
     if queue == "material":
         # Interactive production jobs must not wait behind an arbitrary backlog
-        # of ingestion analysis. Serve the user's active chain first, then use
-        # idle capacity for supplemental and ordinary material work.
+        # of ingestion analysis. Serve only the user's active chain by default;
+        # batch ingestion has its own material-batch workers and may be paused
+        # independently. An explicit opt-in retains the old idle fallback.
         # An explicit id can belong to any interactive material-side queue.
         # Probe every queue in priority order; each claim endpoint returns 204
         # when the id is not present there. Previously --job-id skipped all
@@ -615,7 +701,8 @@ def process_available(base_url: str, token: str, worker_id: str, queue: str = "b
         entry_precision = not hook_match and process_one_endpoint(base_url, token, worker_id, "/api/lumina/entry-precision", "entry_precision", optional=True, job_id=job_id)
         factory_render = not hook_match and not entry_precision and process_one_endpoint(base_url, token, worker_id, "/api/lumina/factory-render", "factory_render", optional=True, job_id=job_id)
         supplemental = not hook_match and not entry_precision and not factory_render and process_one_endpoint(base_url, token, worker_id, "/api/lumina/supplemental-highlights", "supplemental_highlight", optional=True, job_id=job_id)
-        material = not hook_match and not entry_precision and not factory_render and not supplemental and process_one_endpoint(base_url, token, worker_id, "/api/lumina/material-analysis", "material", optional=True, job_id=job_id)
+        fallback_enabled = os.environ.get("LUMINA_INTERACTIVE_MATERIAL_FALLBACK", "").strip() == "1"
+        material = fallback_enabled and not hook_match and not entry_precision and not factory_render and not supplemental and process_one_endpoint(base_url, token, worker_id, "/api/lumina/material-analysis", "material", optional=True, job_id=job_id)
         return material or supplemental or hook_match or entry_precision or factory_render
     if job_id:
         raise ValueError("--job-id requires --queue drama or --queue material")
@@ -633,7 +720,7 @@ def main() -> None:
     parser.add_argument("--base-url", default=os.environ.get("NEXT_PUBLIC_POCKETBASE_URL", "http://127.0.0.1:8090"))
     parser.add_argument("--token", default=os.environ.get("LUMINA_WORKER_TOKEN"))
     parser.add_argument("--worker-id", default=f"media-worker-{os.getpid()}")
-    parser.add_argument("--queue", choices=("drama", "material", "both"), default=os.environ.get("LUMINA_WORKER_QUEUE", "both"))
+    parser.add_argument("--queue", choices=("drama", "material", "material-batch", "both"), default=os.environ.get("LUMINA_WORKER_QUEUE", "both"))
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--job-id", help="Claim one exact job; requires --queue drama or material")
     parser.add_argument("--poll-seconds", type=float, default=3.0)

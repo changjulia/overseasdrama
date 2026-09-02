@@ -1,0 +1,24 @@
+FROM python:3.11-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    FLAGS_use_mkldnn=0 \
+    OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY processor/requirements-analysis.txt ./processor/requirements-analysis.txt
+RUN python -m pip install --upgrade pip \
+    && python -m pip install -r processor/requirements-analysis.txt
+
+COPY processor ./processor
+COPY shared ./shared
+
+CMD ["python", "-m", "processor.job_worker", "--base-url", "http://pocketbase:8090", "--queue", "both", "--worker-id", "tencent-sg-worker"]

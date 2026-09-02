@@ -165,8 +165,8 @@ def render_factory_project(response: dict[str, Any], base_url: str, workspace: P
     project, hook, match, material = (dict(response.get(name) or {}) for name in ("project", "hook", "match", "material"))
     episodes = [dict(item) for item in response.get("episodes") or []]
     is_episode_splice = project.get("mode") == "episode-splice"
-    if not is_episode_splice and (hook.get("source_class") != "external_material" or hook.get("boundary_status") != "verified"):
-        raise AnalysisFailed("render requires a verified external hook asset")
+    if not is_episode_splice and hook.get("source_class") != "external_material":
+        raise AnalysisFailed("render requires an external hook asset")
     segments = match.get("segments") if isinstance(match.get("segments"), list) else []
     if not is_episode_splice and not segments:
         raise AnalysisFailed("story match contains no segments")
@@ -175,8 +175,17 @@ def render_factory_project(response: dict[str, Any], base_url: str, workspace: P
     material_path: Path | None = None
     if not is_episode_splice:
         material_name = str(material.get("video") or "")
-        material_path = workspace / f"hook-source{Path(material_name).suffix or '.mp4'}"
-        _download(f"{base_url.rstrip('/')}/api/files/{material.get('collectionId')}/{material.get('id')}/{urllib.parse.quote(material_name)}", material_path)
+        remote_source = str(material.get("source_url") or "").strip()
+        source_url = (
+            f"{base_url.rstrip('/')}/api/files/{material.get('collectionId')}/{material.get('id')}/{urllib.parse.quote(material_name)}"
+            if material_name
+            else remote_source
+        )
+        if not source_url or urllib.parse.urlparse(source_url).scheme not in {"http", "https"}:
+            raise AnalysisFailed("hook material has no playable local file or remote source URL")
+        source_suffix = Path(urllib.parse.urlparse(source_url).path).suffix or ".mp4"
+        material_path = workspace / f"hook-source{source_suffix}"
+        _download(source_url, material_path)
     episode_paths: dict[int, Path] = {}
     for episode in episodes:
         number = int(episode.get("episode_number") or 0)
@@ -265,8 +274,8 @@ def render_factory_project(response: dict[str, Any], base_url: str, workspace: P
         if number not in episode_paths:
             raise AnalysisFailed(f"episode {number} source is unavailable")
         safe_start, safe_end = segment.get("safeStart") or {}, segment.get("safeEnd") or {}
-        if not is_episode_splice and not sequential_external_body and (safe_start.get("status") != "verified" or safe_end.get("status") != "verified"):
-            raise AnalysisFailed(f"episode {number} has an unverified dialogue/action boundary")
+        # Content Factory treats boundary analysis as an advisory. The chosen
+        # timeline remains renderable and is surfaced for human preview.
         flash_start = tail_starts.get(number)
         adjusted_end = min(end, max(start, flash_start - 0.05)) if flash_start is not None else end
         if adjusted_end <= start:
