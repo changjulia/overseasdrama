@@ -29,6 +29,7 @@ $logs = @(
   @{ Queue = "drama"; Instance = ""; Output = ".analysis-worker-drama.stdout.log"; Error = ".analysis-worker-drama.stderr.log" },
   @{ Queue = "material"; Instance = ""; Output = ".analysis-worker-material.stdout.log"; Error = ".analysis-worker-material.stderr.log" },
   @{ Queue = "material"; Instance = "interactive"; Output = ".analysis-worker-material-interactive.stdout.log"; Error = ".analysis-worker-material-interactive.stderr.log" }
+  @{ Queue = "material"; Instance = "interactive2"; Output = ".analysis-worker-material-interactive2.stdout.log"; Error = ".analysis-worker-material-interactive2.stderr.log" }
 )
 try {
   while ($true) {

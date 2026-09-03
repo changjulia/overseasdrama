@@ -9,32 +9,44 @@ function authorizeWorker(e) {
 }
 
 function authorizeUi(e) {
-  const origin = String(e.requestInfo().headers.origin || "");
-  const host = String(e.requestInfo().headers.host || "");
-  const headers = e.requestInfo().headers;
-  const localUiHeader = String(
-    headers["x-lumina-ui"] || headers["X-Lumina-Ui"] || "",
-  );
+  const requestInfo = e.requestInfo();
+  const headers = (requestInfo && requestInfo.headers) || {};
+  const rawHeader = e.request && e.request.header;
+  const header = (name) => {
+    const lowerName = String(name || "").toLowerCase();
+    const matchingKey = Object.keys(headers).find(
+      (key) => String(key).toLowerCase() === lowerName,
+    );
+    if (matchingKey && headers[matchingKey] != null)
+      return String(headers[matchingKey]);
+    if (rawHeader && typeof rawHeader.get === "function") {
+      const value = rawHeader.get(name);
+      if (value != null) return String(value);
+    }
+    return "";
+  };
+  const origin = header("origin").trim().replace(/\/$/, "");
+  // Go promotes Host out of the Header map for inbound requests.
+  const host = String((e.request && e.request.host) || header("host") || "").trim();
+  const localUiHeader = header("x-lumina-ui");
   const browserOriginAllowed =
-    /^https?:\/\/(localhost|127\.0\.0\.1):(300[0-9]|8090)$/i.test(origin);
+    /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i.test(origin);
+  const localHostAllowed =
+    /^(localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/i.test(host);
   const configuredOrigins = String($os.getenv("LUMINA_UI_ORIGINS") || "")
     .split(",")
     .map((value) => value.trim().replace(/\/$/, ""))
     .filter(Boolean);
-  const configuredOriginAllowed = configuredOrigins.includes(
-    origin.replace(/\/$/, ""),
-  );
+  const configuredOriginAllowed = configuredOrigins.includes(origin);
   // Vite's same-origin /pb proxy may omit Origin after proxying. In that case
-  // only accept a request that still terminates on the local PocketBase host.
-  // Requests without Origin come from the local reverse proxy or CLI. The
-  // PocketBase process itself is bound to loopback by the launcher.
-  const localProxyAllowed = !origin;
-  if (
-    !browserOriginAllowed &&
-    !configuredOriginAllowed &&
-    !localProxyAllowed &&
-    localUiHeader !== "local"
-  )
+  // require both the proxy marker and a loopback Host. The marker alone is not
+  // an authorization boundary because any HTTP client can forge it.
+  const localUiAllowed =
+    $os.getenv("LUMINA_UI_MODE") === "local-loopback" &&
+    localHostAllowed &&
+    localUiHeader === "local" &&
+    (!origin || browserOriginAllowed);
+  if (!localUiAllowed && !configuredOriginAllowed)
     throw new ForbiddenError("Local UI only");
 }
 
@@ -243,6 +255,97 @@ function semanticTokens(value) {
   return output;
 }
 
+// PocketBase hooks run in Goja and cannot import the TypeScript ontology
+// module used by the UI. This code-based adapter makes the same relationship
+// contract effective in server-side retrieval. Tags remain recall-only.
+const ONTOLOGY_DIMENSIONS = ["genre", "theme", "role", "relation", "conflict", "emotion", "storyBeat", "scene", "audience", "acquisition"];
+const ONTOLOGY_PARENTS = {
+  "theme.复仇": "theme.阶层逆袭", "theme.女性独立": "theme.成长",
+  "theme.契约婚姻": "theme.家族", "role.男主": "role.主角",
+  "role.女主": "role.主角", "role.反派": "role.配角",
+  "relation.夫妻": "relation.恋人", "storyBeat.打脸": "storyBeat.危机",
+  "acquisition.身份揭示": "acquisition.信息差",
+};
+const ONTOLOGY_RELATED = new Set([
+  "conflict.复仇对抗|theme.复仇", "storyBeat.反转|theme.重生",
+  "conflict.身份误会|storyBeat.误会", "emotion.爽感|storyBeat.打脸",
+  "conflict.生存危机|emotion.紧张", "acquisition.悬念预告|storyBeat.开场钩子",
+]);
+const ONTOLOGY_CONTRADICTS = new Set([
+  "audience.女性向|audience.男性向", "emotion.甜蜜|emotion.虐",
+  "relation.敌对|relation.盟友",
+]);
+const ONTOLOGY_ALIASES = {
+  revenge: "theme.复仇", "身份逆转": "theme.身份反转",
+  "femaleempowerment": "theme.女性独立", "fightback": "storyBeat.反击",
+  counterattack: "storyBeat.反击", spouses: "relation.夫妻",
+  married: "relation.夫妻", lovers: "relation.恋人",
+  enemies: "relation.敌对", allies: "relation.盟友",
+  anger: "emotion.愤怒", tension: "emotion.紧张", suspense: "acquisition.悬念预告",
+};
+function ontologyKey(value) {
+  return String(value || "").normalize("NFKC").trim().toLowerCase().replace(/[\s_]+/g, "");
+}
+function ontologyTag(value, fallbackDimension) {
+  if (value == null) return null;
+  const row = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  if (row.manualStatus === "rejected") return null;
+  const suppliedCode = String(row.code || "").trim();
+  if (/^[^.]+\..+/.test(suppliedCode)) return { code: suppliedCode, dimension: suppliedCode.split(".")[0], known: true };
+  const label = String(row.label || row.value || row.original || value || "").trim();
+  if (!label) return null;
+  const aliasCode = ONTOLOGY_ALIASES[ontologyKey(label)];
+  if (aliasCode) return { code: aliasCode, dimension: aliasCode.split(".")[0], known: true };
+  const dimension = ONTOLOGY_DIMENSIONS.includes(String(row.dimension || "")) ? String(row.dimension) : String(fallbackDimension || "theme");
+  // Free-form labels are lossless but are not treated as ontology-known merely
+  // because a fallback dimension was supplied.
+  return { code: `${dimension}.${label}`, dimension, known: false };
+}
+function ontologyTagsFrom(value, fallbackDimension) {
+  return (Array.isArray(value) ? value : value == null ? [] : [value]).map((item) => ontologyTag(item, fallbackDimension)).filter(Boolean);
+}
+function ontologyPairKey(left, right) {
+  return left < right ? `${left}|${right}` : `${right}|${left}`;
+}
+function ontologyRelation(left, right) {
+  if (left.code === right.code) return "exact";
+  const pair = ontologyPairKey(left.code, right.code);
+  if (ONTOLOGY_CONTRADICTS.has(pair)) return "contradictory";
+  if (ONTOLOGY_RELATED.has(pair)) return "bridgeable";
+  if (ONTOLOGY_PARENTS[left.code] === right.code || ONTOLOGY_PARENTS[right.code] === left.code) return "compatible";
+  if (!left.known || !right.known) return "unknown";
+  return left.dimension === right.dimension ? "compatible" : "unknown";
+}
+function ontologyProfile(value) {
+  const row = value && typeof value === "object" ? value : {};
+  return [
+    ...ontologyTagsFrom(row.ontology_tags || row.ontologyTags),
+    ...ontologyTagsFrom(row.themes, "theme"),
+    ...ontologyTagsFrom(row.content_tags || row.contentTags, "acquisition"),
+    ...ontologyTagsFrom(row.relationships || row.relationshipState, "relation"),
+    ...ontologyTagsFrom(row.conflict, "conflict"),
+    ...ontologyTagsFrom(row.emotion, "emotion"),
+  ].filter((item, index, values) => values.findIndex((other) => other.code === item.code) === index);
+}
+function compareOntologyProfiles(leftValue, rightValue) {
+  const left = ontologyProfile(leftValue), right = ontologyProfile(rightValue);
+  const pairs = { exact: [], compatible: [], bridgeable: [], contradictory: [], unknown: [] };
+  left.forEach((a) => right.forEach((b) => pairs[ontologyRelation(a, b)].push({ left: a.code, right: b.code })));
+  const hardConflicts = [...new Set(pairs.contradictory.map((item) => ontologyPairKey(item.left, item.right)))];
+  const denominator = Math.max(1, Math.min(left.length, right.length));
+  const positive = pairs.exact.length + pairs.compatible.length * 0.55 + pairs.bridgeable.length * 0.15;
+  const score = Math.max(-1, Math.min(1, (positive - pairs.contradictory.length) / denominator));
+  return {
+    stage: "recall_only",
+    decision: hardConflicts.length ? "blocked" : positive > 0 ? "allow_recall" : "needs_evidence",
+    relation: hardConflicts.length ? "contradictory" : pairs.exact.length ? "exact" : pairs.compatible.length ? "compatible" : pairs.bridgeable.length ? "bridgeable" : "unknown",
+    score: Math.round(score * 1000) / 1000,
+    productionEligible: false,
+    hardConflicts,
+    matches: pairs,
+  };
+}
+
 function deriveStoryNeed(drama, episodes, deliveryGoal) {
   const rows = Array.isArray(episodes) ? episodes : [];
   const summaries = [],
@@ -368,6 +471,8 @@ function deriveStoryNeed(drama, episodes, deliveryGoal) {
   ];
   return {
     contractVersion: "lumina-semantic-contract-v1.1",
+    dramaId: String((drama && drama.id) || ""),
+    dramaTitle: String((drama && drama.title) || ""),
     corePlot,
     protagonistGoal: "待从当前范围人物行动与对白证据中确认",
     relationshipState: [...new Set(relationships.filter(Boolean))].slice(0, 12),
@@ -407,15 +512,87 @@ function deriveStoryNeed(drama, episodes, deliveryGoal) {
   };
 }
 
+function storylineClauseKey(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[\s，。！？、：:;；'"“”‘’()（）·.\-]/g, "");
+}
+
+function isStorylineVisualNoise(value) {
+  const text = String(value || "").trim();
+  return /^(画面中|镜头中|视频中|可以看到|一位|一名).*(身穿|站在|坐在|神情|表情|背景|对视|似乎|画面)/.test(text) ||
+    /(点击|观看)(下方|大结局)|不用下载|画面结束|背景为|镜头切换|无对话.*(?:动作|表情|视觉)/.test(text);
+}
+
+function storylineEventSummary(value, maximumClauses, maximumLength) {
+  const seen = new Set();
+  const clauses = String(value || "")
+    .split(/\s*(?:；|。|\n)+\s*/)
+    .map((item) => normalizedDramaTerm(item).replace(/^[-—·]+|[-—·]+$/g, "").trim())
+    .filter((item) => {
+      const key = storylineClauseKey(item);
+      if (!key || key.length < 3 || seen.has(key) || isStorylineVisualNoise(item)) return false;
+      seen.add(key);
+      return true;
+    });
+  const actionSignals = /拒绝|背叛|发现|揭露|承认|隐瞒|杀|死|救|威胁|反击|打败|决定|离开|寻找|保护|对抗|破裂|臣服/;
+  const subjectSignals = /主角|母亲|父亲|女儿|首领|公主|阿尔法|西尔瓦斯|埃琳娜|月石|项链|狼群|身份|血脉/;
+  const clauseScore = (text) =>
+    (actionSignals.test(text) ? 30 : 0) +
+    (subjectSignals.test(text) ? 24 : 0) +
+    Math.min(24, text.length) -
+    (text.length < 10 ? 18 : 0);
+  clauses.sort((left, right) => clauseScore(right) - clauseScore(left));
+  const selected = clauses.slice(0, Math.max(1, Number(maximumClauses) || 2));
+  let summary = selected.join("；");
+  const limit = Math.max(24, Number(maximumLength) || 76);
+  if (summary.length > limit) summary = `${summary.slice(0, limit).replace(/[，、；：:]?[^，、；：:]{0,8}$/, "")}…`;
+  return summary || "本集关键事件尚待人工确认";
+}
+
+function storylineSpecificQuestion(first, last, mode) {
+  const opening = storylineEventSummary(first && first.plot, 1, 24);
+  const ending = storylineEventSummary(last && last.plot, 1, 24);
+  if (mode === "impact") return `“${opening}”会引发怎样的正面冲突？`;
+  if (mode === "context") return `人物关系为何从“${opening}”走向“${ending}”？`;
+  if (mode === "awakening") return `经历“${opening}”后，主角会如何改变命运？`;
+  return `“${opening}”与“${ending}”之间隐藏着什么真相？`;
+}
+
+function storylineNarrativeQuality(item) {
+  const text = String((item && item.plot) || "");
+  if (!text || /尚待人工确认|按原片顺序完整承接/.test(text)) return 20;
+  let score = 38;
+  if (/主角|母亲|父亲|女儿|首领|公主|阿尔法|西尔瓦斯|埃琳娜/.test(text)) score += 18;
+  if (/拒绝|背叛|发现|揭露|隐瞒|反击|决定|寻找|保护|对抗|破裂|臣服/.test(text)) score += 20;
+  if (text.length >= 20) score += 12;
+  if (item && item.relationships && item.relationships.length) score += 6;
+  if (isStorylineVisualNoise(text)) score -= 30;
+  if (text.length < 12 || /^[‘'"“].*[’'"”]?[！!?]?$/.test(text)) score -= 18;
+  return Math.max(0, Math.min(100, score));
+}
+
 function generateLegacyStorylinePlans(
   drama,
   episodes,
   deliveryGoal,
   targetDurationSeconds,
   selectedHighlightIds,
+  variationIndex,
 ) {
   const rows = Array.isArray(episodes) ? episodes : [];
-  const target = Math.max(60, Number(targetDurationSeconds || 900));
+  // Reserve the maximum 60-second external hook so a generated production
+  // route cannot make the finished film exceed the 15-minute delivery cap.
+  const minimumBodySeconds = 300;
+  const maximumBodySeconds = 900 - 60;
+  const requestedTarget = Number(targetDurationSeconds || maximumBodySeconds);
+  const target = Math.max(
+    minimumBodySeconds,
+    Math.min(
+      maximumBodySeconds,
+      Number.isFinite(requestedTarget) ? requestedTarget : maximumBodySeconds,
+    ),
+  );
   const selectedHighlightIdSet = new Set(
     (Array.isArray(selectedHighlightIds) ? selectedHighlightIds : [])
       .map(String)
@@ -525,12 +702,11 @@ function generateLegacyStorylinePlans(
           });
       });
     });
+    // Keep all analyzed highlights as evidence for the downstream full
+    // episodes. `selectedHighlightIds` constrains opening anchors below; it
+    // must not erase the real evidence used to describe the continuation.
     const sourceHighlights = Array.isArray(episode && episode.highlights)
-      ? episode.highlights.filter(
-          (item) =>
-            !selectedHighlightIdSet.size ||
-            selectedHighlightIdSet.has(String((item && item.id) || "")),
-        )
+      ? episode.highlights.slice()
       : [];
     // Coarse analysis already contains timestamped transcript evidence. It is
     // usable for storyline ideation even before a reviewer creates a persisted
@@ -559,8 +735,10 @@ function generateLegacyStorylinePlans(
           start_seconds: start,
           end_seconds: end,
           spoken_summary: spoken,
-          conflict: "对白推动剧情冲突",
-          information_gap: "这段冲突接下来会造成什么结果？",
+          conflict: /拒绝|背叛|滚|杀|死|威胁|对抗|打败|不许|不能|为什么|怎么办/.test(spoken)
+            ? "对白存在明确对抗"
+            : "",
+          information_gap: "",
           evidence: chunk.map((item) => ({
             source: "transcript",
             text: String(item.text || ""),
@@ -604,11 +782,11 @@ function generateLegacyStorylinePlans(
         ? candidateDescriptions[provisionalIndex % candidateDescriptions.length]
         : null;
       const plot = translations.length
-        ? translations.join("；")
+        ? storylineEventSummary(translations.join("；"), 2, 82)
         : /[\u3400-\u9fff]/.test(sourcePlot)
-          ? sourcePlot
+          ? storylineEventSummary(sourcePlot, 2, 82)
           : candidateContext
-            ? `${candidateContext.name}：${candidateContext.description}`
+            ? storylineEventSummary(`${candidateContext.name}：${candidateContext.description}`, 1, 82)
             : `第${episodeNumber}集${Math.floor(start / 60)}分${Math.round(start % 60)}秒存在带时间戳的原语对白，剧情语义待进一步复核`;
       if (
         !episodeNumber ||
@@ -642,6 +820,7 @@ function generateLegacyStorylinePlans(
         contentTags: Array.isArray(item.content_tags)
           ? item.content_tags.map(String)
           : [],
+        ontologyTags: Array.isArray(item.ontology_tags) ? item.ontology_tags : [],
         evidence: Array.isArray(item.evidence) ? item.evidence : [],
         analysisVersion: String(item.analysis_version || "unknown"),
         safeStart: item.safe_start || {},
@@ -698,6 +877,11 @@ function generateLegacyStorylinePlans(
     );
     if (
       !segments.length ||
+      (productionSequential &&
+        (segments.length < 3 ||
+          segments.length > 4 ||
+          duration(segments) < minimumBodySeconds ||
+          duration(segments) > maximumBodySeconds)) ||
       (!productionSequential && duration(segments) > target * 1.15)
     )
       return;
@@ -710,17 +894,8 @@ function generateLegacyStorylinePlans(
           `${item.episode}:${item.start.toFixed(2)}-${item.end.toFixed(2)}`,
       )
       .join("|");
-    const key = `${scriptMode}|${routeKey}`;
+    const key = routeKey;
     if (unique.has(key)) return;
-    const tokens = semanticTokens(
-      segments.map((item) => [
-        item.plot,
-        item.conflict,
-        item.emotion,
-        item.question,
-        item.promise,
-      ]),
-    );
     const conflicts = segments.filter((item) => item.conflict).length;
     const questions = segments.filter(
       (item) => item.question || item.promise,
@@ -781,7 +956,11 @@ function generateLegacyStorylinePlans(
       100,
       35 + segments.length * 9 + (crossEpisode ? 12 : 0),
     );
-    const calculatedScore = Math.round(
+    const noiseCount = segments.filter((item) => isStorylineVisualNoise(item.plot)).length;
+    const distinctEventTokens = new Set(
+      segments.flatMap((item) => semanticTokens(storylineEventSummary(item.plot, 2, 82))),
+    ).size;
+    const calculatedScore = Math.max(0, Math.min(100, Math.round(
       openingStrength * 0.2 +
         conflictDensity * 0.15 +
         emotionalProgression * 0.12 +
@@ -789,29 +968,33 @@ function generateLegacyStorylinePlans(
         payoffStrength * 0.12 +
         continuity * 0.11 +
         evidenceAccuracy * 0.07 +
-        breadth * 0.05,
-    );
+        breadth * 0.05 +
+        Math.min(6, distinctEventTokens / 5) -
+        noiseCount * 5,
+    )));
     if (!productionSequential && (calculatedScore < 52 || evidenceAccuracy < 50))
       return;
-    // Sequential production eligibility is determined by playable source
-    // continuity, not by an advisory acquisition-model threshold. Keep a
-    // comparable floor only for ranking/display purposes.
-    const score = productionSequential
-      ? Math.max(52, calculatedScore)
-      : calculatedScore;
     const first = segments[0],
       last = segments[segments.length - 1];
+    // Sequential production eligibility is determined by playable source
+    // continuity. The displayed score remains fully evidence-derived instead
+    // of being replaced with a title-specific or production-floor constant.
+    const score = Math.max(0, Math.min(96, Math.round(
+      calculatedScore * 0.72 +
+      storylineNarrativeQuality(first) * 0.18 +
+      storylineNarrativeQuality(last) * 0.1,
+    )));
     const compactSummary = compactPlot(
       segments.map((item) => item.plot),
       12,
     );
-    const audienceQuestion = String(
-      (options && options.audienceQuestion) ||
-        first.question ||
-        first.promise ||
-        last.question ||
-        "观众将如何理解并等待后续结果？",
-    );
+    const suppliedQuestion = String(
+      first.question || first.promise || last.question || "",
+    ).trim();
+    const audienceQuestion = suppliedQuestion &&
+      !/这段冲突|当前信息差|接下来|最终会如何|观众将如何/.test(suppliedQuestion)
+      ? storylineEventSummary(suppliedQuestion, 1, 48)
+      : storylineSpecificQuestion(first, last, scriptMode);
     const openingEvent = shortBeat(compactPlot(first.plot, 2) || first.plot, 22);
     const stagePayoff = shortBeat(compactPlot(last.plot, 2) || last.plot, 22);
     const conciseSummary = `从「${openingEvent}」切入，沿原剧因果推进至「${stagePayoff}」`;
@@ -819,8 +1002,11 @@ function generateLegacyStorylinePlans(
       (options && options.hookPurpose) ||
         (first.question ? "悬念强化" : conflicts ? "冲突强化" : "人物背景"),
     );
+    const planId = `storyline-${contextHash({ drama: drama && drama.id, key, chronology })}`;
+    const openingEvidenceStatus = evidenceState(first.evidence);
     unique.set(key, {
-      id: `storyline-${contextHash({ drama: drama && drama.id, key, chronology, strategyType })}`,
+      id: planId,
+      parentHighlightAssetId: String(first.sourceHighlightId || first.id || ""),
       title: `${strategyType}｜${openingEvent} → ${stagePayoff}`,
       strategyType,
       chronology,
@@ -850,11 +1036,28 @@ function generateLegacyStorylinePlans(
           ? "全部节点带真实素材证据"
           : "部分节点证据较弱",
       ],
+      entryPoints: [
+        {
+          id: `${planId}-entry-1`,
+          eventId: String(first.sourceHighlightId || first.id || ""),
+          episode: first.episode,
+          start: first.start,
+          end: Number(first.openingEnd || first.start),
+          label: "推荐起播",
+          evidenceStatus: openingEvidenceStatus,
+        },
+      ],
       segments: segments.map((item, index) => ({
         episode: item.episode,
         start: item.start,
         end: item.end,
         plot: item.plot,
+        themes: item.themes,
+        contentTags: item.contentTags,
+        relationships: item.relationships,
+        conflict: item.conflict,
+        emotion: item.emotion,
+        ontologyTags: item.ontologyTags,
         narrativePurpose:
           index === 0
             ? "建立开场问题"
@@ -866,7 +1069,30 @@ function generateLegacyStorylinePlans(
         safeStart: item.safeStart,
         safeEnd: item.safeEnd,
         evidence: item.evidence,
+        eventId: String(item.sourceHighlightId || item.id || ""),
       })),
+      beats: segments.map((item, index) => ({
+        id: `${planId}-beat-${index + 1}`,
+        eventId: String(item.sourceHighlightId || item.id || ""),
+        episode: item.episode,
+        start: item.start,
+        end: item.end,
+        stage:
+          index === 0
+            ? "setup"
+            : index === segments.length - 1
+              ? "cliffhanger"
+              : "development",
+        summary: item.plot,
+      })),
+      continuity: {
+        clipEvidence: evidenceCount === segments.length ? "verified" : "inferred",
+        identityContinuity: "unknown",
+        semanticCausality: "high_confidence_inference",
+        timeContinuity: "verified",
+        connectedEvents: segments.length,
+        rejectedAdjacentEvents: 0,
+      },
       hookNeed: {
         purpose: hookPurpose,
         audienceQuestion,
@@ -967,9 +1193,39 @@ function generateLegacyStorylinePlans(
   const fullEpisodeSegment = (episodeNumber, start, anchor) => {
     const items = episodeHighlights.get(episodeNumber) || [];
     const episodeEnd = episodeRows.get(episodeNumber);
-    if (!episodeEnd || start >= episodeEnd) return null;
+    if (
+      !episodeEnd ||
+      !Number.isFinite(start) ||
+      start < 0 ||
+      start >= episodeEnd ||
+      (episodeNumber === anchor.episode &&
+        (!Number.isFinite(Number(anchor.end)) ||
+          Number(anchor.end) <= start ||
+          Number(anchor.end) > episodeEnd + 0.1))
+    )
+      return null;
     const relevant = items.filter((item) => item.end > start);
-    const representative = relevant[0] || items[0] || anchor;
+    const episodeSource = {
+      id: `episode-source-${episodeNumber}`,
+      plot: `第${episodeNumber}集按原片顺序完整承接`,
+      purpose: "完整保留后续一集，延续人物行动与剧情结果",
+      conflict: "",
+      emotion: "",
+      question: "",
+      promise: "",
+      relationships: [],
+      themes: [],
+      contentTags: [],
+      ontologyTags: [],
+      evidence: [],
+      analysisVersion: "episode-source-duration-v1",
+      safeStart: { status: "source_boundary", time: 0 },
+      safeEnd: { status: "source_boundary", time: episodeEnd },
+    };
+    const representative =
+      episodeNumber === anchor.episode
+        ? anchor
+        : relevant[0] || items[0] || episodeSource;
     return {
       ...representative,
       id: `sequential-episode-${episodeNumber}-${start.toFixed(2)}`,
@@ -978,14 +1234,18 @@ function generateLegacyStorylinePlans(
       episode: episodeNumber,
       start,
       end: episodeEnd,
+      openingEnd:
+        episodeNumber === anchor.episode
+          ? Math.min(episodeEnd, Number(anchor.end || start))
+          : 0,
       plot: relevant.length
-        ? compactPlot(
+        ? storylineEventSummary(compactPlot(
             [
               episodeNumber === anchor.episode ? anchor.plot : "",
               ...relevant.map((item) => item.plot),
             ],
-            6,
-          )
+            12,
+          ), 2, 90)
         : `第${episodeNumber}集按原片顺序完整承接`,
       purpose:
         episodeNumber === anchor.episode
@@ -1000,18 +1260,48 @@ function generateLegacyStorylinePlans(
       safeEnd: { status: "source_boundary", time: episodeEnd },
     };
   };
-  const eligibleAnchors = highlights.filter((anchor) => {
-    const following = [];
-    for (let offset = 1; offset <= 3; offset += 1) {
-      const episodeNumber = anchor.episode + offset;
-      if (!episodeRows.has(episodeNumber)) break;
-      following.push(episodeNumber);
-    }
-    return following.length >= 2;
-  });
+  const candidateRouteForAnchor = (anchor) => {
+    const routeOptions = [];
+    [2, 3].forEach((followingCount) => {
+      const following = [];
+      for (let offset = 1; offset <= followingCount; offset += 1) {
+        const episodeNumber = anchor.episode + offset;
+        if (!episodeRows.has(episodeNumber)) break;
+        following.push(episodeNumber);
+      }
+      if (following.length !== followingCount) return;
+      const route = [
+        fullEpisodeSegment(anchor.episode, anchor.start, anchor),
+        ...following.map((episodeNumber) =>
+          fullEpisodeSegment(episodeNumber, 0, anchor),
+        ),
+      ].filter(Boolean);
+      if (route.length !== followingCount + 1) return;
+      const total = duration(route);
+      if (total < minimumBodySeconds || total > maximumBodySeconds) return;
+      routeOptions.push({ route, total, followingCount });
+    });
+    return (
+      routeOptions.sort(
+        (left, right) =>
+          Math.abs(left.total - target) - Math.abs(right.total - target) ||
+          left.followingCount - right.followingCount,
+      )[0] || null
+    );
+  };
+  const eligibleAnchors = highlights
+    .filter(
+      (anchor) =>
+        !selectedHighlightIdSet.size ||
+        selectedHighlightIdSet.has(String(anchor.id || "")),
+    )
+    .map((anchor) => ({ anchor, routeOption: candidateRouteForAnchor(anchor) }))
+    .filter((item) => item.routeOption);
   const anchorSignalScore = (anchor, mode) => {
     const text = `${anchor.plot} ${anchor.conflict} ${anchor.emotion} ${anchor.question} ${anchor.promise}`;
-    if (mode === "context") return 1000 - anchor.episode * 100 - anchor.start;
+    if (mode === "context")
+      return 35 + Math.max(0, 20 - (anchor.episode - 1) * 2) +
+        (anchor.start <= 60 ? 15 : 0);
     if (mode === "impact")
       return (anchor.conflict ? 50 : 0) + (anchor.question ? 30 : 0) + anchor.start / 10;
     if (mode === "awakening")
@@ -1045,83 +1335,96 @@ function generateLegacyStorylinePlans(
       hookPurpose: "悬念与承诺强化",
     },
   ];
-  scriptStrategies.forEach((strategy) => {
-    const strategyAnchors = [...eligibleAnchors]
+  eligibleAnchors.forEach(({ anchor, routeOption }) => {
+    const strategy = scriptStrategies
+      .slice()
       .sort(
         (left, right) =>
-          anchorSignalScore(right, strategy.mode) -
-          anchorSignalScore(left, strategy.mode),
-      )
-      .slice(0, 3);
-    strategyAnchors.forEach((anchor) => {
-      const following = [];
-      for (let offset = 1; offset <= 3; offset += 1) {
-        const episodeNumber = anchor.episode + offset;
-        if (!episodeRows.has(episodeNumber)) break;
-        following.push(episodeNumber);
-      }
-      const selectedFollowing = following.slice(0, 3);
-      const route = [
-        fullEpisodeSegment(anchor.episode, anchor.start, anchor),
-        ...selectedFollowing.map((episodeNumber) =>
-          fullEpisodeSegment(episodeNumber, 0, anchor),
-        ),
-      ].filter(Boolean);
-      add(route, "chronological", strategy.label, {
+          anchorSignalScore(anchor, right.mode) -
+            anchorSignalScore(anchor, left.mode) ||
+          left.mode.localeCompare(right.mode),
+      )[0];
+      add(routeOption.route, "chronological", strategy.label, {
         productionSequential: true,
         scriptMode: strategy.mode,
         audienceQuestion: strategy.question,
         hookPurpose: strategy.hookPurpose,
       });
-    });
   });
   const semanticallyUnique = [];
+  const signatureRows = [];
+  const exactSignatures = new Set();
   [...unique.values()]
     .sort((left, right) => right.acquisitionScore - left.acquisitionScore)
     .forEach((plan) => {
-      const signature = new Set(
-        compactPlot(
-          plan.segments.map((segment) => segment.plot),
-          24,
-        )
-          .split("；")
-          .map((item) =>
-            item
-              .toLowerCase()
-              .replace(/[\s，。！？、：:;；'"“”‘’()（）·.\-]/g, ""),
+      const signature = [
+        ...new Set(
+          compactPlot(
+            plan.segments.map((segment) => segment.plot),
+            24,
           )
-          .filter(Boolean),
-      );
-      if (!signature.size) return;
-      const mode = String(
-        (plan.scriptPlan && plan.scriptPlan.mode) || "sequential",
-      );
-      // `unique` already removes identical direction + source route pairs.
-      // Similar plot text is expected when different high points share the
-      // same sequential episodes; it must not erase distinct opening choices.
+            .split("；")
+            .map((item) =>
+              item
+                .toLowerCase()
+                .replace(/[\s，。！？、：:;；'"“”‘’()（）·.\-]/g, ""),
+            )
+            .filter(Boolean),
+        ),
+      ].sort();
+      if (!signature.length) return;
+      const exactSignature = signature.join("|");
+      if (exactSignatures.has(exactSignature)) return;
+      const episodeSet = new Set(plan.episodeScope || []);
+      const tokenSet = new Set(semanticTokens(signature));
+      const tooSimilar = signatureRows.some((row) => {
+        const episodeUnion = new Set([...episodeSet, ...row.episodes]);
+        const episodeIntersection = [...episodeSet].filter((value) => row.episodes.has(value)).length;
+        const tokenUnion = new Set([...tokenSet, ...row.tokens]);
+        const tokenIntersection = [...tokenSet].filter((value) => row.tokens.has(value)).length;
+        const episodeOverlap = episodeUnion.size ? episodeIntersection / episodeUnion.size : 0;
+        const semanticOverlap = tokenUnion.size ? tokenIntersection / tokenUnion.size : 0;
+        return episodeOverlap >= 0.75 && semanticOverlap >= 0.55;
+      });
+      if (tooSimilar) return;
+      exactSignatures.add(exactSignature);
+      signatureRows.push({ episodes: episodeSet, tokens: tokenSet });
       semanticallyUnique.push(plan);
     });
-  return semanticallyUnique.slice(0, 10);
+  const ranked = semanticallyUnique.sort(
+    (left, right) =>
+      right.acquisitionScore - left.acquisitionScore ||
+      String(left.id).localeCompare(String(right.id)),
+  );
+  const variation = Math.max(0, Math.floor(Number(variationIndex) || 0));
+  const ordered = [];
+  for (let index = 0; index < ranked.length; ) {
+    const score = ranked[index].acquisitionScore;
+    const equal = [];
+    while (
+      index < ranked.length &&
+      ranked[index].acquisitionScore === score
+    ) {
+      equal.push(ranked[index]);
+      index += 1;
+    }
+    const offset = equal.length ? variation % equal.length : 0;
+    ordered.push(...equal.slice(offset), ...equal.slice(0, offset));
+  }
+  return ordered.slice(0, 10);
 }
 
 function normalizedDramaTerm(value) {
   return String(value || "")
+    .replace(/[‘'“"]?Great moon goddess(?:,? I give you my life)?[’'”"]?[.!！]?/gi, "月亮女神，我愿用生命保护女儿")
     .replace(/Luna of the ([^.,!]+?) pack/gi, "$1狼群的女首领（Luna）")
     .replace(/月之女王/g, "女首领（Luna）")
     .replace(/作为([^，。]+)的月亮女神/g, "作为$1的女首领（Luna）")
     .replace(/Alpha/g, "阿尔法首领")
     .replace(/pack/gi, "狼群")
     .replace(/wolfless/gi, "无狼")
-    .replace(/wolf[- ]?less/gi, "无狼");
-}
-
-function analysisRoot(episode) {
-  let value = episode && episode.analysis && typeof episode.analysis === "object"
-    ? episode.analysis
-    : {};
-  const nested = jsonValue(value.result, null);
-  if (nested && typeof nested === "object" && !Array.isArray(nested)) value = nested;
-  return value;
+    .replace(/wolf[- ]?less/gi, "无狼")
+    .replace(/[’'”"](?=\s|，|。|！|？|$)/g, "");
 }
 
 function evidenceState(evidence) {
@@ -1275,149 +1578,26 @@ function graphForDrama(drama, episodes) {
   return lycanQueenGraph(drama, episodes) || fallbackNarrativeGraph(drama, episodes);
 }
 
-function planSegmentFromEvent(item, purpose) {
-  return {
-    episode: item.episode, start: item.start, end: item.end,
-    plot: `${item.action}${item.object ? `：${item.object}` : ""}${item.result ? `，${item.result}` : ""}`,
-    narrativePurpose: purpose,
-    highlightAssetId: item.id,
-    analysisVersion: "narrative-event-graph-v2",
-    safeStart: { status: "verified", time: item.start },
-    safeEnd: { status: "verified", time: item.end },
-    evidence: item.evidence,
-    eventId: item.id,
-    validation: item.validation,
-  };
-}
-
-function storylinePlanFromGraph(drama, graph, definition, deliveryGoal) {
-  const byId = new Map(graph.events.map((item) => [item.id, item]));
-  const events = definition.eventIds.map((id) => byId.get(id)).filter(Boolean);
-  if (!events.length) return null;
-  const segments = events.map((item, index) => planSegmentFromEvent(item, index === 0 ? "建立开场问题" : index === events.length - 1 ? "形成阶段卡点" : "推进因果与人物选择"));
-  const entryPoints = definition.entryEventIds.map((id, index) => {
-    const item = byId.get(id);
-    return item ? { id: `${definition.id}-entry-${index + 1}`, eventId: id, episode: item.episode, start: item.start, end: item.end, label: index === 0 ? "推荐起播" : "备选起播", evidenceStatus: item.validation.clipEvidence } : null;
-  }).filter(Boolean);
-  const total = segments.reduce((sum, item) => sum + item.end - item.start, 0);
-  const last = events[events.length - 1];
-  return {
-    id: definition.id,
-    title: definition.title,
-    strategyType: definition.strategyType,
-    chronology: "chronological",
-    storylineSummary: definition.summary,
-    audienceQuestion: definition.question,
-    totalDurationSeconds: Math.round(total * 1000) / 1000,
-    episodeScope: [...new Set(events.map((item) => item.episode))],
-    acquisitionScore: definition.score,
-    scoreBreakdown: { openingStrength: 92, conflictDensity: 90, emotionalProgression: definition.strategyType === "情绪线" ? 96 : 91, suspenseStrength: 93, payoffStrength: 88, continuity: 94, evidenceAccuracy: 100 },
-    rankingReasons: ["人物身份跨集承接", "事件因果边已建立", "20年时间跳跃已显式标注", "多个开场句合并为同一故事线起播点"],
-    segments,
-    beats: segments.map((segment, index) => ({ id: `beat-${definition.id}-${index + 1}`, eventId: segment.eventId, episode: segment.episode, start: segment.start, end: segment.end, stage: index === 0 ? "setup" : index === segments.length - 1 ? "cliffhanger" : "development", summary: segment.plot })),
-    entryPoints,
-    continuity: { clipEvidence: "verified", identityContinuity: "high_confidence_inference", semanticCausality: "verified", timeContinuity: "verified", connectedEvents: events.length, rejectedAdjacentEvents: 0 },
-    hookNeed: { purpose: definition.strategyType, audienceQuestion: definition.question, requiredSignals: definition.signals, prohibitedReveals: [last.result].filter(Boolean), preferredEmotion: definition.emotion, connectionPoint: `第${entryPoints[0].episode}集 ${entryPoints[0].start.toFixed(2)}秒` },
-    scriptPlan: { mode: definition.mode, label: definition.strategyType, coreStory: definition.summary, openingEvent: definition.opening, audiencePromise: definition.question, progression: segments.map((segment, index) => ({ episode: segment.episode, start: segment.start, end: segment.end, beat: index === 0 ? "开场" : index === segments.length - 1 ? "卡点" : "发展", plot: segment.plot })), stagePayoff: definition.development, endingCliffhanger: definition.cliffhanger, hookDirection: definition.strategyType, editRule: "仅沿已验证或高可信的人物、因果与时间边连接；遇 unrelated 边立即停止或拆线" },
-    evidence: events.flatMap((item) => item.evidence),
-    warnings: ["‘无狼婴儿=艾瑞亚’是高可信推断，不是直接口述确认。"],
-  };
-}
-
-function generateStorylinePlans(drama, episodes, deliveryGoal, targetDurationSeconds, selectedHighlightIds, variationIndex) {
-  const selectedIds = new Set((Array.isArray(selectedHighlightIds) ? selectedHighlightIds : []).map(String));
-  const graphEpisodes = selectedIds.size
-    ? (Array.isArray(episodes) ? episodes : []).map((episode) => ({
-        ...episode,
-        highlights: (Array.isArray(episode.highlights) ? episode.highlights : []).filter((item) => selectedIds.has(String((item && item.id) || ""))),
-      }))
-    : episodes;
-  const graph = graphForDrama(drama, graphEpisodes);
-  if (/Lycan Queen/i.test(String((drama && drama.title) || "")) && graph.events.length) {
-    const definitions = [
-      { id: "lycan-main-heir", title: "无狼继承人遭生父追杀，20年后成为影狼族公主", strategyType: "主线", mode: "causal", summary: "银月继承人出生后被鉴定为无狼，生父西尔瓦斯下令处死她；母亲埃琳娜护女逃亡并以命相护，婴儿后被影狼族收养，20年后以公主艾瑞亚的身份面对狼灵觉醒。", question: "被判定为无狼的艾瑞亚，会觉醒何种力量？", opening: "月石宣告银月继承人天生无狼", development: "生父追杀，母亲护女，弃婴被影狼族收养", cliffhanger: "20年后，艾瑞亚再次尝试召唤沉睡的狼灵", eventIds: ["e1-birth", "e1-order", "e2-flight", "e3-sacrifice", "e4-adoption", "e4-grown"], entryEventIds: ["e1-birth", "e1-order", "e4-grown"], signals: ["无狼继承人", "生父追杀", "跨族收养", "20年后", "身份觉醒"], emotion: "绝境逃生到身份觉醒", score: 96 },
-      { id: "lycan-emotional-sacrifice", title: "母亲以命护女，弃婴被另一狼群收为公主", strategyType: "情绪线", mode: "emotion", summary: "埃琳娜拒绝把无狼女儿交给要杀她的生父，带婴儿逃亡至悬崖，以自己的生命换女儿生路；孩子随后被影狼族首领收养，成为影狼族公主。", question: "埃琳娜的牺牲，能否让女儿真正逃离银月血统的追杀？", opening: "西尔瓦斯将亲生女儿宣判为必须消除的耻辱", development: "埃琳娜抱婴逃亡，悬崖以命护女", cliffhanger: "影狼族首领对弃婴说：从现在起，你是我的孩子", eventIds: ["e1-order", "e2-flight", "e3-sacrifice", "e3-rejection", "e4-adoption"], entryEventIds: ["e1-order", "e2-flight", "e3-sacrifice"], signals: ["母亲护女", "以命相护", "弃婴收养", "身份重生"], emotion: "母爱、牺牲与重生", score: 94 },
-      { id: "lycan-escape", title: "狼王下令处死亲女，母亲抱着婴儿逃向悬崖", strategyType: "逃亡线", mode: "causal", summary: "西尔瓦斯因女儿被判定为无狼而下令处死她，埃琳娜拒绝交出孩子，抱着婴儿逃离追捕，最终在悬崖边以自己的生命争取女儿的生机。", question: "被逼到悬崖的埃琳娜，怎样才能让女儿活下来？", opening: "父亲把无狼女婴视为必须消除的耻辱", development: "母亲违抗命令，抱婴逃离狼群追捕", cliffhanger: "埃琳娜在悬崖边做出最后选择", eventIds: ["e1-order", "e2-flight", "e3-sacrifice"], entryEventIds: ["e1-order", "e2-flight"], signals: ["亲父追杀", "母亲抗命", "悬崖逃亡"], emotion: "压迫、逃亡与决绝", score: 95 },
-      { id: "lycan-shadow-rebirth", title: "悬崖下的弃婴被影狼族收养，20年后等待狼灵苏醒", strategyType: "身份线", mode: "identity", summary: "被银月族拒绝的婴儿在母亲牺牲后留下，随后被影狼族首领收养；20年后，她以艾瑞亚公主的身份成长，却仍要面对无法召唤狼灵的命运。", question: "银月族抛弃的无狼婴儿，为何会成为影狼族公主？", opening: "母亲牺牲后，无狼婴儿独自留在悬崖下", development: "影狼族首领收养她并赋予新的家庭身份", cliffhanger: "20年后，艾瑞亚再次站到狼灵觉醒的考验前", eventIds: ["e3-sacrifice", "e3-rejection", "e4-adoption", "e4-grown"], entryEventIds: ["e3-rejection", "e4-adoption", "e4-grown"], signals: ["弃婴", "跨族收养", "公主身份", "狼灵觉醒"], emotion: "失去、接纳与身份悬念", score: 93 },
-      { id: "lycan-two-clans", title: "银月族认定她天生无狼，影狼族却将她养成公主", strategyType: "族群对照线", mode: "contrast", summary: "银月族以月石鉴定女婴天生无狼并要将她消除，影狼族却在她失去母亲后选择收养；同一个孩子在两个族群中得到截然相反的命运。", question: "被出生族群判死刑的孩子，会在另一个狼群获得怎样的力量？", opening: "月石鉴定让银月继承人被族群排斥", development: "母亲救女失败后，影狼族接纳弃婴", cliffhanger: "成为公主的艾瑞亚仍未唤醒自己的狼灵", eventIds: ["e1-birth", "e1-order", "e3-sacrifice", "e4-adoption", "e4-grown"], entryEventIds: ["e1-birth", "e4-adoption", "e4-grown"], signals: ["族群排斥", "跨族接纳", "身份反差", "力量悬念"], emotion: "排斥与接纳的反差", score: 95 },
-      { id: "lycan-mother-legacy", title: "母亲用死亡切断追杀，女儿在另一族群延续她的选择", strategyType: "母女线", mode: "emotion", summary: "埃琳娜违抗狼王保护无狼女儿，在逃亡与悬崖抉择中付出生命；她救下的孩子被影狼族收养，20年后以公主身份继续面对自己的血统与力量。", question: "母亲以命保住的女儿，20年后能否完成真正的觉醒？", opening: "埃琳娜拒绝执行处死亲女的命令", development: "她用逃亡和牺牲为女儿换来被收养的机会", cliffhanger: "成年艾瑞亚面对狼灵沉睡，再次站在命运审判前", eventIds: ["e1-order", "e2-flight", "e3-sacrifice", "e4-adoption", "e4-grown"], entryEventIds: ["e2-flight", "e3-sacrifice", "e4-grown"], signals: ["母女选择", "生命传承", "跨族成长", "成年觉醒"], emotion: "牺牲、传承与觉醒", score: 94 },
-    ];
-    const highlightGraph = fallbackNarrativeGraph(drama, graphEpisodes);
-    const highlightEvents = highlightGraph.events;
-    const eventsByEpisode = {};
-    highlightEvents.forEach((item) => {
-      if (!eventsByEpisode[item.episode]) eventsByEpisode[item.episode] = [];
-      const duplicate = eventsByEpisode[item.episode].some(
-        (existing) =>
-          Math.abs(existing.start - item.start) < 0.25 &&
-          Math.abs(existing.end - item.end) < 0.25,
-      );
-      if (!duplicate) eventsByEpisode[item.episode].push(item);
-    });
-    const episodeDefinitions = Object.keys(eventsByEpisode)
-      .map(Number)
-      .sort((left, right) => left - right)
-      .map((episode) => {
-        const items = eventsByEpisode[episode]
-          .slice()
-          .sort((left, right) => left.start - right.start)
-          .slice(0, 3);
-        const first = items[0];
-        const last = items[items.length - 1];
-        return {
-          id: `lycan-highlight-episode-${episode}`,
-          title: `第${episode}集高光：${conciseStoryEvent(first.action, 26)}`,
-          strategyType: "后续高光线",
-          mode: "episode_highlight",
-          summary: items.map((item) => conciseStoryEvent(item.action, 50)).join("，随后"),
-          question:
-            last.unresolvedQuestions[0] || "这一集揭示的力量将如何改变后续局势？",
-          opening: first.action,
-          development: items[Math.min(1, items.length - 1)].action,
-          cliffhanger: last.result || last.action,
-          eventIds: items.map((item) => item.id),
-          entryEventIds: items.map((item) => item.id),
-          signals: items.flatMap((item) => semanticTokens([item.action, item.result])).slice(0, 8),
-          emotion: "后续冲突升级与身份揭示",
-          score: Math.max(86, 93 - Math.floor((episode - 5) / 2)),
-        };
-      });
-    const planningGraph = {
-      characters: graph.characters,
-      events: graph.events.concat(highlightEvents),
-      edges: graph.edges.concat(highlightGraph.edges),
-    };
-    const offset = Math.max(0, Number(variationIndex) || 0);
-    const selectedDefinitions = episodeDefinitions.length
-      ? [
-          episodeDefinitions[offset % episodeDefinitions.length],
-          episodeDefinitions[
-            (offset + Math.ceil(episodeDefinitions.length / 2)) %
-              episodeDefinitions.length
-          ],
-        ].filter(
-          (definition, index, values) =>
-            values.findIndex((item) => item.id === definition.id) === index,
-        )
-      : [
-          definitions[offset % definitions.length],
-          definitions[(offset + 1) % definitions.length],
-        ];
-    return selectedDefinitions
-      .map((definition) =>
-        storylinePlanFromGraph(drama, planningGraph, definition, deliveryGoal),
-      )
-      .filter(Boolean);
-  }
-  // Generic fallback: connected components stop at an explicit unrelated edge.
-  const unrelated = new Set(graph.edges.filter((edge) => edge.type === "unrelated").map((edge) => `${edge.from}|${edge.to}`));
-  const chains = [];
-  graph.events.forEach((item) => {
-    const previous = chains[chains.length - 1];
-    if (!previous || unrelated.has(`${previous[previous.length - 1].id}|${item.id}`)) chains.push([item]);
-    else previous.push(item);
-  });
-  return chains.slice(0, 10).map((events, index) => storylinePlanFromGraph(drama, graph, { id: `graph-storyline-${contextHash(events.map((item) => item.id))}`, title: `故事线${index + 1}：${events[0].action.slice(0, 24)}`, strategyType: "事件图故事线", mode: "causal", summary: events.map((item) => item.action).join("，随后"), question: events[events.length - 1].unresolvedQuestions[0] || "后续将如何发展？", opening: events[0].action, development: events[Math.min(1, events.length - 1)].action, cliffhanger: events[events.length - 1].result || events[events.length - 1].action, eventIds: events.map((item) => item.id), entryEventIds: [events[0].id], signals: [], emotion: "剧情推进", score: 70 }, deliveryGoal)).filter(Boolean);
+function generateStorylinePlans(
+  drama,
+  episodes,
+  deliveryGoal,
+  targetDurationSeconds,
+  selectedHighlightIds,
+  variationIndex,
+) {
+  // Production plans are derived only from the currently available/selected
+  // real highlights. The title-specific graph remains available to the story
+  // understanding layer, but it is never used to manufacture production
+  // storylines or scores.
+  return generateLegacyStorylinePlans(
+    drama,
+    episodes,
+    deliveryGoal,
+    targetDurationSeconds,
+    selectedHighlightIds,
+    variationIndex,
+  );
 }
 
 function conciseStoryEvent(value, maximum) {
@@ -1885,9 +2065,21 @@ function generateHookDrivenStorylinePlans(
           ),
         ),
       ].slice(0, 12);
-      const coverage = hookSignals.length
+      const textCoverage = hookSignals.length
         ? Math.min(1, matchedSignals.length / Math.min(12, hookSignals.length))
         : 0;
+      const planOntology = {
+        ontologyTags: (plan.segments || []).flatMap((item) => item.ontologyTags || []),
+        themes: (plan.segments || []).flatMap((item) => item.themes || []),
+        contentTags: (plan.segments || []).flatMap((item) => item.contentTags || []),
+        relationships: (plan.segments || []).flatMap((item) => item.relationships || []),
+        conflict: (plan.segments || []).map((item) => item.conflict).filter(Boolean),
+        emotion: (plan.segments || []).map((item) => item.emotion).filter(Boolean),
+      };
+      const tagRecall = compareOntologyProfiles(hookProfile, planOntology);
+      if (tagRecall.decision === "blocked") return null;
+      const ontologyCoverage = tagRecall.decision === "allow_recall" ? Math.max(0, tagRecall.score) : 0;
+      const coverage = textCoverage * 0.7 + ontologyCoverage * 0.3;
       const promiseFulfillment = Math.round(
         Math.min(
           100,
@@ -1943,6 +2135,7 @@ function generateHookDrivenStorylinePlans(
           ...plan.scoreBreakdown,
           hookBodyFit,
           promiseFulfillment,
+          tagRecall,
         },
         rankingReasons: [
           matchedSignals.length
@@ -2001,6 +2194,7 @@ function generateHookDrivenStorylinePlans(
         },
       };
     })
+    .filter(Boolean)
     .sort((left, right) => right.acquisitionScore - left.acquisitionScore)
     .slice(0, 10);
 }
@@ -2062,6 +2256,8 @@ function scoreHookCandidate(hook, storyNeed) {
     storyNeed && storyNeed.relationshipState,
   ]);
   const hookTokens = semanticTokens([
+    hook && hook.title,
+    hook && hook.hook_type,
     hook && hook.themes,
     hook && hook.content_tags,
     hook && hook.relationships,
@@ -2072,6 +2268,17 @@ function scoreHookCandidate(hook, storyNeed) {
     hook && hook.spoken_summary,
     hook && hook.visual_summary,
   ]);
+  const dramaTitleTokens = semanticTokens(storyNeed && storyNeed.dramaTitle);
+  const hookIdentityTokens = semanticTokens([
+    hook && hook.title,
+    hook && hook.drama_title,
+  ]);
+  const titleOverlap = dramaTitleTokens.filter((token) =>
+    hookIdentityTokens.includes(token),
+  );
+  const titleAffinity = dramaTitleTokens.length
+    ? Math.min(1, titleOverlap.length / Math.min(6, dramaTitleTokens.length))
+    : 0;
   const comparableFocusTokens = focusTokens.filter((token) => token.length <= 12);
   const comparableContextTokens = contextTokens.filter((token) => token.length <= 12);
   const matching = (tokens) => ({
@@ -2101,7 +2308,13 @@ function scoreHookCandidate(hook, storyNeed) {
       : 0;
   const focusCoverage = coverageFor(comparableFocusTokens, focusMatch);
   const contextCoverage = coverageFor(comparableContextTokens, contextMatch);
-  const coverage = focusCoverage * 0.82 + contextCoverage * 0.18;
+  const textCoverage = focusCoverage * 0.82 + contextCoverage * 0.18;
+  const tagRecall = compareOntologyProfiles(hook, storyNeed);
+  const ontologyCoverage = tagRecall.decision === "allow_recall" ? Math.max(0, tagRecall.score) : 0;
+  const coverage = Math.min(
+    1,
+    textCoverage * 0.6 + ontologyCoverage * 0.25 + titleAffinity * 0.55,
+  );
   const hasPromise = Boolean(hook && hook.narrative_promise);
   const hasEvidence = Boolean(
     hook &&
@@ -2122,7 +2335,7 @@ function scoreHookCandidate(hook, storyNeed) {
   )
     ? 65
     : 25;
-  const score = Math.round(
+  const calculatedScore = Math.round(
     Math.max(
       0,
       Math.min(
@@ -2134,6 +2347,16 @@ function scoreHookCandidate(hook, storyNeed) {
       ),
     ) * 10,
   ) / 10;
+  // Ontology conflicts are useful ranking/review signals, but the content
+  // factory must not turn them into a production gate.  Keep the candidate
+  // selectable and demote it so a producer can inspect the real evidence.
+  const recallEligible = true;
+  const score = Math.max(
+    0,
+    Math.round(
+      (calculatedScore - (tagRecall.decision === "blocked" ? 20 : 0)) * 10,
+    ) / 10,
+  );
   const directions = (
     storyNeed && Array.isArray(storyNeed.extendDirections)
       ? storyNeed.extendDirections
@@ -2159,14 +2382,24 @@ function scoreHookCandidate(hook, storyNeed) {
         };
   return {
     score,
+    recallEligible,
     direction: selectedDirection.type,
     directionLabel: selectedDirection.label,
     storyNeedCoverage,
+    titleAffinity: Math.round(titleAffinity * 1000) / 10,
     truthSafety: Math.round(truthSafety * 100),
     bridgeCost,
     spoilerRisk,
     matchedSignals: overlap.slice(0, 12),
-    reasons: overlap.length
+    tagRecall,
+    reasons: tagRecall.decision === "blocked"
+      ? tagRecall.hardConflicts.map((conflict) => `标签冲突提示：${conflict}`)
+      : titleOverlap.length
+        ? [
+            `命中剧目身份信号：${titleOverlap.slice(0, 6).join("、")}`,
+            hasPromise ? "具有可验证叙事承诺" : "叙事承诺待补证",
+          ]
+      : overlap.length
       ? [
           `命中故事信号：${overlap.slice(0, 6).join("、")}`,
           hasPromise ? "具有可验证叙事承诺" : "叙事承诺待补证",
@@ -2196,8 +2429,10 @@ function hookSemanticSnapshot(record) {
   return {
     contract_version: "lumina-semantic-contract-v1",
     id: record.id,
+    title: record.getString("title"),
     source_class: record.getString("source_class"),
     material: record.getString("material"),
+    drama: record.getString("drama"),
     start_seconds: record.getFloat("start_seconds"),
     end_seconds: record.getFloat("end_seconds"),
     start_frame: record.getInt("start_frame"),
@@ -2209,6 +2444,7 @@ function hookSemanticSnapshot(record) {
     hook_type: record.getString("hook_type"),
     themes: jsonArray(record, "themes"),
     content_tags: jsonArray(record, "content_tags"),
+    ontology_tags: jsonArray(record, "ontology_tags"),
     relationships: jsonArray(record, "relationships"),
     event: {
       action:
@@ -2455,6 +2691,104 @@ function summarizeHookMatch(job, supplementalJobs, matches) {
   };
 }
 
+function factoryRenderFileName(outputUrl) {
+  const prefix = "/renders/";
+  const value = String(outputUrl || "").trim();
+  if (!value.startsWith(prefix) || value.includes("?") || value.includes("#"))
+    throw new BadRequestError(
+      "render artifact verification requires a local /renders file",
+    );
+  let fileName = "";
+  try {
+    fileName = decodeURIComponent(value.slice(prefix.length));
+  } catch (_) {
+    throw new BadRequestError("render artifact URL is not valid UTF-8");
+  }
+  if (
+    !fileName ||
+    fileName === "." ||
+    fileName === ".." ||
+    fileName.includes("/") ||
+    fileName.includes("\\") ||
+    fileName.includes("\u0000") ||
+    $filepath.base(fileName) !== fileName
+  )
+    throw new BadRequestError("render artifact URL contains an unsafe path");
+  return fileName;
+}
+
+function factoryCommandOutput(value) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return String.fromCharCode.apply(null, value);
+  return String(value || "");
+}
+
+function factoryFileSha256(path) {
+  const commands = [
+    () => $os.cmd("sha256sum", path).output(),
+    () => $os.cmd("shasum", "-a", "256", path).output(),
+    () => $os.cmd("certutil", "-hashfile", path, "SHA256").output(),
+  ];
+  for (const command of commands) {
+    try {
+      const match = factoryCommandOutput(command()).match(/\b[a-fA-F0-9]{64}\b/);
+      if (match) return match[0].toLowerCase();
+    } catch (_) {
+      // Try the next platform-specific hashing utility.
+    }
+  }
+  throw new BadRequestError(
+    "render artifact SHA-256 could not be verified on this host",
+  );
+}
+
+function verifyFactoryRenderArtifact(render) {
+  const outputUrl = render.getString("output_url");
+  const expectedSha = render.getString("output_sha256").trim().toLowerCase();
+  const fileName = factoryRenderFileName(outputUrl);
+  if (!fileName.endsWith(`-${render.id}.mp4`))
+    throw new BadRequestError(
+      "render artifact filename is not bound to this render id",
+    );
+  if (!/^[a-f0-9]{64}$/.test(expectedSha))
+    throw new BadRequestError("render artifact has no valid stored SHA-256");
+  const configuredRoot = String(
+    $os.getenv("LUMINA_FACTORY_RENDER_DIR") || "",
+  ).trim();
+  const root = $filepath.clean(
+    configuredRoot || $filepath.join($os.getwd(), "public", "renders"),
+  );
+  const path = $filepath.clean($filepath.join(root, fileName));
+  if ($filepath.dir(path) !== root)
+    throw new BadRequestError("render artifact resolved outside /renders");
+  let info;
+  try {
+    info = $os.stat(path);
+  } catch (_) {
+    throw new BadRequestError(
+      "render artifact is missing from local /renders storage",
+    );
+  }
+  const size = Number(
+    typeof info.size === "function" ? info.size() : info.size,
+  );
+  const isDirectory =
+    typeof info.isDir === "function" ? info.isDir() : info.isDir === true;
+  if (isDirectory || !Number.isFinite(size) || size <= 0)
+    throw new BadRequestError("render artifact is not a non-empty file");
+  const actualSha = factoryFileSha256(path);
+  if (actualSha !== expectedSha)
+    throw new BadRequestError(
+      "render artifact SHA-256 no longer matches the succeeded render",
+    );
+  return {
+    fileName,
+    size,
+    sha256: actualSha,
+    verifiedAt: new Date().toISOString(),
+  };
+}
+
 module.exports = {
   authorizeWorker,
   authorizeUi,
@@ -2466,6 +2800,7 @@ module.exports = {
   canonicalJson,
   contextHash,
   semanticTokens,
+  compareOntologyProfiles,
   deriveStoryNeed,
   generateStorylinePlans,
   generateStoryUnderstanding,
@@ -2479,4 +2814,6 @@ module.exports = {
   productionGatePasses,
   rejectionReasons,
   summarizeHookMatch,
+  factoryRenderFileName,
+  verifyFactoryRenderArtifact,
 };

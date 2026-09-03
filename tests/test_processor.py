@@ -17,7 +17,7 @@ from processor.pack import group_phrases, pack_transcripts
 from processor.scribe import is_cache_valid, source_fingerprint
 from processor.batch_transcribe import select_free_episodes
 from processor.job_worker import ApiRequestError, DownloadIntegrityError, api_request, classify_failure, download, envelope_from_dict, execute_entry_precision_job, execute_semantic_job, process_available, process_one_endpoint
-from processor.factory_render import build_render_quality_report
+from processor.factory_render import _boundary_state, _leading_blank_metrics, _output_filename, _render_clip, _transition_settings, _unsupported_features, _validate_sequential_duration, build_render_quality_report
 from processor.semantic_analysis import AnalysisFailed, AnalysisEnvelope, Evidence, Timecode, _apply_material_evidence_gate, _compact_hook_highlight, _complete_sentence_limit, _downgrade_unsupported_external_hook, _enrich_material_hooks, _external_hook_fragment_evidence, _external_hook_match_input, _extract_chat_stream, _extract_provider_result, _material_evidence_timestamps, _material_output_contract_issues, _material_output_contract_valid, _material_semantic_analysis, _material_story_consistency_issues, _material_story_quality_issues, _material_story_synthesis_request, _normalize_material_format, _normalize_material_output_shape, _normalize_precision_hooks, _openai_request_body, _opening_preface_boundary, _precision_candidates, _read_analysis_cache, _reconstruct_storyline, _reconstruct_highlights, _restore_material_observations, _sanitize_material_provider_input, _semantic_frame_base64, _semantic_request, _story_duration_validation, _storyboard_quality_issues, _storyboard_units_from_event_ledger, _strict_safety_provider_input, _target_duration_spec, _validate_semantic_claims, _write_analysis_cache, analyze_coarse, analyze_detail, analyze_hook_entry_points, analyze_hook_story_match, analyze_material, failed_envelope, transcribe
 
 MATERIAL_CONTRACT = {
@@ -418,6 +418,46 @@ class ProcessorTests(unittest.TestCase):
             self.assertEqual(list(Path(directory).glob("*.part")),[])
         self.assertNotIn("signature",str(raised.exception));self.assertNotIn("secret-token",str(raised.exception))
         self.assertEqual(classify_failure(raised.exception),("transient",True,30))
+
+    def test_download_total_deadline_stops_an_endless_trickle_atomically(self):
+        class Clock:
+            value = 0.0
+
+            def now(self):
+                return self.value
+
+        clock = Clock()
+
+        class DripResponse:
+            headers = {"Content-Length": "999999"}
+            reads = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self, _size):
+                self.reads += 1
+                clock.value += 0.4
+                return b"x"
+
+        response = DripResponse()
+        signed = "https://media.invalid/video.mp4?signature=secret-token"
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "source.mp4"
+            destination.write_bytes(b"known-good")
+            with patch.dict(os.environ, {"LUMINA_MEDIA_DOWNLOAD_MAX_SECONDS": "0.7"}), \
+                 patch("processor.job_worker.time.monotonic", side_effect=clock.now), \
+                 patch("processor.job_worker.urllib.request.urlopen", return_value=response):
+                with self.assertRaisesRegex(DownloadIntegrityError, "total time limit") as raised:
+                    download(signed, destination)
+            self.assertGreater(response.reads, 1)
+            self.assertEqual(destination.read_bytes(), b"known-good")
+            self.assertEqual(list(Path(directory).glob("*.part")), [])
+        self.assertNotIn("signature", str(raised.exception))
+        self.assertNotIn("secret-token", str(raised.exception))
 
     @patch("processor.job_worker.urllib.request.urlopen")
     def test_api_request_replaces_nonfinite_numbers_before_pocketbase(self, mocked_urlopen):
@@ -1138,22 +1178,132 @@ class ProcessorTests(unittest.TestCase):
 
     def test_render_self_qc_detects_duration_drift(self):
         with tempfile.TemporaryDirectory() as tmp:
-            output = Path(tmp) / "output.mp4"
+            output = Path(tmp) / "output-render123.mp4"
             output.write_bytes(b"video")
             technical = {"format": {"duration": "12.0"}, "streams": [{"codec_type": "video", "codec_name": "h264", "width": 1080, "height": 1920}, {"codec_type": "audio", "codec_name": "aac"}]}
             ledger = [{"status": "verified", "safeStart": {"status": "verified"}, "safeEnd": {"status": "verified"}, "kind": "hook"}]
-            report = build_render_quality_report(output=output, technical=technical, expected_duration=10.0, width=1080, height=1920, ledger=ledger)
+            report = build_render_quality_report(output=output, technical=technical, expected_duration=10.0, width=1080, height=1920, ledger=ledger, render_id="render123")
         self.assertFalse(report["passed"])
         self.assertIn("DURATION_CONSISTENCY", report["failureCodes"])
 
     def test_render_self_qc_accepts_consistent_output(self):
         with tempfile.TemporaryDirectory() as tmp:
-            output = Path(tmp) / "output.mp4"
+            output = Path(tmp) / "output-render123.mp4"
             output.write_bytes(b"video")
             technical = {"format": {"duration": "10.04"}, "streams": [{"codec_type": "video", "codec_name": "h264", "width": 1080, "height": 1920}, {"codec_type": "audio", "codec_name": "aac"}]}
             ledger = [{"status": "verified", "safeStart": {"status": "verified"}, "safeEnd": {"status": "verified"}, "kind": "episode", "flashTailStart": 12.0, "end": 10.0}]
-            report = build_render_quality_report(output=output, technical=technical, expected_duration=10.0, width=1080, height=1920, ledger=ledger)
+            report = build_render_quality_report(output=output, technical=technical, expected_duration=10.0, width=1080, height=1920, ledger=ledger, render_id="render123")
         self.assertTrue(report["passed"])
+        self.assertTrue(report["technicalPassed"])
+        self.assertEqual(
+            {item["code"] for item in report["technicalChecks"]},
+            {"UNIQUE_OUTPUT_PATH", "OUTPUT_PRESENT", "PLAYABLE", "VIDEO_CODEC", "AUDIO_CODEC", "RESOLUTION", "DURATION_CONSISTENCY", "FLASH_TAIL_REMOVED", "LEADING_CONTENT"},
+        )
+
+    def test_render_self_qc_rejects_leading_black_silence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "output-render123.mp4"
+            output.write_bytes(b"video")
+            technical = {"format": {"duration": "10.0"}, "streams": [{"codec_type": "video", "codec_name": "h264", "width": 1080, "height": 1920}, {"codec_type": "audio", "codec_name": "aac"}]}
+            report = build_render_quality_report(output=output, technical=technical, expected_duration=10.0, width=1080, height=1920, ledger=[{"status": "verified", "kind": "hook"}], render_id="render123", leading_blank={"leadingBlankSeconds": 8.8})
+        self.assertFalse(report["passed"])
+        self.assertIn("LEADING_CONTENT", report["failureCodes"])
+
+    def test_render_boundary_and_unsupported_features_are_transparent_advisories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "output-render123.mp4"
+            output.write_bytes(b"video")
+            technical = {"format": {"duration": "10.0"}, "streams": [{"codec_type": "video", "codec_name": "h264", "width": 1080, "height": 1920}, {"codec_type": "audio", "codec_name": "aac"}]}
+            ledger = [{"status": "unverified", "safeStart": {"status": "source_boundary"}, "safeEnd": {"status": "source_boundary"}, "kind": "episode", "flashTailStart": None, "end": 10.0}]
+            report = build_render_quality_report(output=output, technical=technical, expected_duration=10.0, width=1080, height=1920, ledger=ledger, render_id="render123", unsupported_features=["transition.copy", "subtitles"])
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["failureCodes"], [])
+        self.assertEqual(report["advisoryCodes"], ["BOUNDARY_STATUS", "UNSUPPORTED_FEATURES"])
+        self.assertEqual(report["boundaryStatus"]["states"], {"unverified": 1})
+        self.assertEqual(report["unsupportedFeatures"], ["transition.copy", "subtitles"])
+
+    def test_render_boundary_state_never_promotes_source_edges_to_verified(self):
+        self.assertEqual(
+            _boundary_state({"status": "verified"}, {"status": "verified"}, "verified"),
+            "verified",
+        )
+        self.assertEqual(
+            _boundary_state({"status": "source_boundary"}, {"status": "source_boundary"}, "verified"),
+            "unverified",
+        )
+        self.assertEqual(
+            _boundary_state({"status": "verified"}, {"status": "mechanical_trim"}),
+            "unverified",
+        )
+
+    def test_render_output_name_is_unique_per_render_record(self):
+        first = _output_filename("同标题", 3, "render0001")
+        second = _output_filename("同标题", 3, "render0002")
+        self.assertNotEqual(first, second)
+        self.assertTrue(first.endswith("-render0001.mp4"))
+        with self.assertRaisesRegex(AnalysisFailed, "render id"):
+            _output_filename("同标题", 3, "")
+
+    def test_render_output_name_caps_long_dynamic_story_titles(self):
+        value = _output_filename("高光故事线" * 80, 12, "render1234")
+        self.assertLessEqual(len(value), 96 + len("-v12-render1234.mp4"))
+        self.assertTrue(value.endswith("-v12-render1234.mp4"))
+
+    def test_hard_cut_family_and_render_effect_have_zero_duration(self):
+        by_id = _transition_settings({"id": "hard-cut-audio-complete", "durationSeconds": 0.25}, {})
+        by_effect = _transition_settings({"id": "fade-cut", "durationSeconds": 0.25, "renderConfig": {"effect": "hard_cut"}}, {})
+        by_render_config = _transition_settings({"id": "fade-cut", "durationSeconds": 0.25}, {"render_config": {"effect": "hard_cut"}})
+        self.assertEqual(by_id["fadeSeconds"], 0.0)
+        self.assertEqual(by_effect["fadeSeconds"], 0.0)
+        self.assertEqual(by_render_config["fadeSeconds"], 0.0)
+
+    @patch("processor.factory_render.subprocess.run")
+    def test_body_fade_resets_nonzero_source_timestamps(self, run_mock):
+        run_mock.return_value = SimpleNamespace(returncode=0, stderr="")
+        _render_clip(
+            Path("episode.mp4"),
+            Path("body.mp4"),
+            94.08,
+            182.95,
+            fade_in=True,
+            fade_out=False,
+            width=1080,
+            height=1920,
+            fade_seconds=0.25,
+        )
+        command = run_mock.call_args.args[0]
+        self.assertLess(command.index("-ss"), command.index("-i"))
+        self.assertIn("setpts=PTS-STARTPTS", command[command.index("-vf") + 1])
+        self.assertIn("fade=t=in:st=0:d=0.250", command[command.index("-vf") + 1])
+        self.assertIn("asetpts=PTS-STARTPTS", command[command.index("-af") + 1])
+        self.assertIn("afade=t=in:st=0:d=0.250", command[command.index("-af") + 1])
+
+    @patch("processor.factory_render.subprocess.run")
+    def test_leading_blank_detection_rejects_black_silent_placeholder(self, run_mock):
+        run_mock.return_value = SimpleNamespace(
+            stdout="",
+            stderr="black_start:0.021 black_end:8.821 black_duration:8.8\n"
+            "silence_start: 0\nsilence_end: 8.823 | silence_duration: 8.823",
+        )
+        metrics = _leading_blank_metrics(Path("render.mp4"))
+        self.assertEqual(metrics["leadingBlankSeconds"], 8.821)
+
+    def test_requested_copy_subtitles_and_voiceover_are_not_silently_accepted(self):
+        unsupported = _unsupported_features(
+            {"subtitleEnabled": True},
+            {"copy": "Why did he obey?", "voiceoverEnabled": True, "renderConfig": {}},
+            {},
+        )
+        self.assertEqual(unsupported, ["transition.copy", "subtitles", "voiceover"])
+
+    def test_external_sequential_duration_is_checked_after_effective_trimming(self):
+        _validate_sequential_duration(300.0, True)
+        _validate_sequential_duration(900.0, True)
+        with self.assertRaisesRegex(AnalysisFailed, "after tail removal"):
+            _validate_sequential_duration(299.99, True)
+        with self.assertRaisesRegex(AnalysisFailed, "after tail removal"):
+            _validate_sequential_duration(900.01, True)
+        _validate_sequential_duration(120.0, False)
 
     def test_hook_match_uses_only_complete_fragment_evidence(self):
         hook = {

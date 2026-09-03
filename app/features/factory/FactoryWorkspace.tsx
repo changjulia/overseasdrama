@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { strToU8, Zip, ZipPassThrough } from "fflate";
 import { formatDurationZh } from "../../lib/time-format";
 import { createInitialFactoryWorkflow, factoryModes } from "./mock-data";
 import type { Draft, FactoryMode, FactoryWorkspaceProps } from "./types";
@@ -77,39 +78,56 @@ const timecode = (seconds: number) =>
   `00:${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 const buildSequentialBodyTimeline = ({
   segments,
+  entryPoint,
   episodeMedia,
   sourceLabel,
   leadInSeconds,
+  plannedEpisodeScope,
   minimumTotalSeconds = 300,
   maximumTotalSeconds = 900,
 }: {
   segments: Array<{ episode: number; start: number; safeStart?: Record<string, unknown> }>;
+  entryPoint?: { episode: number; start: number; safeStart?: Record<string, unknown> };
   episodeMedia: NonNullable<FactorySourceContext["episodeMedia"]>;
   sourceLabel: string;
   leadInSeconds: number;
+  plannedEpisodeScope?: number[];
   minimumTotalSeconds?: number;
   maximumTotalSeconds?: number;
 }) => {
-  const anchor = segments
+  const anchor = entryPoint ?? segments
     .filter((item) => Number.isFinite(item.episode) && Number.isFinite(item.start))
     .slice()
     .sort((left, right) => left.episode - right.episode || left.start - right.start)[0];
   if (!anchor) return [];
-  const availableEpisodes = Object.keys(episodeMedia)
-    .map(Number)
-    .filter((episode) => episode >= anchor.episode && episodeMedia[episode]?.url)
+  const normalizedPlannedScope = [...new Set(plannedEpisodeScope ?? [])]
+    .filter((episode) => Number.isInteger(episode) && episode > 0)
     .sort((left, right) => left - right);
+  const anchorIndex = normalizedPlannedScope.indexOf(anchor.episode);
+  const scopedEpisodes =
+    anchorIndex >= 0 ? normalizedPlannedScope.slice(anchorIndex) : [];
+  const hasValidPlannedScope =
+    scopedEpisodes.length >= 3 &&
+    scopedEpisodes.length <= 4 &&
+    scopedEpisodes.every(
+      (episode, index) => episode === anchor.episode + index,
+    );
+  // A selected storyline is a production promise. When it carries an exact
+  // episode scope, preserve its final payoff episode instead of re-running a
+  // generic minimum-duration heuristic that can silently drop the endpoint.
+  if (normalizedPlannedScope.length && !hasValidPlannedScope) return [];
+  const requiredEpisodes = hasValidPlannedScope
+    ? scopedEpisodes
+    : [anchor.episode, anchor.episode + 1, anchor.episode + 2];
+  if (requiredEpisodes.some((episode) => !episodeMedia[episode]?.url)) return [];
   const result: ExternalHookTimelineClip[] = [];
   let totalSeconds = Math.max(0, leadInSeconds);
-  let expectedEpisode = anchor.episode;
-  for (const episode of availableEpisodes) {
-    if (episode !== expectedEpisode) break;
+  const appendEpisode = (episode: number) => {
     const media = episodeMedia[episode];
     const end = Number(media?.duration || 0);
     const start = episode === anchor.episode ? Math.max(0, anchor.start) : 0;
     const duration = end - start;
-    if (!Number.isFinite(duration) || duration <= 0) break;
-    if (totalSeconds >= minimumTotalSeconds && totalSeconds + duration > maximumTotalSeconds) break;
+    if (!Number.isFinite(duration) || duration <= 0) return false;
     result.push({
       id: `sequential-story-episode-${episode}`,
       kind: result.length ? "episode" : "climax",
@@ -130,9 +148,17 @@ const buildSequentialBodyTimeline = ({
       safeEnd: { status: "verified", source: "episode_end" },
     } as ExternalHookTimelineClip);
     totalSeconds += duration;
-    expectedEpisode += 1;
-    if (totalSeconds >= minimumTotalSeconds) break;
+    return true;
+  };
+  for (const episode of requiredEpisodes) {
+    if (!appendEpisode(episode)) return [];
   }
+  if (!hasValidPlannedScope && totalSeconds < minimumTotalSeconds) {
+    const thirdFollowingEpisode = anchor.episode + 3;
+    if (!episodeMedia[thirdFollowingEpisode]?.url || !appendEpisode(thirdFollowingEpisode))
+      return [];
+  }
+  if (totalSeconds < minimumTotalSeconds || totalSeconds > maximumTotalSeconds) return [];
   return result;
 };
 const safeDownloadName = (value: string) =>
@@ -145,15 +171,120 @@ const mediaExtension = (url: string) => {
     return "mp4";
   }
 };
-const downloadMedia = async (url: string, fileName: string) => {
-  const response = await fetch(url, { method: "HEAD" });
-  if (!response.ok) throw new Error(`素材读取失败（${response.status}）`);
+const triggerBlobDownload = (blob: Blob, fileName: string) => {
+  const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
+  link.href = objectUrl;
+  link.download = safeDownloadName(fileName) || "download";
   document.body.appendChild(link);
   link.click();
   link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
+};
+const sha256Of = async (bytes: ArrayBuffer) =>
+  Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+const fetchVerifiedMedia = async (
+  url: string,
+  expectedSha256?: string,
+) => {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error(`素材读取失败（${response.status}）`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!bytes.byteLength) throw new Error("素材读取失败（文件为空）");
+  const actualSha256 = await sha256Of(bytes.buffer as ArrayBuffer);
+  if (
+    expectedSha256 &&
+    actualSha256 !== expectedSha256.trim().toLowerCase()
+  )
+    throw new Error("成片 SHA-256 校验失败，已阻止下载损坏文件");
+  return {
+    bytes,
+    sha256: actualSha256,
+    contentType: response.headers.get("content-type") || "video/mp4",
+  };
+};
+const downloadMedia = async (
+  url: string,
+  fileName: string,
+  expectedSha256?: string,
+) => {
+  const media = await fetchVerifiedMedia(url, expectedSha256);
+  triggerBlobDownload(
+    new Blob([media.bytes.buffer as ArrayBuffer], { type: media.contentType }),
+    fileName,
+  );
+};
+type VerifiedZipEntry = {
+  renderId: string;
+  fileName: string;
+  outputUrl: string;
+  outputSha256: string;
+  exportedAt: string;
+};
+const buildVerifiedZip = async (entries: VerifiedZipEntry[]) => {
+  const chunks: ArrayBuffer[] = [];
+  let resolveArchive!: (blob: Blob) => void;
+  let rejectArchive!: (error: Error) => void;
+  const archive = new Promise<Blob>((resolve, reject) => {
+    resolveArchive = resolve;
+    rejectArchive = reject;
+  });
+  const zip = new Zip((error, data, final) => {
+    if (error) {
+      rejectArchive(error);
+      return;
+    }
+    chunks.push(
+      data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer,
+    );
+    if (final)
+      resolveArchive(new Blob(chunks, { type: "application/zip" }));
+  });
+  const manifest: Array<Record<string, unknown>> = [];
+  const usedNames = new Set<string>();
+  try {
+    for (const [index, entry] of entries.entries()) {
+      const media = await fetchVerifiedMedia(
+        entry.outputUrl,
+        entry.outputSha256,
+      );
+      const requestedName = safeDownloadName(entry.fileName) ||
+        `factory-version-${index + 1}.mp4`;
+      const extension = requestedName.toLowerCase().endsWith(".mp4")
+        ? ""
+        : ".mp4";
+      const baseName = `${requestedName}${extension}`;
+      let uniqueName = baseName;
+      let suffix = 2;
+      while (usedNames.has(uniqueName.toLowerCase())) {
+        uniqueName = `${baseName.replace(/\.mp4$/i, "")}-${suffix}.mp4`;
+        suffix += 1;
+      }
+      usedNames.add(uniqueName.toLowerCase());
+      const file = new ZipPassThrough(uniqueName);
+      zip.add(file);
+      file.push(media.bytes, true);
+      manifest.push({
+        renderId: entry.renderId,
+        fileName: uniqueName,
+        sha256: media.sha256,
+        bytes: media.bytes.byteLength,
+        exportedAt: entry.exportedAt,
+      });
+    }
+    const manifestFile = new ZipPassThrough("manifest.json");
+    zip.add(manifestFile);
+    manifestFile.push(
+      strToU8(JSON.stringify({ generatedAt: new Date().toISOString(), files: manifest }, null, 2)),
+      true,
+    );
+    zip.end();
+    return await archive;
+  } catch (error) {
+    throw error instanceof Error ? error : new Error("批量归档失败");
+  }
 };
 const highlightSelectionKey = (item: {
   id: string | number;
@@ -269,6 +400,15 @@ const bestProductionMatch = (items: HookStoryMatch[]) =>
   [...items]
     .filter(isProductionReadyMatch)
     .sort((left, right) => productionMatchScore(right) - productionMatchScore(left))[0];
+const shouldPollFactoryRender = (render: FactoryRenderRecord) =>
+  render.status === "queued" ||
+  render.status === "rendering" ||
+  (render.status === "failed" && render.attempt < render.maxAttempts);
+const shouldPollHookMatchJob = (job: HookMatchJob) =>
+  job.status === "queued" ||
+  job.status === "running" ||
+  (job.status === "failed" &&
+    (job.attempt ?? 0) < (job.maxAttempts ?? 0));
 const waitFor = (milliseconds: number) =>
   new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
 
@@ -508,6 +648,9 @@ function HookAssemblyPreview({
 }) {
   const hookRef = useRef<HTMLVideoElement>(null);
   const highlightRef = useRef<HTMLVideoElement>(null);
+  // Seeking the hook to its exact out-point emits another timeupdate in
+  // Chromium. Guard the handoff so that event cannot restart the body video.
+  const handingOffToHighlightRef = useRef(false);
   const safeHookStart = Math.max(0, hookStart);
   const safeHookEnd = Math.max(safeHookStart + 0.1, hookEnd);
   const safeHighlightStart = Math.max(0, highlightStart);
@@ -518,6 +661,52 @@ function HookAssemblyPreview({
   const [current, setCurrent] = useState(0);
   const [activeClip, setActiveClip] = useState<"hook" | "highlight">("hook");
   const [playing, setPlaying] = useState(false);
+  const [mediaError, setMediaError] = useState("");
+
+  const waitForMedia = (video: HTMLVideoElement) =>
+    new Promise<void>((resolve, reject) => {
+      if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+        resolve();
+        return;
+      }
+      const cleanup = () => {
+        window.clearTimeout(timer);
+        video.removeEventListener("loadedmetadata", onReady);
+        video.removeEventListener("error", onError);
+      };
+      const onReady = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = () => {
+        cleanup();
+        reject(new Error("媒体加载失败"));
+      };
+      const timer = window.setTimeout(() => {
+        cleanup();
+        reject(new Error("媒体加载超时"));
+      }, 12_000);
+      video.addEventListener("loadedmetadata", onReady, { once: true });
+      video.addEventListener("error", onError, { once: true });
+      video.load();
+    });
+
+  const playClip = async (video: HTMLVideoElement, startAt: number) => {
+    try {
+      setMediaError("");
+      await waitForMedia(video);
+      const lastFrame = Number.isFinite(video.duration)
+        ? Math.max(0, video.duration - 0.04)
+        : startAt;
+      video.currentTime = Math.min(Math.max(0, startAt), lastFrame);
+      video.muted = true;
+      await video.play();
+      setPlaying(true);
+    } catch {
+      setPlaying(false);
+      setMediaError("预览片源加载失败，请重试或检查正片文件");
+    }
+  };
 
   const pauseBoth = () => {
     hookRef.current?.pause();
@@ -532,6 +721,7 @@ function HookAssemblyPreview({
     hookRef.current?.pause();
     highlightRef.current?.pause();
     setPlaying(false);
+    handingOffToHighlightRef.current = !inHook;
     setActiveClip(inHook ? "hook" : "highlight");
     if (target?.readyState) {
       target.currentTime = inHook
@@ -549,14 +739,17 @@ function HookAssemblyPreview({
     let clip = activeClip;
     if (current >= totalDuration - 0.05) {
       clip = "hook";
+      handingOffToHighlightRef.current = false;
       setActiveClip("hook");
       setCurrent(0);
       if (hookRef.current) hookRef.current.currentTime = safeHookStart;
     }
     const target = clip === "hook" ? hookRef.current : highlightRef.current;
     if (!target) return;
-    target.muted = true;
-    void target.play().then(() => setPlaying(true)).catch(() => undefined);
+    const targetStart = clip === "hook"
+      ? safeHookStart + current
+      : safeHighlightStart + Math.max(0, current - hookDuration);
+    void playClip(target, targetStart);
   };
 
   return (
@@ -582,17 +775,21 @@ function HookAssemblyPreview({
           onPause={() => {
             if (activeClip === "hook") setPlaying(false);
           }}
+          onError={() => {
+            setPlaying(false);
+            setMediaError("钩子片源加载失败，请检查素材文件");
+          }}
           onTimeUpdate={(event) => {
             const video = event.currentTarget;
             if (video.currentTime >= safeHookEnd - 0.04) {
+              if (handingOffToHighlightRef.current) return;
+              handingOffToHighlightRef.current = true;
               video.pause();
-              video.currentTime = safeHookEnd;
               setCurrent(hookDuration);
               setActiveClip("highlight");
               const next = highlightRef.current;
               if (next) {
-                next.currentTime = safeHighlightStart;
-                void next.play().catch(() => setPlaying(false));
+                void playClip(next, safeHighlightStart);
               }
               return;
             }
@@ -629,6 +826,14 @@ function HookAssemblyPreview({
                 Math.max(0, video.currentTime - safeHighlightStart),
             );
           }}
+          onEnded={() => {
+            setCurrent(totalDuration);
+            setPlaying(false);
+          }}
+          onError={() => {
+            setPlaying(false);
+            setMediaError("正片高光片源加载失败，请检查剧集文件");
+          }}
         />
         <button type="button" className={styles.assemblyPlay} onClick={togglePlay}>
           {playing ? "暂停" : "播放成片"}
@@ -636,6 +841,7 @@ function HookAssemblyPreview({
         <span className={styles.assemblyClipBadge}>
           {activeClip === "hook" ? "钩子" : "高光候选"}
         </span>
+        {mediaError && <span role="alert">{mediaError}</span>}
       </div>
       <div className={styles.assemblyTimeline}>
         <div
@@ -748,11 +954,11 @@ export function FactoryWorkspace({
         saved === "template_reuse" ||
         saved === "hook_to_story"
         ? saved
-        : hookSourceInput && !dramaSource
-          ? "hook_to_story"
-          : dramaSource && !hookSourceInput
-            ? "story_to_hook"
-            : "hook_to_story";
+        : dramaSource
+          ? "story_to_hook"
+          : hookSourceInput
+            ? "hook_to_story"
+            : "story_to_hook";
     },
   );
   const matchingDimensions = ["剧情事件", "人物关系", "情绪曲线", "悬念与承诺"];
@@ -766,7 +972,7 @@ export function FactoryWorkspace({
     string | undefined
   >(editingDraft?.storyMatchId);
   const [selectedTransitionId, setSelectedTransitionId] = useState(
-    String(editingDraft?.factorySnapshot?.transition?.id || "bridge-narration"),
+    String(editingDraft?.factorySnapshot?.transition?.id || "fade-cut"),
   );
   const [timeline, setTimeline] = useState<ExternalHookTimelineClip[]>(() =>
     Array.isArray(editingDraft?.factorySnapshot?.timeline)
@@ -829,7 +1035,9 @@ export function FactoryWorkspace({
     return storylineId && cached ? { [String(storylineId)]: cached as StorylineMatchCacheEntry } : {};
   });
   const [bulkHookMatching, setBulkHookMatching] = useState(false);
-  const [selectedProductionPairIds, setSelectedProductionPairIds] = useState<string[]>([]);
+  const [selectedProductionPairIds, setSelectedProductionPairIds] = useState<string[]>(
+    () => editingDraft?.factorySnapshot?.selectedProductionPairIds ?? [],
+  );
   const [batchProductionStarting, setBatchProductionStarting] = useState(false);
   const [batchProductionError, setBatchProductionError] = useState("");
   const [storylineLoading, setStorylineLoading] = useState(false);
@@ -845,7 +1053,7 @@ export function FactoryWorkspace({
   const [storyOverrides, setStoryOverrides] = useState<string[]>([]);
   const [selectedEntryPoints, setSelectedEntryPoints] = useState<
     Record<string, number>
-  >({});
+  >(() => editingDraft?.factorySnapshot?.selectedEntryPoints ?? {});
   const [paidScopeConfirmed, setPaidScopeConfirmed] = useState(false);
   const [matchRetryToken, setMatchRetryToken] = useState(0);
   const [matchRequestToken, setMatchRequestToken] = useState(0);
@@ -860,6 +1068,9 @@ export function FactoryWorkspace({
   });
   const [matchError, setMatchError] = useState("");
   const entryPollAttemptsRef = useRef(0);
+  const singleRenderPollFailuresRef = useRef<Record<string, number>>({});
+  const batchRenderPollFailuresRef = useRef<Record<string, number>>({});
+  const [singleRenderPollTick, setSingleRenderPollTick] = useState(0);
   const [factoryProjectId, setFactoryProjectId] = useState<string | undefined>(
     editingDraft?.factoryProjectId,
   );
@@ -868,6 +1079,8 @@ export function FactoryWorkspace({
   const [factoryRendersByStoryline, setFactoryRendersByStoryline] = useState<
     Record<string, FactoryRenderRecord>
   >(() => {
+    if (editingDraft?.factorySnapshot?.factoryRendersByStoryline)
+      return editingDraft.factorySnapshot.factoryRendersByStoryline as Record<string, FactoryRenderRecord>;
     const storylineId = editingDraft?.factorySnapshot?.transition?.storylineId;
     const render = editingDraft?.renderVersions?.find(
       (item) => item.id === editingDraft.factoryRenderId,
@@ -882,16 +1095,24 @@ export function FactoryWorkspace({
         progress: render.outputUrl ? 100 : 0,
         stage: render.outputUrl ? "completed" : render.status,
         error: "",
+        attempt: 0,
+        maxAttempts: 3,
         previewUrl: render.previewUrl,
         outputUrl: render.outputUrl,
       },
     };
   });
+  const [batchRenderErrorsByStoryline, setBatchRenderErrorsByStoryline] =
+    useState<Record<string, string>>(
+      () => editingDraft?.factorySnapshot?.batchRenderErrorsByStoryline ?? {},
+    );
   const [factoryRenderError, setFactoryRenderError] = useState("");
   const [selectedSpliceHighlightId, setSelectedSpliceHighlightId] = useState<
     string | undefined
   >();
-  const [selectedExternalHighlightIds, setSelectedExternalHighlightIds] = useState<string[]>([]);
+  const [selectedExternalHighlightIds, setSelectedExternalHighlightIds] = useState<string[]>(
+    () => editingDraft?.factorySnapshot?.selectedExternalHighlightIds ?? [],
+  );
   const [spliceReviewStatus, setSpliceReviewStatus] = useState<
     "pending" | "approved" | "rejected"
   >("pending");
@@ -1131,10 +1352,41 @@ export function FactoryWorkspace({
     timeline.length &&
       (factoryProjectId || editingDraft?.factoryProjectId),
   );
-  const hasCompletedRender = Boolean(
-    factoryRender?.outputUrl ||
-      editingDraft?.renderVersions?.some((render) => Boolean(render.outputUrl)),
+  const selectedProductionPlanIds =
+    matchStrategy === "story_to_hook"
+      ? selectedProductionPairIds.length
+        ? selectedProductionPairIds
+        : selectedStorylineIds
+      : [];
+  const hasStartedRender =
+    matchStrategy === "story_to_hook"
+      ? Boolean(
+          selectedProductionPlanIds.length &&
+            selectedProductionPlanIds.every((planId) =>
+              Boolean(factoryRendersByStoryline[planId]),
+            ),
+        )
+      : Boolean(factoryRender?.id);
+  const hasCompletedRender =
+    matchStrategy === "story_to_hook"
+      ? Boolean(
+          selectedProductionPlanIds.length &&
+            selectedProductionPlanIds.every((planId) => {
+              const render = factoryRendersByStoryline[planId];
+              return render?.status === "succeeded" && Boolean(render.outputUrl);
+            }),
+        )
+      : Boolean(
+          factoryRender?.outputUrl ||
+            editingDraft?.renderVersions?.some((render) => Boolean(render.outputUrl)),
+        );
+  const activeRenderDurationSeconds = Number(
+    asRecord(asRecord(factoryRender?.validation).metrics).actualDurationSeconds,
   );
+  const activeRenderDuration =
+    Number.isFinite(activeRenderDurationSeconds) && activeRenderDurationSeconds > 0
+      ? formatDurationZh(activeRenderDurationSeconds, 2)
+      : undefined;
   const hasUsableStoryMatch =
     matchStrategy === "template_reuse"
       ? hasSelectedStoryMatch || hasPersistedProduction
@@ -1163,7 +1415,7 @@ export function FactoryWorkspace({
               )
             : hasApprovedStoryMatch || hasPersistedProduction,
           hasUsableStoryMatch && Boolean(selectedTransitionId),
-          hasUsableStoryMatch && Boolean(timeline.length),
+          hasStartedRender,
           hasCompletedRender,
           Boolean(
             hasCompletedRender &&
@@ -1177,6 +1429,16 @@ export function FactoryWorkspace({
           variantCount > 0,
           qualityConfirmed,
         ];
+  const canEnterExternalStep = (targetStep: number) => {
+    if (targetStep <= activeStep) return true;
+    if (targetStep === 0) return true;
+    if (targetStep === 1) return stepReady[0];
+    if (targetStep === 2) return stepReady[1];
+    if (targetStep === 3) return stepReady[2];
+    if (targetStep === 5) return hasStartedRender;
+    if (targetStep === 6) return hasCompletedRender;
+    return false;
+  };
 
   const match = useMemo<HookEpisodeMatch>(() => {
     const seenIntervals = new Set<string>();
@@ -1483,11 +1745,6 @@ export function FactoryWorkspace({
   };
   const qualityReport = useMemo<ExternalHookQualityReport>(() => {
     const findings: ExternalHookQualityReport["findings"] = [];
-    const humanApproved = Boolean(
-      selectedRecommendation &&
-        (selectedRecommendation.overrideApplied === true ||
-          storyOverrides.includes(selectedRecommendation.id)),
-    );
     const durationGateFailed =
       selectedRecommendation?.productionGate?.requiredChecks?.targetDuration ===
         false ||
@@ -1522,10 +1779,10 @@ export function FactoryWorkspace({
     if (hookSourceInput && hookSourceInput.hookBoundaryStatus !== "verified")
       findings.push({
         id: "hook-boundary",
-        severity: "阻断",
+        severity: "建议",
         category: "连续性",
-        title: "钩子边界尚未验证",
-        detail: "钩子起止点必须同时通过完整对白、完整动作和镜头边界检查。",
+        title: "钩子边界由高光分析阶段静默复核",
+        detail: "内容工厂不再以模型边界标签设门槛；该项保留为成片预览建议。",
       });
     if (
       hookSourceInput &&
@@ -1562,19 +1819,10 @@ export function FactoryWorkspace({
     )
       findings.push({
         id: "match-review",
-        severity:
-          humanApproved || matchStrategy === "template_reuse"
-            ? "建议"
-            : "阻断",
+        severity: "建议",
         category: "连续性",
-        title:
-          humanApproved || matchStrategy === "template_reuse"
-            ? "承接证据保留为人工复核项"
-            : "承接证据需要复核",
-        detail:
-          humanApproved || matchStrategy === "template_reuse"
-          ? "该模式暂不启用模型分数门禁；问题保留为预览检查项。"
-          : "匹配结果存在安全边界或硬性证据问题；请结合生产门禁明细处理。",
+        title: "承接证据保留为人工复核项",
+        detail: "该模式不启用模型分数门禁；问题保留为预览检查项。",
       });
     if (
       selectedRecommendation?.productionGate &&
@@ -1582,15 +1830,11 @@ export function FactoryWorkspace({
     )
       findings.push({
         id: "production-gate",
-        severity: humanApproved || matchStrategy === "template_reuse"
-            ? "建议"
-            : "阻断",
+        severity: "建议",
         category: "承诺兑现",
         title: durationGateFailed
           ? "承接片段尚未达到成片目标时长"
-          : humanApproved || matchStrategy === "template_reuse"
-          ? "模型生产门未通过，保留人工判断"
-          : "匹配尚未通过生产门禁",
+          : "模型生产建议未通过，保留人工判断",
         detail:
           durationGateFailed
             ? "这里仅选择正片承接点，不再按5–15分钟阻断；最终时长将在成片时间线形成后校验。"
@@ -1641,15 +1885,10 @@ export function FactoryWorkspace({
     )
       findings.push({
         id: "segment-boundary",
-        severity:
-          humanApproved || matchStrategy === "template_reuse"
-            ? "建议"
-            : "阻断",
+        severity: "建议",
         category: "连续性",
         title: "正片片段存在不安全切点",
-        detail: humanApproved
-          ? "人工已允许进入生产，请在预览中重点检查对白、动作和反应镜头是否截断。"
-          : "时间线不能截断人物完整一句话、连续动作或反应镜头。",
+        detail: "高光分析阶段已完成静默边界复核；请在成片预览中重点检查对白、动作和反应镜头。",
       });
     if (selectedRecommendation && !hookSourceInput?.narrativePromise)
       findings.push({
@@ -1950,6 +2189,11 @@ export function FactoryWorkspace({
         activeStorylineId,
         storylineHookPairs,
         storylineMatchCache,
+        selectedExternalHighlightIds,
+        selectedEntryPoints,
+        selectedProductionPairIds,
+        factoryRendersByStoryline,
+        batchRenderErrorsByStoryline,
         transition: {
           ...selectedTransition,
           matchStrategy,
@@ -1967,20 +2211,21 @@ export function FactoryWorkspace({
     };
   };
 
-  const save = async (silent = false) => {
-    if (silent && !dirty) return;
+  const save = async (silent = false): Promise<boolean> => {
+    if (silent && !dirty) return true;
     if (!source && !hookSourceInput) {
       if (!silent) onNotify?.("请先选择本剧正片或外搭钩子");
-      return;
+      return false;
     }
     if (editingDraft?.isHistorySnapshot && !historyForked && !dirty) {
       onDraftAutoSave?.(buildDraft(factoryProjectId));
       if (!silent) onNotify?.("历史版本未发生修改，已保留原成片与审核记录");
-      return;
+      return true;
     }
     let persistedProjectId = factoryProjectId;
     if (
       mode === "external-hook" &&
+      matchStrategy !== "story_to_hook" &&
       externalReady &&
       selectedRecommendation &&
       !factoryRender?.outputUrl
@@ -1992,7 +2237,7 @@ export function FactoryWorkspace({
           onNotify?.(
             error instanceof Error ? error.message : "生产项目保存失败",
           );
-        return;
+        return false;
       }
     }
     const draft = buildDraft(persistedProjectId);
@@ -2002,6 +2247,7 @@ export function FactoryWorkspace({
     setAutoSaveCountdown(15);
     setDirty(false);
     if (!silent) onNotify?.("制作草稿已保存到「我的创作」");
+    return true;
   };
 
   const persistExternalProject = async () => {
@@ -2095,6 +2341,7 @@ export function FactoryWorkspace({
   const requestStorylineBatchRenders = async (
     requestedPlanIds?: string[],
     resolvedMatches: Record<string, HookStoryMatch> = {},
+    forceNew = false,
   ) => {
     const plansForProduction = requestedPlanIds?.length
       ? selectedStorylinePlans.filter((plan) => requestedPlanIds.includes(plan.id))
@@ -2103,48 +2350,70 @@ export function FactoryWorkspace({
       throw new Error("请先选择需要生成的故事线版本");
     setFactoryRenderError("");
     onNotify?.(`正在创建 ${plansForProduction.length} 个独立预览任务…`);
-    const created: Record<string, FactoryRenderRecord> = {};
+    let created: Record<string, FactoryRenderRecord> = {};
+    let errors: Record<string, string> = {};
     for (const plan of plansForProduction) {
-      const pair = storylineHookPairs[plan.id];
-      const cached = storylineMatchCache[plan.id];
-      if (!pair?.hookAssetId) continue;
-      let matches = cached?.matches ?? [];
-      let matchContextHash = cached?.job?.matchContextHash;
-      if (cached?.job?.id) {
-        const job = await getHookMatchJob(cached.job.id);
-        if (job.status !== "succeeded" && !matches.length) continue;
-        matchContextHash = job.matchContextHash;
-      }
-      if (!matches.length) {
-        matches = await listHookStoryMatches(
-          pair.hookAssetId,
-          dramaSource.id,
-          undefined,
-          matchContextHash,
+      try {
+        const pair = storylineHookPairs[plan.id];
+        const cached = storylineMatchCache[plan.id];
+        if (!pair?.hookAssetId) throw new Error("钩子组合尚未完成匹配");
+        const existing = factoryRendersByStoryline[plan.id];
+        if (existing && !forceNew && shouldPollFactoryRender(existing)) {
+          created = { ...created, [plan.id]: existing };
+          continue;
+        }
+        if (existing?.status === "succeeded" && !forceNew) {
+          created = { ...created, [plan.id]: existing };
+          continue;
+        }
+        let matches = cached?.matches ?? [];
+        let matchContextHash = cached?.job?.matchContextHash;
+        if (cached?.job?.id) {
+          const job = await getHookMatchJob(cached.job.id);
+          if (job.status !== "succeeded" && !matches.length)
+            throw new Error("匹配分析尚未完成");
+          matchContextHash = job.matchContextHash;
+        }
+        if (!matches.length) {
+          matches = await listHookStoryMatches(
+            pair.hookAssetId,
+            dramaSource.id,
+            undefined,
+            matchContextHash,
+          );
+        }
+        const storyMatch = resolvedMatches[plan.id] ?? matches.find(
+          (item) => item.id === (cached?.selectedRecommendationId ?? editingDraft?.storyMatchId),
+        ) ?? bestProductionMatch(matches);
+        if (!storyMatch || !isProductionReadyMatch(storyMatch))
+          throw new Error("没有可进入生产的一对一匹配结果");
+        const entries = storyMatch.entryPoints.map(asRecord);
+        const recommendedIndex = Math.max(0, entries.findIndex((entry) => entry.recommended === true));
+        const selectedEntryIndex = selectedEntryPoints[storyMatch.id] ?? recommendedIndex;
+        const selectedEntry = entries[selectedEntryIndex] ?? entries[recommendedIndex];
+        const fallbackSegment = storyMatch.segments.find(
+          (segment) => Number(segment.episode) > 0 && Number.isFinite(Number(segment.start)),
         );
-      }
-      const rawStoryMatch = resolvedMatches[plan.id] ?? matches.find(
-        (item) => item.id === (cached?.selectedRecommendationId ?? editingDraft?.storyMatchId),
-      ) ?? matches[0];
-      const storyMatch = rawStoryMatch;
-      if (!storyMatch || !isProductionReadyMatch(storyMatch)) continue;
-      const hookDuration = Math.max(
-        0,
-        (pair.hookEnd ?? 0) - (pair.hookStart ?? 0),
-      );
-      const sequentialBody = buildSequentialBodyTimeline({
-        segments: storyMatch.segments,
-        episodeMedia: dramaSource.episodeMedia ?? {},
-        sourceLabel: dramaSource.dramaCn ?? dramaSource.title,
-        leadInSeconds: hookDuration + selectedTransition.durationSeconds,
-      });
-      const bodyDuration = sequentialBody.reduce(
-        (sum, item) => sum + item.durationSeconds,
-        0,
-      );
-      if (!sequentialBody.length || hookDuration + selectedTransition.durationSeconds + bodyDuration < 300)
-        throw new Error(`${plan.title} 从高光起播后没有足够的连续片源达到 5 分钟`);
-      const versionTimeline: ExternalHookTimelineClip[] = [
+        const entryPoint = {
+          episode: Number(selectedEntry?.episode ?? fallbackSegment?.episode),
+          start: Number(selectedEntry?.start ?? fallbackSegment?.start),
+          safeStart: asRecord(selectedEntry?.safeBoundary ?? fallbackSegment?.safeStart),
+        };
+        if (!Number.isInteger(entryPoint.episode) || !Number.isFinite(entryPoint.start))
+          throw new Error("已选起播点缺少有效集数或时间码");
+        const hookDuration = Math.max(0, (pair.hookEnd ?? 0) - (pair.hookStart ?? 0));
+        const sequentialBody = buildSequentialBodyTimeline({
+          segments: storyMatch.segments,
+          entryPoint,
+          episodeMedia: dramaSource.episodeMedia ?? {},
+          sourceLabel: dramaSource.dramaCn ?? dramaSource.title,
+          leadInSeconds: hookDuration + selectedTransition.durationSeconds,
+          plannedEpisodeScope: plan.episodeScope,
+        });
+        const bodyDuration = sequentialBody.reduce((sum, item) => sum + item.durationSeconds, 0);
+        if (sequentialBody.length < 3 || sequentialBody.length > 4)
+          throw new Error(`${plan.title} 无法按所选起播点拼接 2–3 个后续完整剧集并满足 5–15 分钟`);
+        const versionTimeline: ExternalHookTimelineClip[] = [
         {
           id: `hook-${plan.id}`,
           kind: "hook",
@@ -2163,7 +2432,13 @@ export function FactoryWorkspace({
         },
         ...sequentialBody,
       ];
-      const project = await saveFactoryProject({
+        const canReuseFailedProject =
+          existing?.status === "failed" && !forceNew && !shouldPollFactoryRender(existing);
+        const project = await saveFactoryProject({
+        id: canReuseFailedProject ? existing.project : undefined,
+        forkFrom: forceNew && existing ? existing.project : undefined,
+        forkReason: forceNew ? "重新生成故事线成片" : undefined,
+        changedParameters: forceNew ? ["故事线完整集数范围", "成片时间线"] : undefined,
         title: `${title || dramaSource.dramaCn || dramaSource.title} · ${plan.title}`,
         dramaId: dramaSource.id,
         hookId: pair.hookAssetId,
@@ -2186,6 +2461,8 @@ export function FactoryWorkspace({
             savedAt: new Date().toISOString(),
           },
           bodyAssemblyMode: "sequential_from_highlight",
+          selectedEntryPointIndex: selectedEntryIndex,
+          sequentialEpisodeCount: sequentialBody.length,
           targetDurationSeconds: { minimum: 300, maximum: 900 },
         },
         timeline: versionTimeline,
@@ -2206,14 +2483,62 @@ export function FactoryWorkspace({
         language,
         paidScopeConfirmed,
       });
-      created[plan.id] = await startFactoryRender(project.id);
+        const startedRender = await startFactoryRender(project.id);
+        created = { ...created, [plan.id]: startedRender };
+        setFactoryRendersByStoryline((current) => ({ ...current, [plan.id]: startedRender }));
+      } catch (error) {
+        errors = {
+          ...errors,
+          [plan.id]: error instanceof Error ? error.message : "创建预览失败",
+        };
+      }
     }
-    if (!Object.keys(created).length)
-      throw new Error("已选故事线尚未形成可用的一对一素材匹配，暂时无法生成预览");
+    setBatchRenderErrorsByStoryline((current) => {
+      const next = { ...current };
+      for (const plan of plansForProduction) delete next[plan.id];
+      return { ...next, ...errors };
+    });
     setFactoryRendersByStoryline((current) => ({ ...current, ...created }));
-    const first = created[plansForProduction[0]?.id] ?? Object.values(created)[0];
-    setFactoryRender(first);
-    onNotify?.(`已创建 ${Object.keys(created).length} 个版本的预览任务`);
+    const firstCreatedEntry = plansForProduction
+      .map((plan) => [plan.id, created[plan.id]] as const)
+      .find(([, render]) => Boolean(render));
+    if (firstCreatedEntry) {
+      const [firstPlanId, firstRender] = firstCreatedEntry;
+      setActiveStorylineId(firstPlanId);
+      setFactoryRender(firstRender);
+      if (storylineHookPairs[firstPlanId]) onChooseHook?.(storylineHookPairs[firstPlanId]);
+    }
+    const createdCount = Object.keys(created).length;
+    const failedCount = Object.keys(errors).length;
+    if (failedCount) {
+      throw new Error(
+        `批量预览未完整创建：已创建或保留 ${createdCount}/${plansForProduction.length} 个，${failedCount} 个失败。请修复失败项后重试，系统不会缩减所选版本。`,
+      );
+    }
+    if (!createdCount) throw new Error("所选组合均未能创建预览");
+    onNotify?.(`已创建 ${createdCount} 个版本的预览任务`);
+  };
+
+  const confirmTransitionAndGenerate = async () => {
+    if (batchProductionStarting) return;
+    setBatchProductionStarting(true);
+    setBatchProductionError("");
+    setFactoryRenderError("");
+    try {
+      if (matchStrategy === "story_to_hook")
+        await requestStorylineBatchRenders(selectedProductionPairIds);
+      else await requestExternalRender();
+      setActiveStep(5);
+      onNotify?.("过渡已确认，真实预览任务已创建");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "创建真实预览任务失败";
+      setBatchProductionError(message);
+      setFactoryRenderError(message);
+      onNotify?.(message);
+    } finally {
+      setBatchProductionStarting(false);
+    }
   };
 
   const persistEpisodeSpliceProject = async () => {
@@ -2329,6 +2654,37 @@ export function FactoryWorkspace({
     }
     setDirty(true);
   };
+  const clearStoryToHookDerivedState = () => {
+    setSelectedStorylineIds([]);
+    setActiveStorylineId(undefined);
+    setStorylineHookPairs({});
+    setStorylineMatchCache({});
+    setSelectedEntryPoints({});
+    setSelectedProductionPairIds([]);
+    setFactoryRendersByStoryline({});
+    setBatchRenderErrorsByStoryline({});
+    setMatchRequestToken(0);
+    setMatchRetryToken(0);
+    setMatchJob(null);
+    setStoryMatches([]);
+    setSelectedRecommendationId(undefined);
+    setMatchError("");
+    setBatchProductionError("");
+    setFactoryProjectId(undefined);
+    setFactoryRender(null);
+    setFactoryRenderError("");
+    setTimeline([]);
+  };
+  const sourceIdentityRef = useRef(source?.id);
+  useEffect(() => {
+    if (sourceIdentityRef.current === source?.id) return;
+    sourceIdentityRef.current = source?.id;
+    setSelectedExternalHighlightIds([]);
+    clearStoryToHookDerivedState();
+    setActiveStep(0);
+    setDirty(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source?.id]);
   useEffect(() => {
     if (!editingDraft?.factoryRenderId) return;
     const controller = new AbortController();
@@ -2338,11 +2694,21 @@ export function FactoryWorkspace({
     return () => controller.abort();
   }, [editingDraft?.factoryRenderId]);
   useEffect(() => {
-    if (!factoryRender?.id || (factoryRender.status !== "queued" && factoryRender.status !== "rendering")) return;
+    if (
+      !factoryRender?.id ||
+      !shouldPollFactoryRender(factoryRender) ||
+      Object.values(factoryRendersByStoryline).some(
+        (item) => item.id === factoryRender.id,
+      )
+    ) return;
     const controller = new AbortController();
+    const renderId = factoryRender.id;
+    const failureCount = singleRenderPollFailuresRef.current[renderId] ?? 0;
+    const retryDelay = Math.min(15_000, 1500 * 2 ** Math.min(failureCount, 3));
     const timer = window.setTimeout(() => {
-      void getFactoryRender(factoryRender.id, controller.signal)
+      void getFactoryRender(renderId, controller.signal)
         .then((current) => {
+          delete singleRenderPollFailuresRef.current[renderId];
           setFactoryRenderError("");
           setFactoryRender(current);
           if (current.status === "succeeded") onNotify?.("真实预览已生成，等待人工审核");
@@ -2350,38 +2716,79 @@ export function FactoryWorkspace({
         })
         .catch((error) => {
           if (controller.signal.aborted) return;
-          setFactoryRenderError(error instanceof Error ? `任务状态更新失败：${error.message}` : "任务状态更新失败，请检查服务连接");
+          const nextFailureCount = failureCount + 1;
+          singleRenderPollFailuresRef.current[renderId] = nextFailureCount;
+          if (nextFailureCount >= 30) {
+            setFactoryRenderError(error instanceof Error ? `任务状态连续更新失败：${error.message}` : "任务状态连续更新失败，请检查服务连接");
+          } else {
+            setFactoryRenderError("");
+          }
+          setSingleRenderPollTick((current) => current + 1);
         });
-    }, 1500);
+    }, retryDelay);
     return () => {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [factoryRender?.id, factoryRender?.status, factoryRender?.progress, onNotify]);
+  }, [
+    factoryRender?.id,
+    factoryRender?.status,
+    factoryRender?.progress,
+    factoryRendersByStoryline,
+    onNotify,
+    singleRenderPollTick,
+  ]);
   useEffect(() => {
     const pending = Object.entries(factoryRendersByStoryline).filter(
-      ([, render]) => render.status === "queued" || render.status === "rendering",
+      ([, render]) => shouldPollFactoryRender(render),
     );
     if (!pending.length) return;
     const controller = new AbortController();
+    const longestFailureStreak = Math.max(
+      0,
+      ...pending.map(([, render]) => batchRenderPollFailuresRef.current[render.id] ?? 0),
+    );
+    const retryDelay = Math.min(15_000, 1500 * 2 ** Math.min(longestFailureStreak, 3));
     const timer = window.setTimeout(() => {
-      void Promise.all(
+      void Promise.allSettled(
         pending.map(async ([planId, render]) => [
           planId,
+          render.id,
           await getFactoryRender(render.id, controller.signal),
         ] as const),
-      ).then((updates) => {
+      ).then((results) => {
         if (controller.signal.aborted) return;
-        setFactoryRendersByStoryline((current) => ({
-          ...current,
-          ...Object.fromEntries(updates),
-        }));
-        const activeUpdate = updates.find(
-          ([planId]) => planId === activeStorylineId,
-        );
-        if (activeUpdate) setFactoryRender(activeUpdate[1]);
-      }).catch(() => {});
-    }, 1500);
+        const updates: Record<string, FactoryRenderRecord> = {};
+        const retrySnapshots: Record<string, FactoryRenderRecord> = {};
+        const errors: Record<string, string> = {};
+        results.forEach((result, index) => {
+          const [planId, previous] = pending[index];
+          if (result.status === "fulfilled") {
+            const [, renderId, current] = result.value;
+            delete batchRenderPollFailuresRef.current[renderId];
+            updates[planId] = current;
+            return;
+          }
+          const failures = (batchRenderPollFailuresRef.current[previous.id] ?? 0) + 1;
+          batchRenderPollFailuresRef.current[previous.id] = failures;
+          if (failures >= 30)
+            errors[planId] = result.reason instanceof Error
+              ? `状态连续更新失败：${result.reason.message}`
+              : "状态连续更新失败，请检查服务连接";
+          retrySnapshots[planId] = { ...previous };
+        });
+        setFactoryRendersByStoryline((current) => ({ ...current, ...updates, ...retrySnapshots }));
+        setBatchRenderErrorsByStoryline((current) => {
+          const next = { ...current };
+          Object.keys(updates).forEach((planId) => delete next[planId]);
+          return { ...next, ...errors };
+        });
+        const activeUpdate = activeStorylineId
+          ? updates[activeStorylineId]
+          : undefined;
+        if (activeUpdate) setFactoryRender(activeUpdate);
+      });
+    }, retryDelay);
     return () => {
       controller.abort();
       window.clearTimeout(timer);
@@ -2674,12 +3081,9 @@ export function FactoryWorkspace({
           }));
         }
       }
-      const producibleIds = pairIds.filter(
-        (planId) => resolvedMatches[planId],
-      );
-      if (!producibleIds.length) {
+      if (unresolvedPlanIds.length) {
         const hardReasons = [...new Set(
-          pairIds.flatMap((planId) => {
+          unresolvedPlanIds.flatMap((planId) => {
             const cached = storylineMatchCache[planId];
             const recommendation = cached?.matches.find(
               (item) => item.id === cached.selectedRecommendationId,
@@ -2689,17 +3093,45 @@ export function FactoryWorkspace({
         )];
         throw new Error(
           hardReasons.length
-            ? `匹配结果尚未形成可用时间线：${hardReasons.join("；")}。`
-            : "匹配分析尚未返回可用素材时间线，系统已保留任务；请重试分析。",
+            ? `仅完成 ${pairIds.length - unresolvedPlanIds.length}/${pairIds.length} 个组合：${hardReasons.join("；")}。系统已保留全部选择，请修复后重试。`
+            : `仅完成 ${pairIds.length - unresolvedPlanIds.length}/${pairIds.length} 个组合的真实素材匹配。系统已保留全部选择，请重试分析。`,
         );
       }
+      const producibleIds = [...pairIds];
       setSelectedStorylineIds(producibleIds);
-      await requestStorylineBatchRenders(producibleIds, resolvedMatches);
-      // Step 3 submits the matched combinations; the user must review and
-      // choose the transition in step 4 before moving on to the timeline.
+      setSelectedProductionPairIds(producibleIds);
+      setStorylineMatchCache((current) => {
+        const next = { ...current };
+        for (const planId of producibleIds) {
+          const resolved = resolvedMatches[planId];
+          if (resolved && next[planId]) next[planId] = {
+            ...next[planId],
+            selectedRecommendationId: resolved.id,
+            savedAt: new Date().toISOString(),
+          };
+        }
+        return next;
+      });
+      const firstPlanId = producibleIds[0];
+      const firstMatch = resolvedMatches[firstPlanId];
+      const firstCache = storylineMatchCache[firstPlanId];
+      setActiveStorylineId(firstPlanId);
+      if (storylineHookPairs[firstPlanId]) onChooseHook?.(storylineHookPairs[firstPlanId]);
+      setMatchJob(firstCache?.job ?? null);
+      setStoryMatches(
+        firstCache?.matches?.length
+          ? firstCache.matches
+          : firstMatch
+            ? [firstMatch]
+            : [],
+      );
+      setSelectedRecommendationId(firstMatch?.id);
+      setTimeline([]);
+      // Step 3 only confirms the matched combinations. Rendering is created
+      // after the user confirms the transition in visible step 4.
       setActiveStep(3);
       onNotify?.(
-        `已自动优化并将 ${producibleIds.length} 个组合送入生产${unresolvedPlanIds.length ? `；${unresolvedPlanIds.length} 个组合正在后台寻找替代安全切点` : ""}`,
+        `已确认 ${producibleIds.length} 个组合，请选择过渡后再创建预览`,
       );
     } catch (error) {
       setSelectedStorylineIds(originalSelection);
@@ -2725,9 +3157,17 @@ export function FactoryWorkspace({
     try {
       const assets = await listSelectableExternalHooks();
       const assetsById = new Map(assets.map((item) => [item.id, item]));
-      const used = new Set<string>();
+      // "Generate all" fills missing pairs.  A user-selected pair is an
+      // explicit editorial choice and must never be silently overwritten.
+      const existingPairs = storylineHookPairs;
+      const used = new Set<string>(
+        Object.values(existingPairs)
+          .map((item) => item?.hookAssetId)
+          .filter((id): id is string => Boolean(id)),
+      );
       const pairs: Record<string, FactorySourceContext> = {};
       for (const plan of selectedStorylinePlans) {
+        if (existingPairs[plan.id]?.hookAssetId) continue;
         const result = await listStoryDrivenHookRecommendations(
           dramaSource.id,
           episodes,
@@ -2744,6 +3184,7 @@ export function FactoryWorkspace({
         pairs[plan.id] = hookOptionFromAsset(asset, recommendation);
       }
       setStorylineHookPairs((current) => ({ ...current, ...pairs }));
+      const resolvedPairs = { ...existingPairs, ...pairs };
       const requestedScopeMode = episodes.some(
         (episode) => episode > (dramaSource.freeEpisodes ?? 0),
       )
@@ -2751,9 +3192,18 @@ export function FactoryWorkspace({
         : "free_only";
       const startedJobs = await Promise.all(
         selectedStorylinePlans
-          .filter((plan) => pairs[plan.id]?.hookAssetId)
+          .filter((plan) => {
+            const pair = resolvedPairs[plan.id];
+            if (!pair?.hookAssetId) return false;
+            const cached = storylineMatchCache[plan.id];
+            return !(
+              cached?.hookAssetId === pair.hookAssetId &&
+              cached.job &&
+              ["queued", "running", "succeeded"].includes(cached.job.status)
+            );
+          })
           .map(async (plan) => {
-            const pair = pairs[plan.id];
+            const pair = resolvedPairs[plan.id];
             const job = await startHookStoryMatch(
               pair.hookAssetId!,
               dramaSource.id,
@@ -2785,21 +3235,31 @@ export function FactoryWorkspace({
         }
         return next;
       });
-      const firstPlan = selectedStorylinePlans.find((plan) => pairs[plan.id]);
+      const firstPlan = selectedStorylinePlans.find(
+        (plan) => plan.id === activeStorylineId && resolvedPairs[plan.id],
+      ) ?? selectedStorylinePlans.find((plan) => resolvedPairs[plan.id]);
       if (firstPlan) {
         const firstStarted = startedJobs.find(
           (item) => item.plan.id === firstPlan.id,
         );
         setActiveStorylineId(firstPlan.id);
-        onChooseHook?.(pairs[firstPlan.id]);
-        setMatchJob(firstStarted?.job ?? null);
-        setStoryMatches([]);
-        setSelectedRecommendationId(undefined);
+        const firstPair = resolvedPairs[firstPlan.id];
+        const cached = storylineMatchCache[firstPlan.id];
+        onChooseHook?.(firstPair);
+        setMatchJob(firstStarted?.job ?? cached?.job ?? null);
+        setStoryMatches(
+          cached?.hookAssetId === firstPair.hookAssetId ? cached.matches : [],
+        );
+        setSelectedRecommendationId(
+          cached?.hookAssetId === firstPair.hookAssetId
+            ? cached.selectedRecommendationId
+            : undefined,
+        );
         setMatchError("");
         setMatchRequestToken(0);
       }
       onNotify?.(
-        `已为 ${Object.keys(pairs).length}/${selectedStorylinePlans.length} 条故事线分配候选钩子，并自动启动 ${startedJobs.length} 个故事匹配任务`,
+        `已保留 ${Object.keys(existingPairs).filter((id) => selectedStorylineIds.includes(id)).length} 个手选组合，新分配 ${Object.keys(pairs).length} 个候选钩子，并自动启动 ${startedJobs.length} 个故事匹配任务`,
       );
     } catch (error) {
       setMatchError(
@@ -2969,11 +3429,16 @@ export function FactoryWorkspace({
       const dimensionLabels = (option.ontologyTags ?? [])
         .filter((tag) => tag.dimension === hookQueryDimension)
         .map((tag) => tag.original ?? tag.label);
+      const normalizedQuery = hookTagQuery.trim().toLowerCase();
+      const textMatch = [option.title, option.description]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(normalizedQuery));
       return (
         themeMatch &&
-        (!hookTagQuery.trim() ||
+        (!normalizedQuery ||
+          textMatch ||
           dimensionLabels.some((label) =>
-            label.toLowerCase().includes(hookTagQuery.trim().toLowerCase()),
+            label.toLowerCase().includes(normalizedQuery),
           ))
       );
     })
@@ -3199,9 +3664,11 @@ export function FactoryWorkspace({
               return;
             }
             if (current.status === "failed") {
-              setMatchRequestToken(0);
-              setMatchError(current.error || "故事线匹配失败");
-              return;
+              if (!shouldPollHookMatchJob(current)) {
+                setMatchRequestToken(0);
+                setMatchError(current.error || "故事线匹配失败");
+                return;
+              }
             }
             pollTimer = window.setTimeout(() => void poll(), 2000);
           } catch (error) {
@@ -3257,7 +3724,8 @@ export function FactoryWorkspace({
     if (
       mode !== "external-hook" ||
       !matchJob?.id ||
-      !["queued", "running", "succeeded"].includes(matchJob.status) ||
+      (!["queued", "running", "succeeded"].includes(matchJob.status) &&
+        !shouldPollHookMatchJob(matchJob)) ||
       !hookSourceInput?.hookAssetId ||
       !dramaSource?.id
     )
@@ -3292,8 +3760,10 @@ export function FactoryWorkspace({
         }
         if (current.status === "failed") {
           setMatchJob(current);
-          setMatchError(current.error || "故事线匹配失败");
-          return;
+          if (!shouldPollHookMatchJob(current)) {
+            setMatchError(current.error || "故事线匹配失败");
+            return;
+          }
         }
         setMatchJob(current);
         pollTimer = window.setTimeout(() => void poll(), 2000);
@@ -3322,6 +3792,82 @@ export function FactoryWorkspace({
     matchJob?.id,
     matchJob?.status,
     mode,
+  ]);
+  // Every selected storyline owns an independent match job. Keep inactive
+  // cards live as well, otherwise only the currently opened card advances and
+  // the remaining batch can appear stuck at 0% after the worker has finished.
+  useEffect(() => {
+    if (mode !== "external-hook" || !dramaSource?.id)
+      return;
+    const pending = Object.entries(storylineMatchCache).filter(
+      ([planId, entry]) =>
+        planId !== activeStorylineId &&
+        Boolean(entry.job?.id) &&
+        shouldPollHookMatchJob(entry.job!),
+    );
+    if (!pending.length) return;
+    const controller = new AbortController();
+    let timer: number | undefined;
+    const poll = async () => {
+      if (controller.signal.aborted) return;
+      const results = await Promise.allSettled(
+        pending.map(async ([planId, entry]) => {
+          const job = await getHookMatchJob(entry.job!.id, controller.signal);
+          const matches =
+            job.status === "succeeded"
+              ? await listHookStoryMatches(
+                  entry.hookAssetId,
+                  dramaSource.id,
+                  controller.signal,
+                  job.matchContextHash,
+                )
+              : entry.matches;
+          return { planId, entry, job, matches };
+        }),
+      );
+      if (controller.signal.aborted) return;
+      const fulfilled = results
+        .filter(
+          (result): result is PromiseFulfilledResult<{
+            planId: string;
+            entry: StorylineMatchCacheEntry;
+            job: HookMatchJob;
+            matches: HookStoryMatch[];
+          }> => result.status === "fulfilled",
+        )
+        .map((result) => result.value);
+      if (fulfilled.length) {
+        setStorylineMatchCache((current) => {
+          const next = { ...current };
+          fulfilled.forEach(({ planId, entry, job, matches }) => {
+            next[planId] = {
+              ...entry,
+              job,
+              matches,
+              selectedRecommendationId:
+                entry.selectedRecommendationId &&
+                matches.some((item) => item.id === entry.selectedRecommendationId)
+                  ? entry.selectedRecommendationId
+                  : matches[0]?.id,
+              savedAt: new Date().toISOString(),
+            };
+          });
+          return next;
+        });
+      }
+      if (results.some((result) => result.status === "rejected"))
+        timer = window.setTimeout(() => void poll(), 4000);
+    };
+    timer = window.setTimeout(() => void poll(), 1500);
+    return () => {
+      controller.abort();
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [
+    activeStorylineId,
+    dramaSource?.id,
+    mode,
+    storylineMatchCache,
   ]);
   useEffect(() => {
     if (
@@ -3569,13 +4115,10 @@ export function FactoryWorkspace({
               key={id}
               className={matchStrategy === id ? styles.matchStrategyActive : ""}
               onClick={() => {
-                setMatchRequestToken(0);
+                clearStoryToHookDerivedState();
                 setMatchStrategy(id);
-                setSelectedStorylineIds([]);
                 setHookOptions([]);
-                setMatchJob(null);
-                setStoryMatches([]);
-                setMatchError("");
+                setActiveStep(0);
                 touch();
               }}
             >
@@ -3596,7 +4139,7 @@ export function FactoryWorkspace({
           <button
             type="button"
             key={`${step.internalStep}-${step.label}`}
-            disabled={step.internalStep > 2 && !stepReady[2]}
+            disabled={!canEnterExternalStep(step.internalStep)}
             className={`${visibleExternalStepIndex === index ? styles.externalStepActive : ""} ${stepReady[step.internalStep] ? styles.externalStepDone : ""}`}
             onClick={() => setActiveStep(step.internalStep)}
           >
@@ -3904,28 +4447,50 @@ export function FactoryWorkspace({
                         <strong>起量潜力 {plan.acquisitionScore}</strong>
                       </header>
                       <h3>{plan.title}</h3>
-                      <div className={styles.storylineCoreSummary}>
-                        <small>这条故事讲什么</small>
-                        <p>{plan.storylineSummary}</p>
+                      <div className={styles.storylineMeta}>
+                        <span>
+                          {plan.episodeScope.length
+                            ? `第${Math.min(...plan.episodeScope)}–${Math.max(...plan.episodeScope)}集`
+                            : "集数待确认"}
+                        </span>
+                        <span>{previewTime(plan.totalDurationSeconds)}</span>
+                        <span>{plan.chronology === "flashback" ? "倒叙" : "顺叙"}</span>
                       </div>
-                      {plan.scriptPlan && (
-                        <div className={styles.storylineJourney}>
-                          <span>
-                            <small>开场</small>
-                            <b>{plan.scriptPlan.openingEvent}</b>
-                          </span>
-                          <i aria-hidden="true">→</i>
-                          <span>
-                            <small>发展</small>
-                            <b>{plan.scriptPlan.stagePayoff}</b>
-                          </span>
-                          <i aria-hidden="true">→</i>
-                          <span>
-                            <small>卡点</small>
-                            <b>{plan.scriptPlan.endingCliffhanger}</b>
-                          </span>
-                        </div>
-                      )}
+                      <div className={styles.storylineEpisodeFlow}>
+                        {/* 卡片叙事阶段：开场 → 发展 → 卡点 */}
+                        {(plan.scriptPlan?.progression?.length
+                          ? plan.scriptPlan.progression.map((beat) => ({
+                              episode: beat.episode,
+                              start: beat.start,
+                              end: beat.end,
+                              plot: beat.plot || beat.beat,
+                            }))
+                          : plan.segments.map((segment) => ({
+                              episode: segment.episode,
+                              start: segment.start,
+                              end: segment.end,
+                              plot: segment.plot,
+                            }))).map((beat, beatIndex, beats) => (
+                          <div key={`${beat.episode}-${beat.start}-${beat.end}`}>
+                            <b>
+                              第{beat.episode}集
+                              <small>{previewTime(beat.start)}–{previewTime(beat.end)}</small>
+                            </b>
+                            <p>{beat.plot}</p>
+                            <em>
+                              {beatIndex === 0
+                                ? "开场"
+                                : beatIndex === beats.length - 1
+                                  ? "卡点"
+                                  : "发展"}
+                            </em>
+                          </div>
+                        ))}
+                      </div>
+                      <p className={styles.storylineQuestion}>
+                        <b>观众追问</b>
+                        {plan.audienceQuestion || plan.hookNeed.audienceQuestion}
+                      </p>
                       {!!plan.entryPoints?.length && (
                         <label className={styles.storylineEntryPointPicker}>
                           <small>起播点</small>
@@ -4593,8 +5158,8 @@ export function FactoryWorkspace({
                     onClick={() => void startSelectedPairProduction()}
                   >
                     {batchProductionStarting
-                      ? "正在创建生产任务…"
-                      : `确认并批量生产（${selectedProductionPairIds.length}）`}
+                      ? "正在确认组合…"
+                      : `确认组合并选择过渡（${selectedProductionPairIds.length}）`}
                   </button>
                 </div>
               </div>
@@ -4761,7 +5326,7 @@ export function FactoryWorkspace({
                 );
               }}
               onApplyQualitySuggestion={() => onNotify?.("已记录优化建议")}
-              onGeneratePreview={() => setActiveStep(5)}
+              onGeneratePreview={() => void confirmTransitionAndGenerate()}
             />
           </section>
         )}
@@ -4790,9 +5355,10 @@ export function FactoryWorkspace({
                   : undefined
               }
               previewUrl={factoryRender?.previewUrl}
+              duration={activeRenderDuration}
               renderConnected={true}
               initialProgress={factoryRender?.progress ?? 0}
-              initialRenderError={factoryRenderError || factoryRender?.error || ""}
+              initialRenderError={factoryRenderError || (activeStorylineId ? batchRenderErrorsByStoryline[activeStorylineId] : "") || factoryRender?.error || ""}
               initialRenderStatus={factoryRender?.status === "succeeded" ? "ready" : factoryRender?.status === "failed" ? "failed" : factoryRender?.status === "rendering" ? "rendering" : factoryRender?.status === "queued" ? "queued" : "idle"}
               renderCount={
                 matchStrategy === "story_to_hook"
@@ -4841,6 +5407,7 @@ export function FactoryWorkspace({
                             : render
                               ? "reviewing" as const
                               : "draft" as const,
+                        note: batchRenderErrorsByStoryline[plan.id] || render?.error,
                         previewUrl: render?.previewUrl,
                         outputUrl: render?.outputUrl,
                       };
@@ -4876,7 +5443,8 @@ export function FactoryWorkspace({
                   (containsPaidEpisodes && !paidScopeConfirmed))
               }
               onSaveDraft={() => {
-                save(false);
+                void save(false);
+                if (matchStrategy === "story_to_hook") return;
                 void persistExternalProject()
                   .then(() => onNotify?.("生产项目已持久保存"))
                   .catch((error) =>
@@ -4887,7 +5455,7 @@ export function FactoryWorkspace({
               }}
               onRequestRender={
                 matchStrategy === "story_to_hook"
-                  ? requestStorylineBatchRenders
+                  ? () => requestStorylineBatchRenders(undefined, {}, true)
                   : requestExternalRender
               }
               onReview={async (decision, note) => {
@@ -4912,6 +5480,8 @@ export function FactoryWorkspace({
                     onNotify?.("请先批量生成至少一个真实成片版本");
                     return;
                   }
+                  onNotify?.(`正在校验并归档 ${completed.length} 个成片，请勿关闭页面…`);
+                  const exportedEntries: VerifiedZipEntry[] = [];
                   for (const [planId, render] of completed) {
                     const plan = selectedStorylinePlans.find((item) => item.id === planId);
                     const customName = config.versionFileNames?.[planId]?.trim();
@@ -4922,9 +5492,19 @@ export function FactoryWorkspace({
                         ? `${customName.replace(/\.[^.]+$/, "")}.${config.format.toLowerCase()}`
                         : `${config.fileName.replace(/\.[^.]+$/, "")}_${plan?.title || planId}.${config.format.toLowerCase()}`,
                     );
-                    await downloadMedia(exported.outputUrl, exported.fileName);
+                    if (!exported.outputSha256)
+                      throw new Error(`${plan?.title || planId} 缺少成片 SHA-256，已停止批量导出`);
+                    exportedEntries.push(exported);
                   }
-                  onNotify?.(`已开始批量导出 ${completed.length} 个成片版本`);
+                  const archive = await buildVerifiedZip(exportedEntries);
+                  const archiveBase = safeDownloadName(
+                    config.fileName.replace(/\.[^.]+$/, ""),
+                  ) || "factory-export";
+                  triggerBlobDownload(
+                    archive,
+                    `${archiveBase}_${completed.length}个版本.zip`,
+                  );
+                  onNotify?.(`已校验并打包 ${completed.length} 个成片；ZIP 内含 SHA-256 清单`);
                   return;
                 }
                 if (!factoryRender?.outputUrl) {
@@ -4936,8 +5516,12 @@ export function FactoryWorkspace({
                   factoryRender.id,
                   config.fileName,
                 );
-                await downloadMedia(exported.outputUrl, exported.fileName);
-                onNotify?.("已开始下载并记录正式导出");
+                await downloadMedia(
+                  exported.outputUrl,
+                  exported.fileName,
+                  exported.outputSha256,
+                );
+                onNotify?.("成片 SHA-256 校验通过，已开始下载并记录正式导出");
               }}
               onNotify={onNotify}
             />
@@ -4977,6 +5561,12 @@ export function FactoryWorkspace({
             (activeStep === 2 &&
               matchStrategy === "story_to_hook" &&
               batchProductionStarting) ||
+            (activeStep === 3 &&
+              (!stepReady[3] ||
+                batchProductionStarting ||
+                (matchStrategy === "story_to_hook" &&
+                  !selectedProductionPairIds.length))) ||
+            (activeStep === 5 && !hasCompletedRender) ||
             (activeStep === 2 &&
               matchStrategy !== "template_reuse" &&
               !stepReady[2])
@@ -5020,14 +5610,12 @@ export function FactoryWorkspace({
               );
               return;
             }
-            if (matchStrategy === "hook_to_story" && activeStep === 3) {
-              setActiveStep(5);
-              onNotify?.("连接方案已确认，正在生成可播放草稿");
+            if (matchStrategy === "story_to_hook" && activeStep === 3) {
+              void confirmTransitionAndGenerate();
               return;
             }
             if (activeStep === 3) {
-              setActiveStep(5);
-              onNotify?.("过渡方案已确认，正在生成可播放草稿");
+              void confirmTransitionAndGenerate();
               return;
             }
             if (activeStep === 2 && matchStrategy === "story_to_hook") {
@@ -5053,8 +5641,10 @@ export function FactoryWorkspace({
             setActiveStep((step) => Math.min(steps.length - 1, step + 1));
           }}
         >
-          {matchStrategy === "hook_to_story" && activeStep === 3
-            ? "确认连接并生成草稿"
+          {matchStrategy !== "story_to_hook" && activeStep === 3
+            ? batchProductionStarting
+              ? "正在创建预览任务…"
+              : "确认过渡并生成成片"
             : activeStep === 1
             ? matchStrategy === "story_to_hook"
               ? "逐条匹配外搭钩子"
@@ -5067,10 +5657,14 @@ export function FactoryWorkspace({
               ? "按选中方案开始完整匹配"
               : activeStep === 2 && matchStrategy === "story_to_hook"
                 ? batchProductionStarting
-                  ? "正在进入生产…"
+                  ? "正在确认组合…"
                   : selectedProductionPairIds.length
-                    ? `进入下一阶段生产（${selectedProductionPairIds.length}）`
-                    : "进入下一阶段生产（全部已匹配）"
+                    ? `确认组合并选择过渡（${selectedProductionPairIds.length}）`
+                    : "确认全部已匹配组合"
+                : activeStep === 3 && matchStrategy === "story_to_hook"
+                  ? batchProductionStarting
+                    ? "正在创建预览任务…"
+                    : `确认过渡并生成成片（${selectedProductionPairIds.length}）`
                 : "下一步"}
         </button>
       </div>
@@ -5135,7 +5729,7 @@ export function FactoryWorkspace({
                 <input
                   value={hookTagQuery}
                   onChange={(event) => setHookTagQuery(event.target.value)}
-                  placeholder="按所选标签维度搜索"
+                  placeholder="搜索标题或所选标签维度"
                 />
                 <select
                   value={hookThemeFilter}

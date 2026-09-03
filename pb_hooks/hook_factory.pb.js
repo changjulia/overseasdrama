@@ -510,6 +510,7 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
           retrieval,
         };
       })
+      .filter((item) => item.retrieval.recallEligible)
       .sort((left, right) => right.retrieval.score - left.retrieval.score)
       .slice(0, 50);
     return e.json(200, {
@@ -749,7 +750,7 @@ routerAdd("POST", "/api/lumina/historical-template-recommendations", (e) => {
           productionEligible: true,
         },
       };
-    });
+    }).filter((item) => item.retrieval.recallEligible);
     const persistedPairs = new Set(
       persistedTemplates.map(
         (item) =>
@@ -854,7 +855,7 @@ routerAdd("POST", "/api/lumina/historical-template-recommendations", (e) => {
             productionEligible: evidenceLevel !== "weak",
           },
         };
-      });
+      }).filter((item) => item.retrieval.recallEligible);
     const templates = [...persistedTemplates, ...fallbackTemplates]
       .sort((left, right) => right.retrieval.score - left.retrieval.score)
       .slice(0, 50);
@@ -1057,6 +1058,10 @@ routerAdd("POST", "/api/lumina/hook-matching/jobs", (e) => {
     helpers.externalHookFragmentSnapshot(hook),
     storyNeed,
   );
+  if (!selectedHookRetrieval.recallEligible)
+    throw new BadRequestError(
+      `selected hook has contradictory ontology tags: ${selectedHookRetrieval.tagRecall.hardConflicts.join(", ")}`,
+    );
   let templateSnapshot = {};
   if (matchStrategy === "template_reuse") {
     if (
@@ -3065,6 +3070,7 @@ routerAdd("GET", "/api/lumina/factory/history", (e) => {
               current_stage: latest.getString("current_stage"),
               preview_url: latest.getString("preview_url"),
               output_url: latest.getString("output_url"),
+              output_sha256: latest.getString("output_sha256"),
               validation: helpers.jsonObject(latest, "validation"),
             }
           : null,
@@ -3074,6 +3080,7 @@ routerAdd("GET", "/api/lumina/factory/history", (e) => {
           status: render.getString("status"),
           preview_url: render.getString("preview_url"),
           output_url: render.getString("output_url"),
+          output_sha256: render.getString("output_sha256"),
           created: "",
         })),
       };
@@ -3155,8 +3162,11 @@ routerAdd("GET", "/api/lumina/factory/renders/{id}", (e) => {
     progress: render.getInt("progress"),
     current_stage: render.getString("current_stage"),
     error: render.getString("error"),
+    attempt: render.getInt("attempt"),
+    max_attempts: render.getInt("max_attempts"),
     preview_url: render.getString("preview_url"),
     output_url: render.getString("output_url"),
+    output_sha256: render.getString("output_sha256"),
     validation: helpers.jsonObject(render, "validation"),
   });
 });
@@ -3185,6 +3195,7 @@ routerAdd("POST", "/api/lumina/factory/projects/{id}/review", (e) => {
     throw new BadRequestError(
       "review requires a succeeded render from this project",
     );
+  const artifact = helpers.verifyFactoryRenderArtifact(render);
   const validation = helpers.jsonObject(render, "validation");
   if (
     decision === "approved" &&
@@ -3199,6 +3210,7 @@ routerAdd("POST", "/api/lumina/factory/projects/{id}/review", (e) => {
     renderId: render.id,
     renderVersion: render.getInt("version"),
     outputSha256: render.getString("output_sha256"),
+    artifact,
     reviewedAt: new Date().toISOString(),
   };
   project.set("review", review);
@@ -3230,6 +3242,7 @@ routerAdd("POST", "/api/lumina/factory/projects/{id}/export", (e) => {
   const validation = helpers.jsonObject(render, "validation");
   if (validation.passed !== true || !render.getString("output_sha256"))
     throw new BadRequestError("render validation must pass before export");
+  const artifact = helpers.verifyFactoryRenderArtifact(render);
   if (project.getString("status") !== "approved") {
     project.set("status", "approved");
     project.set("review", {
@@ -3253,6 +3266,7 @@ routerAdd("POST", "/api/lumina/factory/projects/{id}/export", (e) => {
     fileName,
     outputUrl: render.getString("output_url"),
     outputSha256: render.getString("output_sha256"),
+    artifact,
     exportedAt: new Date().toISOString(),
   };
   project.set(
@@ -3372,6 +3386,57 @@ routerAdd("PATCH", "/api/lumina/factory-render/jobs/{id}", (e) => {
     id = e.request.pathValue("id");
   if (!["rendering", "succeeded", "failed"].includes(nextStatus))
     throw new BadRequestError("invalid status");
+  if (nextStatus === "succeeded") {
+    const validation = body.validation || {};
+    const technicalChecks = Array.isArray(validation.technicalChecks)
+      ? validation.technicalChecks
+      : [];
+    const checkCodes = new Set(
+      technicalChecks.map((item) => String((item || {}).code || "")),
+    );
+    const requiredChecks = [
+      "UNIQUE_OUTPUT_PATH",
+      "OUTPUT_PRESENT",
+      "PLAYABLE",
+      "VIDEO_CODEC",
+      "AUDIO_CODEC",
+      "RESOLUTION",
+      "DURATION_CONSISTENCY",
+      "FLASH_TAIL_REMOVED",
+    ];
+    if (
+      validation.passed !== true ||
+      validation.technicalPassed !== true ||
+      requiredChecks.some((code) => !checkCodes.has(code)) ||
+      !validation.boundaryStatus ||
+      !Array.isArray(body.boundary_ledger)
+    )
+      throw new BadRequestError(
+        "succeeded render requires the complete technical QC and real boundary ledger",
+      );
+    const unsupported = Array.isArray(validation.unsupportedFeatures)
+      ? validation.unsupportedFeatures
+      : [];
+    const advisoryCodes = new Set(
+      (Array.isArray(validation.advisories) ? validation.advisories : []).map(
+        (item) => String((item || {}).code || ""),
+      ),
+    );
+    if (unsupported.length && !advisoryCodes.has("UNSUPPORTED_FEATURES"))
+      throw new BadRequestError(
+        "unsupported render features must be returned as advisories",
+      );
+    const outputUrl = String(body.output_url || "");
+    const fileName = require(`${__hooks}/hook_factory_helpers.js`).factoryRenderFileName(outputUrl);
+    if (!fileName.endsWith(`-${id}.mp4`))
+      throw new BadRequestError(
+        "succeeded render output filename must contain its render id",
+      );
+    if (!/^[a-fA-F0-9]{64}$/.test(String(body.output_sha256 || "")))
+      throw new BadRequestError(
+        "succeeded render requires a valid output SHA-256",
+      );
+  }
   e.app.runInTransaction((tx) => {
     const render = tx.findRecordById("factory_renders", id);
     if (

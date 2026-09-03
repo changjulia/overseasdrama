@@ -188,6 +188,23 @@ export type Draft = {
     activeStorylineId?: string;
     storylineHookPairs?: Record<string, FactorySourceContext>;
     storylineMatchCache?: Record<string, unknown>;
+    selectedExternalHighlightIds?: string[];
+    selectedEntryPoints?: Record<string, number>;
+    selectedProductionPairIds?: string[];
+    factoryRendersByStoryline?: Record<string, {
+      id: string;
+      project: string;
+      version: number;
+      status: "queued" | "rendering" | "succeeded" | "failed";
+      progress: number;
+      stage: string;
+      error: string;
+      previewUrl?: string;
+      outputUrl?: string;
+      outputSha256?: string;
+      validation?: unknown;
+    }>;
+    batchRenderErrorsByStoryline?: Record<string, string>;
   };
 };
 

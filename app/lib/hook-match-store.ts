@@ -74,6 +74,8 @@ export type HookMatchJob = {
   progress: number;
   stage: string;
   error: string;
+  attempt?: number;
+  maxAttempts?: number;
   diagnostics?: HookMatchDiagnostics;
   matchContextHash?: string;
 };
@@ -473,6 +475,8 @@ export async function startHookStoryMatch(
     progress: Number(value.progress || 0),
     stage: String(value.current_stage || "queued"),
     error: String(value.error || ""),
+    attempt: Number(value.attempt || 0),
+    maxAttempts: Number(value.max_attempts || 3),
     matchContextHash: String(value.match_context_hash || "") || undefined,
   };
 }
@@ -749,6 +753,8 @@ export async function getHookMatchJob(
     progress: Number(value.progress || 0),
     stage: String(value.current_stage || ""),
     error: String(value.error || ""),
+    attempt: Number(value.attempt || 0),
+    maxAttempts: Number(value.max_attempts || 3),
     matchContextHash: String(value.match_context_hash || ""),
     diagnostics: parseDiagnostics(value),
   };

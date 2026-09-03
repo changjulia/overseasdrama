@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./ExternalHookDelivery.module.css";
 
 export type DeliveryReviewStatus = "pending" | "approved" | "rejected";
@@ -114,7 +114,10 @@ export function ExternalHookDelivery({
   const safeProjectName = useMemo(() => projectName.trim().replace(/[\\/:*?"<>|]/g, "-") || "未命名项目", [projectName]);
   const [fileName, setFileName] = useState(`${safeProjectName}_外搭钩子_v01`);
   const [selectedVersionIds, setSelectedVersionIds] = useState<string[]>([]);
+  const [hasManuallyAdjustedVersionSelection, setHasManuallyAdjustedVersionSelection] = useState(false);
   const [versionFileNames, setVersionFileNames] = useState<Record<string, string>>({});
+  const [isExporting, setIsExporting] = useState(false);
+  const isExportingRef = useRef(false);
   const hasPlayablePreview = Boolean(previewUrl);
   const visibleRenderStatus: DeliveryRenderStatus = hasPlayablePreview ? "ready" : renderStatus;
   const visibleProgress = hasPlayablePreview ? 100 : progress;
@@ -124,7 +127,12 @@ export function ExternalHookDelivery({
     const exportable = versions.filter((version) => Boolean(version.outputUrl));
     setSelectedVersionIds((current) => {
       const retained = current.filter((id) => exportable.some((version) => version.id === id));
-      return retained.length ? retained : exportable.map((version) => version.id);
+      const next = hasManuallyAdjustedVersionSelection
+        ? retained
+        : exportable.map((version) => version.id);
+      return current.length === next.length && current.every((id, index) => id === next[index])
+        ? current
+        : next;
     });
     setVersionFileNames((current) => {
       const next = { ...current };
@@ -133,7 +141,7 @@ export function ExternalHookDelivery({
       });
       return next;
     });
-  }, [safeProjectName, versions]);
+  }, [hasManuallyAdjustedVersionSelection, safeProjectName, versions]);
 
   useEffect(() => {
     setReviewStatus(initialReviewStatus);
@@ -207,10 +215,16 @@ export function ExternalHookDelivery({
     versionFileNames,
   };
   const submitExport = async () => {
+    if (isExportingRef.current) return;
+    isExportingRef.current = true;
+    setIsExporting(true);
     try {
       await onExport?.(exportConfig);
     } catch (error) {
       onNotify?.(error instanceof Error ? error.message : "成片导出失败");
+    } finally {
+      isExportingRef.current = false;
+      setIsExporting(false);
     }
   };
 
@@ -267,7 +281,7 @@ export function ExternalHookDelivery({
           </section>
 
           <section className={styles.card}><div className={styles.cardTitle}><div><span>输出状态</span><h3>{hasPlayablePreview ? "成片可播放" : "等待生成真实成片"}</h3></div></div><p className={styles.inlineHint}>{hasPlayablePreview ? "请在左侧播放检查首帧、转场、字幕与结尾；服务端校验通过后即可导出。" : "生成任务完成后，真实视频会自动出现在左侧预览框。"}</p></section>
-          <section className={styles.card}><div className={styles.cardTitle}><div><span>成片版本</span><h3>{versions.length} 个版本</h3></div></div><div className={styles.versionList}>{versions.map(version=><button type="button" key={version.id} onClick={()=>onSelectVersion?.(version)}><b>{version.label}</b><span>{version.createdAt} · {versionStatusLabels[version.status]}</span></button>)}</div></section>
+          <section className={styles.card}><div className={styles.cardTitle}><div><span>成片版本</span><h3>{versions.length} 个版本</h3></div></div><div className={styles.versionList}>{versions.map(version=><button type="button" key={version.id} onClick={()=>onSelectVersion?.(version)}><b>{version.label}</b><span>{version.createdAt} · {versionStatusLabels[version.status]}{version.note ? ` · ${version.note}` : ""}</span></button>)}</div></section>
         </div>
       </div>}
 
@@ -278,15 +292,15 @@ export function ExternalHookDelivery({
             <label><span>格式</span><select value={format} disabled aria-label="格式（当前渲染规格）"><option>MP4</option></select></label>
             <label><span>分辨率</span><select value={resolution} disabled aria-label="分辨率（当前渲染规格）"><option>1080 × 1920</option></select></label>
             <label><span>质量</span><select value={quality} disabled aria-label="质量（当前渲染规格）"><option>高质量</option></select></label>
-            <label className={styles.nameField}><span>文件名</span><div><input value={fileName} onChange={(event) => setFileName(event.target.value)} /><i>.{format.toLowerCase()}</i></div></label>
+            <label className={styles.nameField}><span>文件名</span><div><input value={fileName} disabled={isExporting} onChange={(event) => setFileName(event.target.value)} /><i>.{format.toLowerCase()}</i></div></label>
           </div>
           {versions.some((version) => version.outputUrl) && <div className={styles.batchVersionNames}>
-            <header><div><b>批量导出版本</b><span>勾选版本并在前端分别命名</span></div><button type="button" onClick={()=>setSelectedVersionIds(selectedVersionIds.length===versions.filter(version=>version.outputUrl).length?[]:versions.filter(version=>version.outputUrl).map(version=>version.id))}>{selectedVersionIds.length===versions.filter(version=>version.outputUrl).length?"取消全选":"全选可导出版本"}</button></header>
-            {versions.filter(version=>version.outputUrl).map((version)=><label key={version.id}><input type="checkbox" checked={selectedVersionIds.includes(version.id)} onChange={()=>setSelectedVersionIds(current=>current.includes(version.id)?current.filter(id=>id!==version.id):[...current,version.id])}/><span>{version.label}</span><div><input value={versionFileNames[version.id]||""} onChange={(event)=>setVersionFileNames(current=>({...current,[version.id]:event.target.value}))}/><i>.{format.toLowerCase()}</i></div></label>)}
+            <header><div><b>批量导出版本</b><span>勾选版本并在前端分别命名</span></div><button type="button" disabled={isExporting} onClick={()=>{setHasManuallyAdjustedVersionSelection(true);setSelectedVersionIds(selectedVersionIds.length===versions.filter(version=>version.outputUrl).length?[]:versions.filter(version=>version.outputUrl).map(version=>version.id));}}>{selectedVersionIds.length===versions.filter(version=>version.outputUrl).length?"取消全选":"全选可导出版本"}</button></header>
+            {versions.filter(version=>version.outputUrl).map((version)=><label key={version.id}><input type="checkbox" disabled={isExporting} checked={selectedVersionIds.includes(version.id)} onChange={()=>{setHasManuallyAdjustedVersionSelection(true);setSelectedVersionIds(current=>current.includes(version.id)?current.filter(id=>id!==version.id):[...current,version.id]);}}/><span>{version.label}</span><div><input value={versionFileNames[version.id]||""} disabled={isExporting} onChange={(event)=>setVersionFileNames(current=>({...current,[version.id]:event.target.value}))}/><i>.{format.toLowerCase()}</i></div></label>)}
           </div>}
           <div className={styles.exportActions}>
-            <button type="button" onClick={() => { onSaveDraft?.(); onNotify?.("草稿与交付配置已保存"); }} disabled={disabled}>保存草稿</button>
-            <button className={styles.exportButton} type="button" onClick={() => void submitExport()} disabled={!canExport || (versions.some(version=>version.outputUrl) && !selectedVersionIds.length)} title={!canExport ? "渲染服务尚未返回真实文件" : undefined}>批量导出 {versions.some(version=>version.outputUrl) ? selectedVersionIds.length : Math.max(exportableVersionCount, hasPlayablePreview ? 1 : 0)} 个版本</button>
+            <button type="button" onClick={() => { onSaveDraft?.(); onNotify?.("草稿与交付配置已保存"); }} disabled={disabled || isExporting}>保存草稿</button>
+            <button className={styles.exportButton} type="button" aria-busy={isExporting} onClick={() => void submitExport()} disabled={isExporting || !canExport || (versions.some(version=>version.outputUrl) && !selectedVersionIds.length)} title={isExporting ? "正在校验并打包成片" : !canExport ? "渲染服务尚未返回真实文件" : undefined}>{isExporting ? `正在导出 ${versions.some(version=>version.outputUrl) ? selectedVersionIds.length : Math.max(exportableVersionCount, hasPlayablePreview ? 1 : 0)} 个版本…` : `批量导出 ${versions.some(version=>version.outputUrl) ? selectedVersionIds.length : Math.max(exportableVersionCount, hasPlayablePreview ? 1 : 0)} 个版本`}</button>
           </div>
           {!canExport && <small className={styles.exportHint}>等待至少一个真实预览文件后开放批量导出</small>}
         </section>

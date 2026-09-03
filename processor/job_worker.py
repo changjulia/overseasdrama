@@ -17,7 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PIL import Image, ImageFilter, ImageStat
 
@@ -109,14 +109,42 @@ def api_request(base_url: str, token: str, path: str, method: str = "GET", paylo
         raise ApiRequestError(exc.code, f"API {method} {path} failed ({exc.code}): {raw.decode('utf-8', errors='replace')[:500]}") from exc
 
 
-def download(url: str, destination: Path) -> None:
+def _download_deadline_seconds() -> float:
+    raw = os.getenv("LUMINA_MEDIA_DOWNLOAD_MAX_SECONDS", "300")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise DownloadIntegrityError("media download deadline must be a positive number") from exc
+    if not 0 < value <= 3600:
+        raise DownloadIntegrityError("media download deadline must be between 0 and 3600 seconds")
+    return value
+
+
+def download(
+    url: str,
+    destination: Path,
+    on_progress: Callable[[int, int | None, float], None] | None = None,
+) -> None:
     """Download one complete response before atomically publishing the file."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
+    deadline_seconds = _download_deadline_seconds()
+    started = time.monotonic()
+    last_progress_at = started
+
+    def ensure_within_deadline() -> float:
+        elapsed = time.monotonic() - started
+        if elapsed > deadline_seconds:
+            # Never include the provider URL here: this exception is persisted
+            # into queue diagnostics by callers.
+            raise DownloadIntegrityError("remote media download exceeded its total time limit")
+        return elapsed
+
     try:
         with tempfile.NamedTemporaryFile(prefix=f".{destination.name}.", suffix=".part", dir=destination.parent, delete=False) as output:
             temporary = Path(output.name)
-            with urllib.request.urlopen(url, timeout=120) as response:
+            with urllib.request.urlopen(url, timeout=min(120, deadline_seconds)) as response:
+                ensure_within_deadline()
                 raw_length = response.headers.get("Content-Length") if response.headers is not None else None
                 expected = None
                 if raw_length not in (None, ""):
@@ -127,8 +155,13 @@ def download(url: str, destination: Path) -> None:
                     if expected < 0:
                         raise DownloadIntegrityError("remote media returned an invalid content length")
                 written = 0
+                read_chunk = getattr(response, "read1", response.read)
                 while True:
-                    chunk = response.read(1024 * 1024)
+                    ensure_within_deadline()
+                    # A smaller read makes trickling transfers observable and
+                    # lets the total deadline interrupt them between chunks.
+                    chunk = read_chunk(64 * 1024)
+                    elapsed = ensure_within_deadline()
                     if not chunk:
                         break
                     count = output.write(chunk)
@@ -137,10 +170,16 @@ def download(url: str, destination: Path) -> None:
                     written += count
                     if expected is not None and written > expected:
                         raise DownloadIntegrityError("remote media exceeded its declared content length")
+                    output.flush()
+                    if on_progress is not None and (elapsed - last_progress_at >= 1 or expected == written):
+                        on_progress(written, expected, elapsed)
+                        last_progress_at = elapsed
                 if written == 0:
                     raise DownloadIntegrityError("remote media response was empty")
                 if expected is not None and written != expected:
                     raise DownloadIntegrityError("remote media ended before its declared content length")
+                if on_progress is not None and last_progress_at != elapsed:
+                    on_progress(written, expected, elapsed)
                 output.flush()
                 os.fsync(output.fileno())
         os.replace(temporary, destination)
@@ -265,7 +304,15 @@ def execute_material_job(response: dict[str, Any], base_url: str, workspace: Pat
                  if video_name else source_url)
     if on_progress:
         on_progress(8, "下载素材")
-    download(asset_url, source)
+    def report_download_progress(written: int, expected: int | None, _elapsed: float) -> None:
+        if not on_progress:
+            return
+        progress = 8
+        if expected and expected > 0:
+            progress += min(5, int(written / expected * 5))
+        on_progress(progress, f"下载素材（已接收 {written // 1024} KiB）")
+
+    download(asset_url, source, on_progress=report_download_progress)
     # Generate a small, cacheable card poster once.  The feed must never open
     # hundreds of source-video range requests merely to paint first frames.
     poster = Path.cwd() / "public" / "material-covers" / f"{material_id}.webp"

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:lumina:event-semantics-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "taxonomyVersion", "entities", "events", "tags", "evidence", "continuation"],
+  "properties": {
+    "schemaVersion": {"const": "event-semantics-v1"},
+    "taxonomyVersion": {"const": "global-taxonomy-v1"},
+    "entities": {"type":"array", "maxItems":50, "items":{"type":"object","additionalProperties":false,"required":["id","name","attributes"],"properties":{"id":{"type":"string","minLength":1},"name":{"$ref":"#/$defs/claim"},"attributes":{"type":"array","items":{"$ref":"#/$defs/claim"}}}}},
+    "events": {"type":"array","maxItems":60,"items":{"$ref":"#/$defs/event"}},
+    "tags": {"type":"array","maxItems":100,"items":{"$ref":"#/$defs/claim"}},
+    "unmappedTags": {"type":"array","maxItems":100,"items":{"$ref":"#/$defs/claim"}},
+    "evidence": {"type":"array","maxItems":200,"items":{"$ref":"#/$defs/evidence"}},
+    "continuation": {
+      "type":"object","additionalProperties":false,
+      "required":["audienceKnows","openQuestions","promise","requiredPayoff","entryState","exitState","requiredContext","forbiddenAssumptions"],
+      "properties": {
+        "audienceKnows":{"$ref":"#/$defs/claim"}, "openQuestions":{"$ref":"#/$defs/claim"},
+        "promise":{"$ref":"#/$defs/claim"}, "requiredPayoff":{"$ref":"#/$defs/claim"},
+        "entryState":{"$ref":"#/$defs/claim"}, "exitState":{"$ref":"#/$defs/claim"},
+        "requiredContext":{"$ref":"#/$defs/claim"}, "forbiddenAssumptions":{"$ref":"#/$defs/claim"}
+      }
+    }
+  },
+  "$defs": {
+    "claim": {
+      "type":"object","additionalProperties":false,
+      "required":["id","value","assertionStatus","verificationStatus","evidenceRefs","reason","dependsOn"],
+      "properties":{
+        "id":{"type":"string","minLength":1},
+        "value":{},
+        "assertionStatus":{"enum":["explicit","inferred","missing","conflicting"]},
+        "verificationStatus":{"const":"unverified"},
+        "evidenceRefs":{"type":"array","uniqueItems":true,"items":{"type":"string"}},
+        "reason":{"type":"string"},
+        "dependsOn":{"type":"array","uniqueItems":true,"items":{"type":"string"}}
+      }
+    },
+    "evidence": {
+      "type":"object","additionalProperties":false,
+      "required":["id","sourceType","quote","charStart","charEnd"],
+      "properties":{
+        "id":{"type":"string","minLength":1},
+        "sourceType":{"enum":["csv_script","episode_analysis","episode_checkpoint"]},
+        "quote":{"type":"string","minLength":1},
+        "charStart":{"type":"integer","minimum":0},"charEnd":{"type":"integer","minimum":1}
+      }
+    },
+    "event": {
+      "type":"object","additionalProperties":false,
+      "required":["id","actorIds","targetIds","action","goal","obstacle","stakes","preconditions","stateBefore","stateAfter","outcome","relationships","emotionTrajectory","setting","chronology","time"],
+      "properties":{
+        "id":{"type":"string","minLength":1},
+        "actorIds":{"$ref":"#/$defs/claim"},"targetIds":{"$ref":"#/$defs/claim"},
+        "action":{"$ref":"#/$defs/claim"},"goal":{"$ref":"#/$defs/claim"},
+        "obstacle":{"$ref":"#/$defs/claim"},"stakes":{"$ref":"#/$defs/claim"},
+        "preconditions":{"$ref":"#/$defs/claim"},"stateBefore":{"$ref":"#/$defs/claim"},
+        "stateAfter":{"$ref":"#/$defs/claim"},"outcome":{"$ref":"#/$defs/claim"},
+        "relationships":{"type":"array","items":{"$ref":"#/$defs/claim"}},
+        "emotionTrajectory":{"type":"array","items":{"$ref":"#/$defs/claim"}},
+        "setting":{"$ref":"#/$defs/claim"},
+        "chronology":{"type":"array","items":{"$ref":"#/$defs/claim"}},
+        "time":{
+          "type":"object","additionalProperties":false,
+          "required":["coordinateSystem","start","end","absoluteStart","absoluteEnd","offset"],
+          "properties":{
+            "coordinateSystem":{"const":"script_relative"},
+            "start":{"type":["number","null"],"minimum":0}, "end":{"type":["number","null"],"minimum":0},
+            "absoluteStart":{"type":"null"},"absoluteEnd":{"type":"null"},"offset":{"type":"null"}
+          }
+        }
+      }
+    }
+  }
+}

@@ -152,16 +152,16 @@ function normalizeHookTitles(items: HookAsset[]) {
   });
 }
 
-function validLocalizedHook(hook: HookAsset) {
+export function validLocalizedHook(hook: HookAsset) {
   const duration = hook.end - hook.start;
   if (!Number.isFinite(duration) || hook.start < 0) return false;
   if (hook.sourceClass === "episode_highlight") return duration >= 10 && duration <= 60;
   if (hook.sourceClass === "narration_opening") return hook.start < 60 && duration >= 5 && duration <= 60;
-  // External hooks are localized opening assets as well, and production
-  // accepts the same 5–60 second hook window used by the analysis contract.
-  // The previous 20 second cap hid already-reviewed 20–60 second hooks from
-  // history restoration and made an otherwise valid draft look incomplete.
-  return hook.start <= 5 && duration >= 5 && duration <= 60;
+  // An external hook is a localized source fragment, not necessarily the
+  // first fragment in its source upload.  Approved material-library hooks may
+  // begin later in a benchmark/ad while still being the exact 5–60 second
+  // range that production must trim and prepend.
+  return duration >= 5 && duration <= 60;
 }
 
 export async function listHookAssets(signal?: AbortSignal, externalOnly = false): Promise<HookAsset[]> {

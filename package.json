@@ -13,12 +13,15 @@
     "build": "vinext build",
     "start": "vinext start",
     "release:preflight": "python deploy/preflight.py",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs",
+    "test": "npm run build && npm run test:contracts && npm run test:python",
+    "test:contracts": "node --import tsx --test tests/*.test.mjs",
+    "test:python": "python -m unittest discover -s tests -p \"test_*.py\" -q",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
+    "fflate": "0.7.4",
     "next": "16.2.6",
     "react": "19.2.6",
     "react-dom": "19.2.6"
@@ -36,6 +39,7 @@
     "eslint-config-next": "16.2.6",
     "react-server-dom-webpack": "19.2.6",
     "tailwindcss": "4.2.1",
+    "tsx": "4.22.1",
     "typescript": "5.9.3",
     "vinext": "0.0.50",
     "vite": "8.0.13",

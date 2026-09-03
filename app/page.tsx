@@ -66,13 +66,13 @@ function favoriteFromMaterial(material: InspirationMaterial): Favorite {
 }
 
 export default function Home() {
-  const [workspace, setWorkspace] = useState<Workspace>("inspiration");
+  const [workspace, setWorkspace] = usePersistentState<Workspace>("lumina:workspace", "inspiration");
   const [creationsInitialTab, setCreationsInitialTab] = useState<"favorites" | "drafts">("favorites");
-  const [factoryMode, setFactoryMode] = useState<FactoryMode>("episode-splice");
+  const [factoryMode, setFactoryMode] = usePersistentState<FactoryMode>("lumina:factory-mode", "episode-splice");
   const [editingDraft, setEditingDraft] = useState<Draft | null>(null);
-  const [factorySource, setFactorySource] = useState<FactorySourceContext | null>(null);
-  const [factoryDramaSource, setFactoryDramaSource] = useState<FactorySourceContext | null>(null);
-  const [factoryHookSource, setFactoryHookSource] = useState<FactorySourceContext | null>(null);
+  const [factorySource, setFactorySource] = usePersistentState<FactorySourceContext | null>("lumina:factory-source", null);
+  const [factoryDramaSource, setFactoryDramaSource] = usePersistentState<FactorySourceContext | null>("lumina:factory-drama-source", null);
+  const [factoryHookSource, setFactoryHookSource] = usePersistentState<FactorySourceContext | null>("lumina:factory-hook-source", null);
   const [drafts, setDrafts] = usePersistentState<Draft[]>("lumina:drafts", initialDrafts);
   const [deletedFactoryProjects, setDeletedFactoryProjects] = usePersistentState<string[]>("lumina:deleted-factory-projects", []);
   const [favorites, setFavorites] = usePersistentState<Favorite[]>("lumina:favorites", favoriteMocks);
