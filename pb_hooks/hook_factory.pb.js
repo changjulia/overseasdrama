@@ -543,7 +543,7 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
     const preparedStoryNeed = helpers.prepareHookCandidateStoryNeed(storyNeed);
     const candidates = retrievalHooks
       .map((hook) => {
-        const retrieval = helpers.scoreHookCandidate(hook, storyNeed, preparedStoryNeed);
+        const retrieval = helpers.scoreHookCandidateFast(hook, storyNeed, preparedStoryNeed);
         return {
           hook_id: hook.id,
           material_id: hook.material,

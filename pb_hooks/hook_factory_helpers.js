@@ -2428,6 +2428,37 @@ function scoreHookCandidate(hook, storyNeed, preparedStoryNeed) {
   };
 }
 
+function scoreHookCandidateFast(hook, storyNeed, preparedStoryNeed) {
+  const prepared = preparedStoryNeed || prepareHookCandidateStoryNeed(storyNeed);
+  const tokens = prepared.focusTokens.concat(prepared.contextTokens).slice(0, 60);
+  const haystack = [hook.title, hook.hook_type, hook.themes, hook.content_tags,
+    hook.relationships, hook.conflict, hook.emotion, hook.narrative_promise,
+    hook.information_gap].filter(Boolean).join(" ").toLowerCase();
+  const matchedSignals = tokens.filter((token) => haystack.includes(String(token).toLowerCase())).slice(0, 12);
+  const titleTokens = prepared.dramaTitleTokens;
+  const title = String(hook.title || "").toLowerCase();
+  const titleMatches = titleTokens.filter((token) => title.includes(String(token).toLowerCase()));
+  const titleAffinity = titleTokens.length ? Math.min(1, titleMatches.length / Math.min(6, titleTokens.length)) : 0;
+  const coverage = Math.min(1, matchedSignals.length / Math.max(1, Math.min(12, tokens.length)) + titleAffinity * 0.45);
+  const verified = hook.boundary_status === "verified";
+  const approved = hook.review_status === "approved";
+  const hasPromise = Boolean(hook.narrative_promise);
+  const score = Math.round(Math.min(100, coverage * 55 + (verified ? 22 : 8) + (approved ? 12 : 0) + (hasPromise ? 11 : 0)) * 10) / 10;
+  return {
+    score, recallEligible: true,
+    direction: matchedSignals.length ? "parallel" : "amplification",
+    directionLabel: matchedSignals.length ? "平行故事" : "冲突强化",
+    storyNeedCoverage: Math.round(coverage * 1000) / 10,
+    titleAffinity: Math.round(titleAffinity * 1000) / 10,
+    truthSafety: verified ? 100 : 45,
+    bridgeCost: Math.round(Math.max(0, 100 - coverage * 70 - (hasPromise ? 15 : 0))),
+    spoilerRisk: /死亡|结局|真相|凶手|身份揭露/.test(String(hook.narrative_promise || "")) ? 65 : 25,
+    matchedSignals,
+    tagRecall: { stage: "recall_only", decision: "needs_evidence", relation: "unknown", score: 0, productionEligible: false, hardConflicts: [], matches: {} },
+    reasons: matchedSignals.length ? [`命中故事信号：${matchedSignals.slice(0, 6).join("、")}`] : ["按审核与边界可信度进入候选池"],
+  };
+}
+
 function templateEvidenceLevel(performance) {
   const value =
     performance && typeof performance === "object" ? performance : {};
@@ -2874,6 +2905,7 @@ module.exports = {
   generateTemplateAdaptationPlans,
   storyNeedFromPlans,
   scoreHookCandidate,
+  scoreHookCandidateFast,
   prepareHookCandidateStoryNeed,
   hookRetrievalSnapshot,
   templateEvidenceLevel,
