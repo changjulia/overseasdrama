@@ -20,6 +20,7 @@ import enhancementStyles from "./factory-enhancements.module.css";
 import { listPocketBaseDramas } from "../../lib/pocketbase-drama-store";
 import {
   listSelectableExternalHooks,
+  listSelectableExternalHookCandidates,
   listSelectableExternalHooksByIds,
   type HookAsset,
 } from "../../lib/hook-asset-store";
@@ -3250,15 +3251,7 @@ export function FactoryWorkspace({
               episodes.length &&
               matchStrategy === "story_to_hook"
             ) {
-              const result = await listStoryDrivenHookRecommendations(
-                dramaSource.id,
-                episodes,
-                goal,
-                activeStorylinePlan ? [activeStorylinePlan] : [],
-                controller.signal,
-              );
-              recommendations = result.items;
-              setStrategyStoryNeed(result.storyNeed);
+              setStrategyStoryNeed(null);
             } else if (
               dramaSource?.id &&
               episodes.length &&
@@ -3283,7 +3276,9 @@ export function FactoryWorkspace({
                 )
               : matchStrategy === "hook_to_story"
                 ? await listSelectableExternalHooks(controller.signal)
-                : [];
+                : matchStrategy === "story_to_hook"
+                  ? await listSelectableExternalHookCandidates(controller.signal)
+                  : [];
             const ranked = new Map(
               recommendations.map((item) => [item.hookId, item]),
             );

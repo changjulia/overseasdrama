@@ -226,6 +226,12 @@ export async function listSelectableExternalHooks(signal?: AbortSignal): Promise
   return normalizeHookTitles(records.map(fromRecord).filter(validLocalizedHook).filter(isSelectableExternalHook));
 }
 
+/** Fast first page for the interactive picker; deeper matching happens after selection. */
+export async function listSelectableExternalHookCandidates(signal?: AbortSignal): Promise<HookAsset[]> {
+  const payload = await pbJson(`/api/collections/hook_assets/records?page=1&perPage=60&sort=-id&skipTotal=1&fields=${HOOK_PICKER_FIELDS}&expand=material&filter=${encodeURIComponent(PRE_ROLL_FILTER)}`, { signal }) as { items?: PBRecord[] };
+  return normalizeHookTitles((payload.items ?? []).map(fromRecord).filter(validLocalizedHook).filter(isSelectableExternalHook));
+}
+
 /** Fetch only the ranked IDs returned by the server-side story matcher. */
 export async function listSelectableExternalHooksByIds(ids: string[], signal?: AbortSignal): Promise<HookAsset[]> {
   const unique = [...new Set(ids.filter((id) => /^[a-z0-9]{15}$/.test(id)))].slice(0, 50);
