@@ -523,7 +523,7 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
        ORDER BY (review_status='approved') DESC,
                 (boundary_status='verified') DESC,
                 id DESC
-       LIMIT 120`
+       LIMIT 60`
     ).all(hooks);
     const retrievalHooks = hooks.map((row) => {
       const values = (name) => { try { const value=JSON.parse(String(row[name]||"[]")); return Array.isArray(value)?value:[]; } catch (_) { return []; } };

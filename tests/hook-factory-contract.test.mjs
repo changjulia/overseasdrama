@@ -88,7 +88,7 @@ test("scores reverse hook candidates with explicit retrieval evidence", () => {
 });
 
 test("bounds synchronous hook ranking before semantic scoring", () => {
-  assert.match(hookRouteSource, /ORDER BY \(review_status='approved'\) DESC,[\s\S]*LIMIT 120/);
+  assert.match(hookRouteSource, /ORDER BY \(review_status='approved'\) DESC,[\s\S]*LIMIT 60/);
 });
 
 test("prioritizes an attributable same-title hook over a generic thematic hook", () => {
