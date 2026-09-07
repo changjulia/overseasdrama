@@ -1518,7 +1518,7 @@ routerAdd("POST", "/api/lumina/hook-matching/claim", (e) => {
       // split, the background material worker can claim an interactive job and
       // both workers may spend minutes on old matches while the current screen
       // remains at 0%.
-      if (!requestedJobId && interactiveWorker !== interactiveJob) return false;
+      if (!requestedJobId && body.queue_mode !== "both" && interactiveWorker !== interactiveJob) return false;
       const candidateContext = helpers.jsonObject(candidate, "match_context");
       const hasSelectedStorylineEvidence = Array.isArray(candidateContext.selectedStorylines) && candidateContext.selectedStorylines.length > 0;
       const supplemental = tx

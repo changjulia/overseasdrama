@@ -604,7 +604,7 @@ def _upgrade_legacy_material_result(legacy: dict[str, Any], material_id: str) ->
     return {"schema_version": "material-v2", "analysis_id": f"legacy-upgrade-{material_id}", "tier": "coarse", "status": "succeeded", "source": {"kind": "external_paid_ad_material", "durationSeconds": duration}, "engines": {"semantic": "verified-legacy-result", "upgrade": "local-material-v2"}, "result": result}
 
 
-def process_one_endpoint(base_url: str, token: str, worker_id: str, api_prefix: str, kind: str, optional: bool = False, job_id: str | None = None) -> bool:
+def process_one_endpoint(base_url: str, token: str, worker_id: str, api_prefix: str, kind: str, optional: bool = False, job_id: str | None = None, shared_queue: bool = False) -> bool:
     try:
         # Long-form material synthesis/repair calls can legitimately take more
         # than ten minutes. Keep the lease at the server-supported maximum so a
@@ -616,6 +616,8 @@ def process_one_endpoint(base_url: str, token: str, worker_id: str, api_prefix: 
         # material analysis keeps the full 30-minute lease.
         lease_seconds = 240 if kind in {"hook_match", "entry_precision", "supplemental_highlight"} else 1800
         claim_body = {"worker_id": worker_id, "lease_seconds": lease_seconds}
+        if shared_queue:
+            claim_body["queue_mode"] = "both"
         if job_id:
             claim_body["job_id"] = job_id
         status, response = api_request(base_url, token, f"{api_prefix}/claim", "POST", claim_body)
@@ -753,13 +755,19 @@ def process_available(base_url: str, token: str, worker_id: str, queue: str = "b
         return material or supplemental or hook_match or entry_precision or factory_render
     if job_id:
         raise ValueError("--job-id requires --queue drama or --queue material")
-    drama = process_one_endpoint(base_url, token, worker_id, "/api/lumina/analysis", "drama")
-    material = process_one_endpoint(base_url, token, worker_id, "/api/lumina/material-analysis", "material", optional=True)
-    supplemental = process_one_endpoint(base_url, token, worker_id, "/api/lumina/supplemental-highlights", "supplemental_highlight", optional=True)
-    hook_match = process_one_endpoint(base_url, token, worker_id, "/api/lumina/hook-matching", "hook_match", optional=True)
-    entry_precision = process_one_endpoint(base_url, token, worker_id, "/api/lumina/entry-precision", "entry_precision", optional=True)
-    factory_render = process_one_endpoint(base_url, token, worker_id, "/api/lumina/factory-render", "factory_render", optional=True)
-    return drama or material or supplemental or hook_match or entry_precision or factory_render
+    # A single shared worker must serve interactive jobs even when its name
+    # lacks "interactive". Recheck the priority queue after each completed job.
+    for api_prefix, kind, optional in (
+        ("/api/lumina/hook-matching", "hook_match", True),
+        ("/api/lumina/entry-precision", "entry_precision", True),
+        ("/api/lumina/factory-render", "factory_render", True),
+        ("/api/lumina/supplemental-highlights", "supplemental_highlight", True),
+        ("/api/lumina/analysis", "drama", False),
+        ("/api/lumina/material-analysis", "material", True),
+    ):
+        if process_one_endpoint(base_url, token, worker_id, api_prefix, kind, optional=optional, shared_queue=True):
+            return True
+    return False
 
 
 def main() -> None:
