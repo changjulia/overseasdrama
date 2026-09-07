@@ -2,16 +2,34 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-async function render() {
+async function render(authenticated = true) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
   return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html" } }),
+    new Request("http://localhost/", {
+      headers: {
+        accept: "text/html",
+        ...(authenticated
+          ? {
+              "oai-authenticated-user-id": "test-user",
+              "oai-authenticated-user-email": "tester@lumina.internal",
+              "oai-authenticated-user-full-name": encodeURIComponent("测试成员"),
+              "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
+            }
+          : {}),
+      },
+    }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
     { waitUntil() {}, passThroughOnException() {} },
   );
 }
+
+test("redirects anonymous viewers into the sign-in flow", async () => {
+  const response = await render(false);
+  assert.equal(response.status, 307);
+  assert.equal(response.headers.get("location"), "http://localhost/signin-with-chatgpt?return_to=%2F");
+});
 
 test("server-renders the Lumina workbench shell", async () => {
   const response = await render();

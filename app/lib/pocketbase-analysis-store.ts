@@ -1,4 +1,5 @@
 "use client";
+import { boundedFetch as fetch } from "./bounded-fetch";
 
 import type { PipelineTask } from "../features/operations/types";
 
@@ -22,15 +23,33 @@ async function taskAction(id:string,action:"pause"|"resume") {
 export const pausePocketBaseAnalysisTask=(id:string)=>taskAction(id,"pause");
 export const resumePocketBaseAnalysisTask=(id:string)=>taskAction(id,"resume");
 
+export async function getPocketBaseTaskLog(task: Pick<PipelineTask, "backendId" | "stage">) {
+  if (!task.backendId) throw new Error("此任务没有服务端记录");
+  const collections: Record<string, string> = {hook_match:"hook_match_jobs", supplemental_highlight:"supplemental_highlight_jobs", entry_precision:"entry_precision_jobs"};
+  const collection = collections[task.stage || ""] || "analysis_jobs";
+  const response = await fetch(`${PB_URL}/api/collections/${collection}/records/${encodeURIComponent(task.backendId)}?fields=id,status,error,logs`, {cache:"no-store"});
+  if (!response.ok) throw new Error(`日志读取失败（HTTP ${response.status}），请关闭后重试`);
+  return await response.json() as {status?:string; error?:string; logs?:unknown};
+}
+
 export async function deletePocketBaseAnalysisTask(id:string) {
   const response=await fetch(`${PB_URL}/api/lumina/analysis/jobs/${encodeURIComponent(id)}`,{method:"DELETE"});
   if(!response.ok){const payload=await response.json().catch(()=>null) as {message?:string}|null;throw new Error(payload?.message||`任务删除失败（HTTP ${response.status}）`)}
 }
 
 export async function listPocketBaseAnalysisTasks(signal?:AbortSignal):Promise<PipelineTask[]> {
-  const read=async(collection:string,expand:string)=>{const response=await fetch(`${PB_URL}/api/collections/${collection}/records?perPage=500&expand=${expand}`,{signal,cache:"no-store"});if(!response.ok)throw new Error(`PocketBase 任务读取失败（${collection}，HTTP ${response.status}）`);return (await response.json() as {items:PBJob[]}).items};
+  const read=async(collection:string)=>{
+    const items:PBJob[]=[];
+    for(let page=1;;page++) {
+      const response=await fetch(`${PB_URL}/api/lumina/task-summaries/${collection}?page=${page}`,{signal,cache:"no-store"});
+      if(!response.ok)throw new Error(`任务读取失败（${collection}，HTTP ${response.status}）`);
+      const payload=await response.json() as {items:PBJob[];totalPages:number};items.push(...payload.items);
+      if(page>=payload.totalPages)break;
+    }
+    return items;
+  };
   const [analysis,matching,supplemental,entries]=await Promise.all([
-    read("analysis_jobs","drama,episode"),read("hook_match_jobs","drama"),read("supplemental_highlight_jobs","episode,match_job,match_job.drama"),read("entry_precision_jobs","match,match.drama")
+    read("analysis_jobs"),read("hook_match_jobs"),read("supplemental_highlight_jobs"),read("entry_precision_jobs")
   ]);
   const dramaTasks=analysis.map(job=>{
     const drama=job.expand?.drama;const episode=job.expand?.episode?.episode_number;

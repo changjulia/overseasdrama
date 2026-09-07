@@ -21,6 +21,8 @@ npm install
 npm run dev
 ```
 
+开发服务默认会同时启动本地账号服务。首次访问会跳转到 `/login`；如尚无账号，从 `/register` 创建的第一个账号会成为管理员。后续自助注册的账号需管理员在 `/account` 启用后才能登录。本地账号数据保存在已忽略的 `.codex-runtime/auth/`。
+
 ## PocketBase 剧库
 
 剧目元数据、海报和分集视频保存在项目独立的 PocketBase 中。先指定 PocketBase 可执行文件（未指定时脚本使用当前开发机上的默认路径），再启动服务：

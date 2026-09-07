@@ -1,8 +1,12 @@
+import { getChatGPTUser } from "@/app/chatgpt-auth";
 import { externalApiErrorResponse, getMonthlyRankings, successResponse } from "../../../lib/server/external-open-api";
 
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 export async function GET(request: Request) {
+  if (!await getChatGPTUser()) {
+    return Response.json({ code: 401, message: "请先登录", data: null }, { status: 401 });
+  }
   const requestId = request.headers.get("X-Request-Id") || crypto.randomUUID();
   const month = new URL(request.url).searchParams.get("month")?.trim();
   if (month && !MONTH_PATTERN.test(month)) {

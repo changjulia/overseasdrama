@@ -34,7 +34,7 @@
   font-size: 8px;
 }
 .libraryTools > div span {
-  color: #1769e0;
+  color: var(--lumina-primary);
   font-weight: 700;
 }
 .libraryTools > div button {
@@ -45,7 +45,7 @@
   font-size: 7px;
 }
 .libraryTools > div button:first-of-type {
-  background: #1769e0;
+  background: var(--lumina-primary);
   color: #fff;
 }
 .libraryTools button:disabled {
@@ -75,7 +75,7 @@
 .filters .selected {
   border-color: #8bb7ed;
   background: #eef5ff;
-  color: #1769e0;
+  color: var(--lumina-primary);
   font-weight: 700;
 }
 .rowActions {
@@ -98,8 +98,8 @@
   white-space: nowrap;
 }
 .rowActions > button:first-child {
-  border-color: #1769e0;
-  background: #1769e0;
+  border-color: var(--lumina-primary);
+  background: var(--lumina-primary);
   color: #fff;
 }
 .menuButton {
@@ -138,7 +138,7 @@
 }
 .draftMenu button:hover {
   background: #edf4ff !important;
-  color: #1769e0 !important;
+  color: var(--lumina-primary) !important;
 }
 .drawerBackdrop {
   position: fixed;
@@ -162,7 +162,7 @@
   align-items: center;
 }
 .drawer > header span {
-  color: #1769e0;
+  color: var(--lumina-primary);
   font-size: 9px;
   font-weight: 800;
   letter-spacing: 1px;
@@ -193,7 +193,7 @@
 }
 .analysisHero b {
   font-size: 14px;
-  color: #1769e0;
+  color: var(--lumina-primary);
 }
 .analysisHero span {
   font-size: 8px;
@@ -225,13 +225,13 @@
 .drawerActions button {
   border: 1px solid #d9e4f2;
   background: #fff;
-  color: #1769e0;
+  color: var(--lumina-primary);
   border-radius: 7px;
   padding: 9px;
   font-size: 8px;
 }
 .drawerActions button:last-child {
-  background: #1769e0;
+  background: var(--lumina-primary);
   color: #fff;
 }
 @keyframes slideIn {
@@ -283,7 +283,7 @@
 .analysisAction {
   border: 1px solid #b9d1ef;
   background: #f1f6fd;
-  color: #1769e0;
+  color: var(--lumina-primary);
   padding: 0 12px;
   font-weight: 700;
 }
@@ -302,7 +302,7 @@
 }
 .createAction button {
   border: 0;
-  background: #1769e0;
+  background: var(--lumina-primary);
   color: #fff;
   border-radius: 0 7px 7px 0;
   padding: 0 11px;
@@ -316,7 +316,7 @@
 .favoriteMoreActive {
   border-color: #8eb9ed;
   background: #edf5ff;
-  color: #1769e0;
+  color: var(--lumina-primary);
 }
 .previewPlaying::after {
   content: "";
@@ -368,7 +368,7 @@
 }
 .favoriteMenu button:hover {
   background: #edf4ff;
-  color: #1769e0;
+  color: var(--lumina-primary);
 }
 .favoriteMenu .removeAction {
   color: #c04f5d;

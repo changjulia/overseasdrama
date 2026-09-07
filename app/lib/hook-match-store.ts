@@ -1,4 +1,5 @@
 "use client";
+import { boundedFetch as fetch } from "./bounded-fetch";
 
 export type StoryMatchSegment = {
   episode: number;
@@ -381,7 +382,7 @@ async function request(path: string, init?: RequestInit) {
       "x-lumina-ui": "local",
       ...(init?.headers || {}),
     },
-  });
+  }, path.endsWith("storyline-plans") ? 120000 : 30000);
   if (!response.ok) {
     const value = (await response.json().catch(() => null)) as {
       message?: string;

@@ -1,0 +1,57 @@
+{$DOMAIN} {
+  encode zstd gzip
+  request_body {
+    max_size 4GB
+  }
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy strict-origin-when-cross-origin
+    -Server
+  }
+  route {
+    request_header -X-Lumina-Account-*
+    request_header -oai-authenticated-*
+    @internal path /auth/verify /health
+    respond @internal 404
+    @account path /login /register /account /auth/*
+    handle @account {
+      reverse_proxy auth:8080 {
+        header_up X-Real-IP {remote_host}
+      }
+    }
+    handle {
+      forward_auth auth:8080 {
+        uri /auth/verify
+        copy_headers X-Lumina-Account-Id X-Lumina-Account-Name X-Lumina-Account-Email
+      }
+      @media path /renders/* /material-covers/* /material-previews/* /material-analysis/*
+      handle @media {
+        reverse_proxy media:8080
+      }
+      handle_path /pb/* {
+        reverse_proxy pocketbase:8090 {
+          transport http {
+            versions 1.1
+            max_conns_per_host 1
+            keepalive_idle_conns_per_host 1
+          }
+          header_up Host localhost:8090
+          header_up Origin http://localhost:3000
+          header_up X-Lumina-Ui local
+          header_up X-Lumina-User-Id {http.request.header.X-Lumina-Account-Id}
+          header_up -Cookie
+          header_up -Authorization
+        }
+      }
+      handle {
+        reverse_proxy web:3000 {
+          header_up Host {host}
+          header_up oai-authenticated-user-id {http.request.header.X-Lumina-Account-Id}
+          header_up oai-authenticated-user-email {http.request.header.X-Lumina-Account-Email}
+          header_up oai-authenticated-user-full-name {http.request.header.X-Lumina-Account-Name}
+          header_up oai-authenticated-user-full-name-encoding percent-encoded-utf-8
+        }
+      }
+    }
+  }
+}

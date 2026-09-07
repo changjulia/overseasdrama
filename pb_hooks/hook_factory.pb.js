@@ -69,18 +69,19 @@ routerAdd("POST", "/api/lumina/hooks/{id}/review", (e) => {
           .findRecordById("ad_materials", hook.getString("material"))
           .getFloat("duration_seconds");
       const minimumDuration =
-        hook.getString("source_class") === "external_material" ? 5 : 3;
+        ["external_material", "narration_opening"].includes(hook.getString("source_class")) ? 5 : 3;
+      const maximumDuration = hook.getString("source_class") === "narration_opening" ? 180 : 60;
       if (
         !Number.isFinite(reviewedStart) ||
         !Number.isFinite(reviewedEnd) ||
         reviewedStart < 0 ||
         reviewedEnd <= reviewedStart ||
         reviewedEnd - reviewedStart < minimumDuration ||
-        reviewedEnd - reviewedStart > 60 ||
+        reviewedEnd - reviewedStart > maximumDuration ||
         (sourceDuration > 0 && reviewedEnd > sourceDuration + 0.05)
       ) {
         throw new BadRequestError(
-          `reviewed boundaries must be inside the source and ${minimumDuration}-60 seconds long`,
+          `reviewed boundaries must be inside the source and ${minimumDuration}-${maximumDuration} seconds long`,
         );
       }
       hook.set("start_seconds", Math.round(reviewedStart * 1000) / 1000);
@@ -123,6 +124,14 @@ routerAdd("POST", "/api/lumina/hooks/{id}/review", (e) => {
     } else {
       hook.set("boundary_status", "rejected");
       hook.set("review_status", "rejected");
+    }
+    if (hook.getString("import_key")) {
+      const helpers = require(`${__hooks}/hook_factory_helpers.js`);
+      hook.set("analysis_version", "narration-review-v1:" + helpers.contextHash({
+        previous: hook.getString("analysis_version"), decision,
+        start: hook.getFloat("start_seconds"), end: hook.getFloat("end_seconds"),
+        reviewedAt: new Date().toISOString(),
+      }));
     }
     e.app.save(hook);
     return e.json(200, {
@@ -286,7 +295,7 @@ routerAdd("POST", "/api/lumina/hook-driven-storyline-plans", (e) => {
       "hook_assets",
       String(body.hook_id || ""),
     );
-    if (hook.getString("source_class") !== "external_material")
+    if (!helpers.isPreRollHook(hook))
       throw new BadRequestError(
         "所选资产不是可追溯的外搭钩子",
       );
@@ -490,22 +499,46 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
       baseStoryNeed,
       selectedStorylines,
     );
-    const hooks = e.app
-      .findRecordsByFilter(
-        "hook_assets",
-        "source_class = 'external_material' && boundary_status != 'rejected' && review_status != 'rejected'",
-        "-id",
-        10000,
-        0,
-      )
-      .filter(Boolean);
-    const candidates = hooks
+    // Read only retrieval scalars. Loading Record objects here materializes
+    // every 180-second transcript/evidence JSON blob before scoring and made
+    // a 900-item narration library take 30+ seconds.
+    const hooks = arrayOf(new DynamicModel({
+      id:"",title:"",source_class:"",usage_role:"",material:"",
+      boundary_status:"",review_status:"",hook_type:"",themes:"[]",
+      content_tags:"[]",ontology_tags:"[]",relationships:"[]",conflict:"",
+      emotion:"",narrative_promise:"",information_gap:"",spoken_summary:"",
+      visual_summary:"",
+    }));
+    e.app.concurrentDB().newQuery(
+      `SELECT id,COALESCE(title,'') title,COALESCE(source_class,'') source_class,
+       COALESCE(usage_role,'') usage_role,COALESCE(material,'') material,
+       COALESCE(boundary_status,'') boundary_status,COALESCE(review_status,'') review_status,
+       COALESCE(hook_type,'') hook_type,COALESCE(themes,'[]') themes,
+       COALESCE(content_tags,'[]') content_tags,COALESCE(ontology_tags,'[]') ontology_tags,
+       COALESCE(relationships,'[]') relationships,COALESCE(conflict,'') conflict,
+       COALESCE(emotion,'') emotion,COALESCE(narrative_promise,'') narrative_promise,
+       COALESCE(information_gap,'') information_gap,COALESCE(spoken_summary,'') spoken_summary,
+       COALESCE(visual_summary,'') visual_summary
+       FROM hook_assets
+       WHERE (source_class='external_material' OR (source_class='narration_opening' AND usage_role='pre_roll'))
+         AND boundary_status!='rejected' AND review_status!='rejected'
+       ORDER BY id DESC`
+    ).all(hooks);
+    const retrievalHooks = hooks.map((row) => {
+      const values = (name) => { try { const value=JSON.parse(String(row[name]||"[]")); return Array.isArray(value)?value:[]; } catch (_) { return []; } };
+      return {id:row.id,title:row.title,source_class:row.source_class,usage_role:row.usage_role,material:row.material,
+        boundary_status:row.boundary_status,review_status:row.review_status,hook_type:row.hook_type,
+        themes:values("themes"),content_tags:values("content_tags"),ontology_tags:values("ontology_tags"),relationships:values("relationships"),
+        conflict:row.conflict,emotion:row.emotion,narrative_promise:row.narrative_promise,information_gap:row.information_gap,
+        spoken_summary:row.spoken_summary,visual_summary:row.visual_summary,
+        evidence:row.boundary_status==="verified"?{present:true}:{}};
+    });
+    const candidates = retrievalHooks
       .map((hook) => {
-        const exported = helpers.hookSemanticSnapshot(hook);
-        const retrieval = helpers.scoreHookCandidate(exported, storyNeed);
+        const retrieval = helpers.scoreHookCandidate(hook, storyNeed);
         return {
           hook_id: hook.id,
-          material_id: hook.getString("material"),
+          material_id: hook.material,
           matched_storyline_ids: storyNeed.selectedStorylineIds || [],
           retrieval,
         };
@@ -878,15 +911,16 @@ routerAdd("POST", "/api/lumina/hook-matching/jobs", (e) => {
   const body = e.requestInfo().body || {};
   const hook = e.app.findRecordById("hook_assets", String(body.hook_id || ""));
   const drama = e.app.findRecordById("dramas", String(body.drama_id || ""));
-  if (hook.getString("source_class") !== "external_material")
+  if (!helpers.isPreRollHook(hook))
     throw new BadRequestError(
       "external-hook mode only accepts external_material hooks",
     );
   const hookDuration =
     hook.getFloat("end_seconds") - hook.getFloat("start_seconds");
-  if (hookDuration < 5 || hookDuration > 60)
+  const maximumHookDuration = hook.getString("source_class") === "narration_opening" ? 180 : 60;
+  if (hookDuration < 5 || hookDuration > maximumHookDuration)
     throw new BadRequestError(
-      "external hook duration must be between 5 and 60 seconds",
+      `external hook duration must be between 5 and ${maximumHookDuration} seconds`,
     );
   // Matching is an analysis step: reviewable draft hooks may be evaluated,
   // while /factory/projects still requires a verified production asset.
@@ -1185,6 +1219,8 @@ routerAdd("POST", "/api/lumina/hook-matching/jobs", (e) => {
           : "hook-match-v5-fragment-grounded-template",
     hookId: hook.id,
     hookAnalysisVersion: hook.getString("analysis_version"),
+    hookSourceClass: hook.getString("source_class"),
+    hookUsageRole: hook.getString("usage_role"),
     hookUpdated: hook.getString("updated"),
     dramaId: drama.id,
     dramaAnalysisVersion: drama.getString("analysis_version"),
@@ -2654,8 +2690,13 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
     "hook_story_matches",
     String(body.story_match_id || ""),
   );
-  if (hook.getString("source_class") !== "external_material")
+  if (!helpers.isPreRollHook(hook))
     throw new BadRequestError("an external hook asset is required");
+  if (hook.getString("source_class") === "narration_opening" &&
+      (hook.getString("boundary_status") !== "verified" ||
+       helpers.jsonObject(hook, "safe_start").status !== "verified" ||
+       helpers.jsonObject(hook, "safe_end").status !== "verified"))
+    throw new BadRequestError("解说开头需先核对完整对白与画面切点，不能直接使用未复核的候选边界生产");
   const hookDuration =
     hook.getFloat("end_seconds") - hook.getFloat("start_seconds");
   if (
@@ -2669,6 +2710,9 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
   const productionGate = helpers.jsonObject(match, "production_gate");
   const softOverride = helpers.jsonObject(match, "soft_override");
   const productionMatchContext = helpers.jsonObject(match, "match_context");
+  if (hook.getString("source_class") === "narration_opening" &&
+      productionMatchContext.hookAnalysisVersion !== hook.getString("analysis_version"))
+    throw new BadRequestError("解说钩子的语义或切点版本已变更，请重新匹配高光后生产");
   // Story strength, promise fulfillment and model confidence are creative
   // ranking signals. They remain visible in quality_report but never hard
   // block a source-grounded edit; only boundary, fact, source and evidence
@@ -2841,7 +2885,7 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
     {
       code: "HOOK_SOURCE",
       label: "外搭钩子来源",
-      passed: hook.getString("source_class") === "external_material",
+      passed: helpers.isPreRollHook(hook),
       severity: "hard",
     },
     {
@@ -2864,7 +2908,7 @@ routerAdd("POST", "/api/lumina/factory/projects", (e) => {
       passed:
         hook.getString("boundary_status") === "verified" &&
         hookDuration >= 5 &&
-        hookDuration <= 60,
+        hookDuration <= (hook.getString("source_class") === "narration_opening" ? 180 : 60),
       severity: "advisory",
     },
     {

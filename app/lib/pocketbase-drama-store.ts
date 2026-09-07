@@ -1,4 +1,5 @@
 "use client";
+import { boundedFetch as fetch } from "./bounded-fetch";
 
 import type { FactoryEpisodeMedia } from "../features/factory/types";
 import { normalizeAnalysisPayload } from "./ontology/normalization";
@@ -95,11 +96,13 @@ export async function deletePocketBaseDramaEpisode(dramaId: string, episode: num
 }
 
 async function pbFetch(path: string, init?: RequestInit) {
+  if(init?.method && init.method!=="GET")dramaListCached=undefined;
   let response: Response;
   try {
     response = await fetch(`${PB_URL}${path}`, init);
   } catch (error) {
-    throw new Error(`无法连接 PocketBase（${PB_URL}），请先启动本项目的 PocketBase 服务`);
+    if (init?.signal?.aborted || (error instanceof Error && error.message.includes("请求超时"))) throw error;
+    throw new Error("暂时无法连接数据服务，请检查网络后重试。已有记录不会被删除。");
   }
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { message?: string; data?:Record<string,{message?:string}> } | null;
@@ -311,9 +314,9 @@ async function getPocketBaseDrama(recordId: string, signal?: AbortSignal): Promi
   const filter = encodeURIComponent(`drama="${recordId}"`);
   const episodesResponse = await pbFetch(`/api/collections/drama_episodes/records?perPage=500&sort=episode_number&filter=${filter}`, { signal });
   const payload = await episodesResponse.json() as { items: PocketBaseRecord[] };
-  const jobsResponse = await pbFetch(`/api/collections/analysis_jobs/records?perPage=500&sort=created&filter=${filter}&expand=episode`, { signal });
+  const jobsResponse = await pbFetch(`/api/collections/analysis_jobs/records?perPage=500&sort=created&filter=${filter}`, { signal });
   const jobsPayload = await jobsResponse.json() as { items: PocketBaseRecord[] };
-  const highlightsResponse = await pbFetch(`/api/collections/hook_assets/records?perPage=500&sort=episode,start_seconds&filter=${encodeURIComponent(`drama="${recordId}" && source_class="episode_highlight"`)}&expand=episode`, { signal });
+  const highlightsResponse = await pbFetch(`/api/collections/hook_assets/records?perPage=500&sort=episode,start_seconds&filter=${encodeURIComponent(`drama="${recordId}" && source_class="episode_highlight"`)}`, { signal });
   const highlightsPayload = await highlightsResponse.json() as { items: PocketBaseRecord[] };
   const episodeNumberById = new Map(payload.items.map((item) => [item.id, Number(item.episode_number)]));
   const coarseJobs = jobsPayload.items.filter((item) => item.stage === "coarse");
@@ -418,10 +421,33 @@ async function getPocketBaseDrama(recordId: string, signal?: AbortSignal): Promi
   };
 }
 
+let dramaListRequest: Promise<PocketBaseDramaRecord[]> | undefined;
+let dramaListCached: {at:number;items:PocketBaseDramaRecord[]} | undefined;
 export async function listPocketBaseDramas(signal?: AbortSignal): Promise<PocketBaseDramaRecord[]> {
-  const response = await pbFetch("/api/collections/dramas/records?perPage=500", { signal });
-  const payload = await response.json() as { items: PocketBaseRecord[] };
-  return Promise.all(payload.items.map((item) => getPocketBaseDrama(item.id, signal)));
+  signal?.throwIfAborted();
+  if(dramaListCached && Date.now()-dramaListCached.at<10000)return dramaListCached.items;
+  if(!dramaListRequest) {
+    dramaListRequest=(async()=>{
+      const ids:string[]=[];
+      for(let page=1;;page++){
+        const response=await pbFetch(`/api/collections/dramas/records?page=${page}&perPage=100&fields=id`);
+        const payload=await response.json() as {items:PocketBaseRecord[];totalPages:number};ids.push(...payload.items.map(item=>item.id));
+        if(page>=payload.totalPages)break;
+      }
+      const items:PocketBaseDramaRecord[]=[];
+      // Bound fan-out: a library view and history refresh share the same request.
+      for(let offset=0;offset<ids.length;offset+=2)items.push(...await Promise.all(ids.slice(offset,offset+2).map(id=>getPocketBaseDrama(id))));
+      dramaListCached={at:Date.now(),items};return items;
+    })().finally(()=>{dramaListRequest=undefined;});
+  }
+  if (!signal) return dramaListRequest;
+  return new Promise((resolve,reject)=>{
+    const abort=()=>{cleanup();reject(new DOMException("请求已取消", "AbortError"));};
+    const cleanup=()=>signal.removeEventListener("abort",abort);
+    signal.addEventListener("abort",abort,{once:true});
+    dramaListRequest!.then(value=>{cleanup();signal.aborted?abort():resolve(value);},error=>{cleanup();reject(error);});
+    if(signal.aborted)abort();
+  });
 }
 
 export async function updatePocketBaseDramaPoster(recordId: string, posterDataUrl: string) {

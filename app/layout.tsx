@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
+import { AuthUserProvider } from "./AuthUserProvider";
+import { chatGPTSignOutPath, requireChatGPTUser } from "./chatgpt-auth";
 import "./globals.css";
 import "./creations.css";
 
@@ -32,17 +34,23 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const user = await requireChatGPTUser("/");
   return (
     <html lang="zh-CN">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {children}
+        <AuthUserProvider
+          viewer={{ name: user.displayName, email: user.email }}
+          chatGPTSignOutPath={chatGPTSignOutPath("/")}
+        >
+          {children}
+        </AuthUserProvider>
       </body>
     </html>
   );

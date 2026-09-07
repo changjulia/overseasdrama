@@ -28,8 +28,8 @@ def password_hash(password, salt=None):
 
 
 def password_valid(password):
-    if not isinstance(password, str) or not 12 <= len(password) <= 128:
-        raise ValueError('密码须为 12–128 个字符')
+    if not isinstance(password, str) or not 6 <= len(password) <= 128:
+        raise ValueError('密码须为 6–128 个字符')
     return password
 
 
@@ -37,9 +37,20 @@ def public_user(row):
     return {key: row[key] for key in ('id', 'username', 'name', 'role', 'active')}
 
 
+def validated_account(username, name, password, role):
+    username = str(username).strip().lower()
+    name = str(name).strip()
+    if not re.fullmatch(r'[a-z0-9][a-z0-9_.@-]{2,63}', username):
+        raise ValueError('账号为 3–64 位字母、数字或 _.@-')
+    if not name or len(name) > 60 or role not in ('admin', 'member'):
+        raise ValueError('姓名或角色无效')
+    return username, name, password_hash(password_valid(password)), role
+
+
 class Accounts:
-    def __init__(self, path):
+    def __init__(self, path, allow_first_admin=False):
         self.path = Path(path)
+        self.allow_first_admin = allow_first_admin
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.db() as db:
             db.executescript('''
@@ -66,13 +77,7 @@ class Accounts:
             db.close()
 
     def create(self, username, name, password, role='member', active=True, actor=None):
-        username = str(username).strip().lower()
-        name = str(name).strip()
-        if not re.fullmatch(r'[a-z0-9][a-z0-9_.@-]{2,63}', username):
-            raise ValueError('账号为 3–64 位字母、数字或 _.@-')
-        if not name or len(name) > 60 or role not in ('admin', 'member'):
-            raise ValueError('姓名或角色无效')
-        encoded = password_hash(password_valid(password))
+        username, name, encoded, role = validated_account(username, name, password, role)
         user_id = secrets.token_hex(12)
         try:
             with self.db() as db:
@@ -88,13 +93,22 @@ class Accounts:
 
     def register(self, username, name, password, ip):
         now = int(time.time())
-        with self.db() as db:
-            db.execute('BEGIN IMMEDIATE')
-            db.execute('DELETE FROM registrations WHERE created<?', (now - 3600,))
-            if db.execute('SELECT count(*) FROM registrations WHERE ip=?', (ip,)).fetchone()[0] >= 5:
-                raise PermissionError('注册尝试过于频繁，请稍后再试')
-            db.execute('INSERT INTO registrations VALUES(?,?)', (ip, now))
-        return self.create(username, name, password, 'member', active=False)
+        username, name, encoded, _ = validated_account(username, name, password, 'member')
+        user_id = secrets.token_hex(12)
+        try:
+            with self.db() as db:
+                db.execute('BEGIN IMMEDIATE')
+                db.execute('DELETE FROM registrations WHERE created<?', (now - 3600,))
+                if db.execute('SELECT count(*) FROM registrations WHERE ip=?', (ip,)).fetchone()[0] >= 5:
+                    raise PermissionError('注册尝试过于频繁，请稍后再试')
+                db.execute('INSERT INTO registrations VALUES(?,?)', (ip, now))
+                first_account = self.allow_first_admin and db.execute('SELECT count(*) FROM users').fetchone()[0] == 0
+                role = 'admin' if first_account else 'member'
+                active = 1 if first_account else 0
+                db.execute('INSERT INTO users VALUES(?,?,?,?,?,?)', (user_id, username, name, encoded, role, active))
+        except sqlite3.IntegrityError:
+            raise ValueError('该账号已存在') from None
+        return user_id
 
     def login(self, username, password, ip, remember=False):
         username = str(username).strip().lower()[:64]
@@ -262,8 +276,12 @@ class Handler(BaseHTTPRequestHandler):
             path = urlsplit(self.path).path
             accounts = self.server.accounts
             if path == '/auth/register':
-                accounts.register(data.get('username', ''), data.get('name', ''), data.get('password'), self.headers.get('X-Real-IP', self.client_address[0]))
-                return self.reply(201, {'message': '注册成功，请等待管理员启用账号后登录'})
+                created_id = accounts.register(data.get('username', ''), data.get('name', ''), data.get('password'), self.headers.get('X-Real-IP', self.client_address[0]))
+                with accounts.db() as db:
+                    created = db.execute('SELECT active FROM users WHERE id=?', (created_id,)).fetchone()
+                active = bool(created['active'])
+                message = '首个账号已创建为管理员，现在可以登录' if active else '注册成功，请等待管理员启用账号后登录'
+                return self.reply(201, {'message': message, 'active': active})
             if path == '/auth/login':
                 # Caddy replaces this header with the actual client address.
                 ip = self.headers.get('X-Real-IP', self.client_address[0])
@@ -302,9 +320,9 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def make_server(host, port, db_path, origin, secure=True):
+def make_server(host, port, db_path, origin, secure=True, allow_first_admin=False):
     server = ThreadingHTTPServer((host, port), Handler)
-    server.accounts = Accounts(db_path)
+    server.accounts = Accounts(db_path, allow_first_admin=allow_first_admin)
     server.origin = origin.rstrip('/')
     server.secure = secure
     return server
@@ -312,8 +330,15 @@ def make_server(host, port, db_path, origin, secure=True):
 
 if __name__ == '__main__':
     os.umask(0o077)
-    server = make_server('0.0.0.0', 8080, os.environ.get('AUTH_DB', '/data/accounts.sqlite'), os.environ['AUTH_ORIGIN'])
-    bootstrap = Path('/data/bootstrap.json')
+    server = make_server(
+        os.environ.get('AUTH_HOST', '0.0.0.0'),
+        int(os.environ.get('AUTH_PORT', '8080')),
+        os.environ.get('AUTH_DB', '/data/accounts.sqlite'),
+        os.environ['AUTH_ORIGIN'],
+        secure=os.environ.get('AUTH_SECURE', '1') != '0',
+        allow_first_admin=os.environ.get('AUTH_ALLOW_FIRST_ADMIN', '0') == '1',
+    )
+    bootstrap = Path(os.environ.get('AUTH_BOOTSTRAP', '/data/bootstrap.json'))
     if bootstrap.exists():
         data = json.loads(bootstrap.read_text())
         with server.accounts.db() as db:

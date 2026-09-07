@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Literal
 
 from PIL import Image
+from processor.pre_roll_eligibility import is_pre_roll_hook
 
 try:  # package import in tests/services; direct import for standalone worker execution
     from .calibration import ConfidenceSignals, GateThresholds, deterministic_story_score, item_production_gate
@@ -3142,7 +3143,7 @@ def _openai_request_body(provider: str, model: str, task: str, payload: dict[str
         }
     if task == "hook-story-match":
         rules.extend([
-            "Match one verified external_material hook asset to complete story arcs in the supplied episode scope only",
+            "Match one eligible pre-roll hook (external_material or opted-in narration_opening) to complete story arcs in the supplied episode scope only",
             "Never return an episode outside episodeScope and never invent a time range without supplied highlight or transcript evidence",
             "A match must explain setup, escalation, payoff and either resolution or a deliberate cliffhanger",
             "Match theme, relationship, conflict, emotion, narrative promise and information-gap payoff independently",
@@ -4505,6 +4506,12 @@ def _external_hook_fragment_evidence(hook: dict[str, Any]) -> dict[str, list[dic
         raw = {}
     start = float(hook.get("start_seconds") or hook.get("start") or 0)
     end = float(hook.get("end_seconds") or hook.get("end") or 0)
+    opening_analysis = hook.get("analysis") if isinstance(hook.get("analysis"), dict) else {}
+    imported_opening = (
+        hook.get("source_class") == "narration_opening" and hook.get("usage_role") == "pre_roll"
+        and str(hook.get("import_key") or "").startswith("narration:")
+        and opening_analysis.get("schemaVersion") == "narration-opening-v1"
+    )
     output: dict[str, list[dict[str, Any]]] = {}
     for kind in ("transcript", "ocr", "frame"):
         rows = raw.get(kind) if isinstance(raw.get(kind), list) else []
@@ -4521,13 +4528,14 @@ def _external_hook_fragment_evidence(hook: dict[str, Any]) -> dict[str, list[dic
             # also unsuitable for factual narrative generation.
             if not text or row_start < start - .05 or row_end > end + .05:
                 continue
-            if kind == "transcript" and confidence < .5:
+            unscored_opening = imported_opening and row.get("confidence") is None
+            if kind == "transcript" and confidence < .5 and not unscored_opening:
                 continue
             accepted.append({
                 "start": round(row_start, 3),
                 "end": round(row_end, 3),
                 "text": text,
-                "confidence": confidence,
+                "confidence": None if unscored_opening else confidence,
                 "verification": row.get("verification") or "unverified",
             })
         if accepted:
@@ -4537,9 +4545,12 @@ def _external_hook_fragment_evidence(hook: dict[str, Any]) -> dict[str, list[dic
 
 def _external_hook_match_input(hook: dict[str, Any]) -> dict[str, Any]:
     """Return the evidence-safe hook view used by matching and presentation."""
+    analysis = hook.get("analysis") if isinstance(hook.get("analysis"), dict) else {}
     return {
         "id": hook.get("id"),
         "source_class": hook.get("source_class"),
+        "usage_role": hook.get("usage_role"),
+        "opening_identity_constraints": analysis.get("identityConstraint") if hook.get("source_class") == "narration_opening" else None,
         "hook_type": hook.get("hook_type"),
         "start_seconds": hook.get("start_seconds"),
         "end_seconds": hook.get("end_seconds"),
@@ -4547,7 +4558,7 @@ def _external_hook_match_input(hook: dict[str, Any]) -> dict[str, Any]:
         "safe_start": hook.get("safe_start"),
         "safe_end": hook.get("safe_end"),
         "evidence": _external_hook_fragment_evidence(hook),
-        "grounding_rule": "Only the timestamped fragment evidence above may be treated as factual. Names, locations and backstory from the full source material are intentionally excluded.",
+        "grounding_rule": "Use only timestamped fragment evidence. Imported ASR with null confidence is provisional: do not promote it to verified fact or approve production boundaries. Names, locations and backstory from the full source material are excluded. Narration identity constraints must be checked against the target drama, not assumed true there.",
     }
 
 
@@ -4623,8 +4634,8 @@ def analyze_hook_story_match(payload: dict[str, Any], on_progress=None) -> Analy
     drama = payload.get("drama") if isinstance(payload.get("drama"), dict) else {}
     episodes = payload.get("episodes") if isinstance(payload.get("episodes"), list) else []
     scope = {int(value) for value in (payload.get("episode_scope") or []) if str(value).isdigit()}
-    if hook.get("source_class") != "external_material":
-        raise AnalysisFailed("external-hook matching requires an external_material hook asset")
+    if not is_pre_roll_hook(hook):
+        raise AnalysisFailed("hook matching requires an external hook or an opted-in narration opening")
     # Draft external hooks may be explored during matching. Their boundary
     # status still participates in the production gate below, so an
     # unverified hook can produce recommendations but cannot become

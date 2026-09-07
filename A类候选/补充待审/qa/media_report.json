@@ -1,0 +1,34 @@
+[
+  {
+    "file": "TK_7299560055752494379.mp4",
+    "duration": 8.9,
+    "fps": 30.0,
+    "width": 576,
+    "height": 1024,
+    "frames": 267
+  },
+  {
+    "file": "TK_7621332682936421646.mp4",
+    "duration": 6.833,
+    "fps": 30.0,
+    "width": 540,
+    "height": 960,
+    "frames": 205
+  },
+  {
+    "file": "TK_7662071465864563991.mp4",
+    "duration": 8.067,
+    "fps": 30.0,
+    "width": 576,
+    "height": 1024,
+    "frames": 242
+  },
+  {
+    "file": "TK_7666721304975838477.mp4",
+    "duration": 6.5,
+    "fps": 30.0,
+    "width": 720,
+    "height": 1280,
+    "frames": 195
+  }
+]

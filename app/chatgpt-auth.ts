@@ -22,7 +22,9 @@ export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
   const requestHeaders = await headers();
   const userId = requestHeaders.get(USER_ID_HEADER);
   const email = requestHeaders.get(USER_EMAIL_HEADER);
-  if (!userId || !email) return null;
+  if (!userId || !email) {
+    return (await getLocalWorkspaceUser(requestHeaders.get("cookie"))) ?? getDevelopmentViewer();
+  }
 
   const encodedFullName = requestHeaders.get(USER_FULL_NAME_HEADER);
   const fullName =
@@ -37,6 +39,48 @@ export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
     email,
     fullName,
   };
+}
+
+function getDevelopmentViewer(): ChatGPTUser | null {
+  if (process.env.NODE_ENV !== "development") return null;
+  return {
+    userId: "local-development-viewer",
+    displayName: "Lumina 本地账号",
+    email: "local@lumina.internal",
+    fullName: "Lumina 本地账号",
+  };
+}
+
+async function getLocalWorkspaceUser(cookie: string | null): Promise<ChatGPTUser | null> {
+  const authUrl = process.env.LUMINA_LOCAL_AUTH_URL;
+  if (!authUrl || !cookie) return null;
+  try {
+    const response = await fetch(`${authUrl.replace(/\/$/, "")}/auth/me`, {
+      headers: { cookie },
+      cache: "no-store",
+      signal: AbortSignal.timeout(2_000),
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json()) as {
+      user?: { id?: unknown; username?: unknown; name?: unknown };
+    };
+    const localUser = payload.user;
+    if (
+      typeof localUser?.id !== "string" ||
+      typeof localUser.username !== "string" ||
+      typeof localUser.name !== "string"
+    ) {
+      return null;
+    }
+    return {
+      userId: localUser.id,
+      displayName: localUser.name,
+      email: `${localUser.username}@lumina.internal`,
+      fullName: localUser.name,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function requireChatGPTUser(

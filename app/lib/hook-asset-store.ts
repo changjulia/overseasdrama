@@ -1,4 +1,6 @@
 "use client";
+import { boundedFetch as fetch } from "./bounded-fetch";
+import { isPreRollSource, PRE_ROLL_FILTER } from "./pre-roll-eligibility";
 
 import { normalizeTags, normalizeTag, type OntologyTag } from "./ontology/normalization";
 
@@ -20,6 +22,12 @@ export type HookBoundary = {
 export type HookAsset = {
   id: string;
   sourceClass: HookSourceClass;
+  usageRole?: string;
+  identityConstraints?: string;
+  openingSemanticStatus?: string;
+  boundarySelection?: { status?: string; end?: number; reason?: string; scanCoverageEnd?: number };
+  tokenBudget?: { cap?: number; used?: number };
+  materialAnalysisStatus?: string;
   hookSourceStatus: HookSourceStatus;
   hookAssemblyType: HookAssemblyType;
   materialId?: string;
@@ -61,7 +69,7 @@ export type HookAsset = {
 };
 
 export function isSelectableExternalHook(hook: HookAsset): boolean {
-  return hook.sourceClass === "external_material"
+  return isPreRollSource(hook.sourceClass, hook.usageRole)
     && hook.boundaryStatus !== "rejected"
     && hook.reviewStatus !== "rejected";
 }
@@ -80,6 +88,12 @@ async function pbJson(path: string, init?: RequestInit) {
   if (!response.ok) throw new Error(`钩子资产请求失败（HTTP ${response.status}）`);
   return response.json();
 }
+
+const HOOK_LIST_FIELDS = 'usage_role,analysis.identityConstraint,analysis.semanticStatus,expand.material.analysis_status,boundary_status,conflict,content_tags,drama,emotion,end_frame,end_seconds,episode,evidence,fps,hook_assembly_type,hook_source_status,hook_type,id,information_gap,material,narrative_promise,quality_scores,relationships,review_status,rights_status,safe_end,safe_start,source_class,spoken_summary,start_frame,start_seconds,themes,title,visual_summary,expand.material.id,expand.material.collectionId,expand.material.title,expand.material.video,expand.material.material_format,expand.material.type,expand.material.platform,expand.material.exposure,expand.material.days,expand.material.source_url,expand.material.analysis_result.result.creative.hookSourceStatus,expand.material.analysis_result.result.creative.hookAssemblyType,expand.episode.id,expand.episode.collectionId,expand.episode.video,expand.episode.episode_number,expand.episode.drama,expand.episode.expand.drama.id,expand.episode.expand.drama.title';
+// The factory picker never displays raw ASR evidence, boundary attestations or
+// quality payloads. Keeping those out makes 900+ narration hooks a small list
+// request instead of downloading their complete 180-second transcripts.
+const HOOK_PICKER_FIELDS = 'usage_role,analysis.identityConstraint,analysis.semanticStatus,boundary_status,conflict,content_tags,drama,emotion,end_seconds,episode,hook_assembly_type,hook_source_status,hook_type,id,information_gap,material,narrative_promise,relationships,review_status,rights_status,source_class,spoken_summary,start_seconds,themes,title,expand.material.analysis_status,expand.material.id,expand.material.collectionId,expand.material.title,expand.material.video,expand.material.material_format,expand.material.type,expand.material.platform,expand.material.exposure,expand.material.days,expand.material.source_url,expand.material.analysis_result.result.creative.hookSourceStatus,expand.material.analysis_result.result.creative.hookAssemblyType';
 
 function fromRecord(record: PBRecord): HookAsset {
   const material = object(record.expand?.material);
@@ -101,6 +115,12 @@ function fromRecord(record: PBRecord): HookAsset {
   return {
     id: record.id,
     sourceClass: text(record.source_class, "external_material") as HookSourceClass,
+    usageRole: text(record.usage_role) || undefined,
+    identityConstraints: text(object(record.analysis).identityConstraint) || undefined,
+    openingSemanticStatus: text(object(record.analysis).semanticStatus) || undefined,
+    boundarySelection: object(object(record.analysis).boundarySelection),
+    tokenBudget: object(object(record.analysis).tokenBudget),
+    materialAnalysisStatus: text(material.analysis_status, "idle"),
     hookSourceStatus: text(record.hook_source_status, claimText(materialCreative.hookSourceStatus)) as HookSourceStatus,
     hookAssemblyType: text(record.hook_assembly_type, claimText(materialCreative.hookAssemblyType)) as HookAssemblyType,
     materialId: materialId || undefined,
@@ -156,7 +176,7 @@ export function validLocalizedHook(hook: HookAsset) {
   const duration = hook.end - hook.start;
   if (!Number.isFinite(duration) || hook.start < 0) return false;
   if (hook.sourceClass === "episode_highlight") return duration >= 10 && duration <= 60;
-  if (hook.sourceClass === "narration_opening") return hook.start < 60 && duration >= 5 && duration <= 60;
+  if (hook.sourceClass === "narration_opening") return hook.start < 60 && duration >= 5 && duration <= 180;
   // An external hook is a localized source fragment, not necessarily the
   // first fragment in its source upload.  Approved material-library hooks may
   // begin later in a benchmark/ad while still being the exact 5–60 second
@@ -165,12 +185,12 @@ export function validLocalizedHook(hook: HookAsset) {
 }
 
 export async function listHookAssets(signal?: AbortSignal, externalOnly = false): Promise<HookAsset[]> {
-  const filter = externalOnly ? `&filter=${encodeURIComponent('source_class="external_material"')}` : "";
+  const filter = externalOnly ? `&filter=${encodeURIComponent(PRE_ROLL_FILTER)}` : "";
   const items: PBRecord[] = [];
   let page = 1;
   let totalPages = 1;
   do {
-    const payload = await pbJson(`/api/collections/hook_assets/records?page=${page}&perPage=200&sort=-id&expand=material,episode,episode.drama${filter}`, { signal }) as { items?: PBRecord[]; totalPages?: number };
+    const payload = await pbJson(`/api/collections/hook_assets/records?page=${page}&perPage=50&sort=-id&fields=analysis.boundarySelection,analysis.tokenBudget,${HOOK_LIST_FIELDS}&expand=material,episode,episode.drama${filter}`, { signal }) as { items?: PBRecord[]; totalPages?: number };
     items.push(...(payload.items ?? []));
     totalPages = Math.max(1, number(payload.totalPages, 1));
     page += 1;
@@ -185,7 +205,7 @@ export async function listInspirationHookAssets(signal?: AbortSignal): Promise<H
   let page = 1;
   let totalPages = 1;
   do {
-    const payload = await pbJson(`/api/collections/hook_assets/records?page=${page}&perPage=200&sort=-id&expand=material&filter=${filter}`, { signal }) as { items?: PBRecord[]; totalPages?: number };
+    const payload = await pbJson(`/api/collections/hook_assets/records?page=${page}&perPage=50&sort=-id&fields=analysis.boundarySelection,analysis.tokenBudget,${HOOK_LIST_FIELDS}&expand=material&filter=${filter}`, { signal }) as { items?: PBRecord[]; totalPages?: number };
     items.push(...(payload.items ?? []));
     totalPages = Math.max(1, number(payload.totalPages, 1));
     page += 1;
@@ -195,7 +215,27 @@ export async function listInspirationHookAssets(signal?: AbortSignal): Promise<H
 
 /** Analysis picker query. Rights are displayed but intentionally do not block analysis. */
 export async function listSelectableExternalHooks(signal?: AbortSignal): Promise<HookAsset[]> {
-  return (await listHookAssets(signal, true)).filter(isSelectableExternalHook);
+  const base = `/api/collections/hook_assets/records?perPage=500&sort=-id&skipTotal=0&fields=${HOOK_PICKER_FIELDS}&expand=material&filter=${encodeURIComponent(PRE_ROLL_FILTER)}`;
+  const first = await pbJson(`${base}&page=1`, { signal }) as { items?: PBRecord[]; totalPages?: number };
+  const totalPages = Math.max(1, number(first.totalPages, 1));
+  const rest = totalPages > 1
+    ? await Promise.all(Array.from({ length: totalPages - 1 }, (_, index) =>
+        pbJson(`${base}&page=${index + 2}`, { signal }) as Promise<{ items?: PBRecord[] }>))
+    : [];
+  const records = [...(first.items ?? []), ...rest.flatMap((page) => page.items ?? [])];
+  return normalizeHookTitles(records.map(fromRecord).filter(validLocalizedHook).filter(isSelectableExternalHook));
+}
+
+/** Fetch only the ranked IDs returned by the server-side story matcher. */
+export async function listSelectableExternalHooksByIds(ids: string[], signal?: AbortSignal): Promise<HookAsset[]> {
+  const unique = [...new Set(ids.filter((id) => /^[a-z0-9]{15}$/.test(id)))].slice(0, 50);
+  if (!unique.length) return [];
+  const idFilter = unique.map((id) => `id="${id}"`).join(" || ");
+  const filter = `(${PRE_ROLL_FILTER}) && (${idFilter})`;
+  const payload = await pbJson(`/api/collections/hook_assets/records?page=1&perPage=50&sort=-id&fields=${HOOK_PICKER_FIELDS}&expand=material&filter=${encodeURIComponent(filter)}`, { signal }) as { items?: PBRecord[] };
+  const order = new Map(unique.map((id, index) => [id, index]));
+  return normalizeHookTitles((payload.items ?? []).map(fromRecord).filter(validLocalizedHook).filter(isSelectableExternalHook))
+    .sort((left, right) => (order.get(left.id) ?? 999) - (order.get(right.id) ?? 999));
 }
 
 export async function getHookAsset(id: string, signal?: AbortSignal): Promise<HookAsset> {

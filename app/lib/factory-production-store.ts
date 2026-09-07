@@ -1,4 +1,5 @@
 "use client";
+import { boundedFetch as fetch } from "./bounded-fetch";
 
 const configuredUrl=typeof process!=="undefined"?process.env.NEXT_PUBLIC_POCKETBASE_URL:undefined;
 const PB_URL=(configuredUrl||(typeof window!=="undefined"?"/pb":"http://127.0.0.1:8090")).replace(/\/$/,"");

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import type { OperationsSection, PipelineTask, SourceRecord } from "./types";
-import { deletePocketBaseAnalysisTask, pausePocketBaseAnalysisTask, resumePocketBaseAnalysisTask } from "../../lib/pocketbase-analysis-store";
+import { deletePocketBaseAnalysisTask, getPocketBaseTaskLog, pausePocketBaseAnalysisTask, resumePocketBaseAnalysisTask } from "../../lib/pocketbase-analysis-store";
 import ExternalDataConsole from "./ExternalDataConsole";
 import styles from "./operations.module.css";
 
@@ -101,6 +101,7 @@ type OperationDetail = {
   kind: "source" | "task" | "member" | "audit";
   title: string;
   subtitle: string;
+  rows?: string[][];
 };
 
 export function OperationsWorkspace({
@@ -416,10 +417,10 @@ export function OperationsWorkspace({
           onAction={() => notify("解析任务由剧库上传成功后自动创建，避免产生无片源空任务")}
         />
         <div className={styles.metricGrid}>
-          <Metric label="处理中" value={String(processingCount)} hint={`并发 ${processingCount} / 12`} />
-          <Metric label="排队中" value={String(queuedCount)} hint="预计 18 分钟" />
-          <Metric label="需要人工处理" value={String(reviewCount)} hint="复核 SLA 4 小时" />
-          <Metric label="今日模型成本" value="$68.42" hint="预算使用 54%" />
+          <Metric label="处理中" value={String(processingCount)} hint="当前服务端处理中任务" />
+          <Metric label="排队中" value={String(queuedCount)} hint="实际等待时间以任务进度为准" />
+          <Metric label="需要人工处理" value={String(reviewCount)} hint="按实际复核状态统计" />
+          <Metric label="今日模型成本" value="暂不可用" hint="尚未接入实际账单" />
         </div>
         <div className={styles.toolbar}>
           <label className={styles.search}>
@@ -481,41 +482,7 @@ export function OperationsWorkspace({
               <i><em style={{width:`${Math.max(0,Math.min(100,selectedTask.progress))}%`}}/></i>
               <small>{selectedTask.status}</small>
             </div>
-            <div className={styles.pipeline}>
-              {[
-                "已抓取",
-                "转码",
-                "文本提取",
-                "来源匹配",
-                "基础分析",
-                "深度分析",
-              ].map((stage, i) => (
-                <div
-                  className={
-                    i < Math.ceil(selectedTask.progress / 18)
-                      ? styles.finished
-                      : i === Math.ceil(selectedTask.progress / 18)
-                        ? styles.running
-                        : ""
-                  }
-                  key={stage}
-                >
-                  <i>
-                    {i < Math.ceil(selectedTask.progress / 18) ? "✓" : i + 1}
-                  </i>
-                  <span>
-                    <b>{stage}</b>
-                    <small>
-                      {i < Math.ceil(selectedTask.progress / 18)
-                        ? "已完成"
-                        : i === Math.ceil(selectedTask.progress / 18)
-                          ? "处理中"
-                          : "等待前序任务"}
-                    </small>
-                  </span>
-                </div>
-              ))}
-            </div>
+            <p>当前任务状态：{selectedTask.status}。阶段细节以实际处理日志为准。</p>
             <dl className={styles.taskFacts}>
               <div>
                 <dt>负责人</dt>
@@ -527,22 +494,28 @@ export function OperationsWorkspace({
               </div>
               <div>
                 <dt>优先级</dt>
-                <dd>P1 · 标准</dd>
+                <dd>服务端未提供</dd>
               </div>
               <div>
                 <dt>输出</dt>
-                <dd>分析结果 + 证据帧</dd>
+                <dd>以实际任务结果为准</dd>
               </div>
             </dl>
             <footer>
               <button
-                onClick={() =>
+                onClick={() => {
+                  const title = `${selectedTask.id} · 任务日志`;
                   setDetail({
                     kind: "task",
-                    title: `${selectedTask.id} · 任务日志`,
+                    title,
                     subtitle: selectedTask.title,
-                  })
-                }
+                    rows: [["日志", "正在读取…"]],
+                  });
+                  void getPocketBaseTaskLog(selectedTask).then(record => {
+                    const logs = record.logs == null ? "服务端未记录处理日志" : typeof record.logs === "string" ? record.logs : JSON.stringify(record.logs, null, 2);
+                    setDetail(current => current?.title === title ? {...current, rows: [["服务端状态", record.status || "未提供"], ["错误", record.error || "无"], ["处理日志", logs || "服务端未记录处理日志"]]} : current);
+                  }).catch(error => setDetail(current => current?.title === title ? {...current, rows: [["读取失败", error instanceof Error ? error.message : "请关闭后重试"]]} : current));
+                }}
               >
                 查看日志
               </button>
@@ -937,12 +910,7 @@ function OperationDetailPanel({
     },
     task: {
       eyebrow: "EXECUTION LOG",
-      rows: [
-        ["10:24:02 · INFO", "任务创建，输入清单校验通过"],
-        ["10:26:41 · INFO", "转码完成 · H.264 · 1080×1920"],
-        ["10:31:16 · INFO", "ASR / OCR 提取完成 · 286 条文本"],
-        ["10:36:52 · RUNNING", "正在执行钩子结构与人物关系分析"],
-      ],
+      rows: detail.rows || [["日志", "尚未读取服务端日志"]],
     },
     member: {
       eyebrow: "MEMBER ACCESS",
@@ -1035,7 +1003,7 @@ function OperationDetailPanel({
           {copy.rows.map((row) => (
             <div key={row[0]}>
               <b>{row[0]}</b>
-              <span>{row[1]}</span>
+              <span style={detail.kind === "task" ? {whiteSpace:"pre-wrap", overflowWrap:"anywhere"} : undefined}>{row[1]}</span>
             </div>
           ))}
         </div>
@@ -1047,7 +1015,15 @@ function OperationDetailPanel({
             </button>
           )}
           {detail.kind === "task" && (
-            <button className={styles.primary} onClick={onClose}>
+            <button className={styles.primary} disabled={detail.rows?.[0]?.[0] !== "服务端状态"} onClick={() => {
+              const body = [detail.title, detail.subtitle, ...(detail.rows || []).map(row => `${row[0]}\n${row[1]}`)].join("\n\n");
+              const url = URL.createObjectURL(new Blob([body], {type:"text/plain;charset=utf-8"}));
+              const link = document.createElement("a");
+              link.href = url;
+              link.download = `${detail.title.replace(/[\\/:*?"<>|]/g, "_")}.txt`;
+              link.click();
+              setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }}>
               导出完整日志
             </button>
           )}

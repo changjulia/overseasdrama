@@ -579,12 +579,13 @@ function generateLegacyStorylinePlans(
   targetDurationSeconds,
   selectedHighlightIds,
   variationIndex,
+  maximumHookSeconds,
 ) {
   const rows = Array.isArray(episodes) ? episodes : [];
-  // Reserve the maximum 60-second external hook so a generated production
-  // route cannot make the finished film exceed the 15-minute delivery cap.
+  // Preserve the existing 60-second reservation for ordinary hooks; longer
+  // narration candidates reserve their actual duration within the same cap.
   const minimumBodySeconds = 300;
-  const maximumBodySeconds = 900 - 60;
+  const maximumBodySeconds = 900 - Math.max(60, Math.min(180, Number(maximumHookSeconds) || 60));
   const requestedTarget = Number(targetDurationSeconds || maximumBodySeconds);
   const target = Math.max(
     minimumBodySeconds,
@@ -1585,6 +1586,7 @@ function generateStorylinePlans(
   targetDurationSeconds,
   selectedHighlightIds,
   variationIndex,
+  maximumHookSeconds,
 ) {
   // Production plans are derived only from the currently available/selected
   // real highlights. The title-specific graph remains available to the story
@@ -1597,6 +1599,7 @@ function generateStorylinePlans(
     targetDurationSeconds,
     selectedHighlightIds,
     variationIndex,
+    maximumHookSeconds,
   );
 }
 
@@ -2044,6 +2047,11 @@ function generateHookDrivenStorylinePlans(
     episodes,
     deliveryGoal,
     targetDurationSeconds,
+    undefined,
+    undefined,
+    hookProfile.source_class === "narration_opening"
+      ? Number(hookProfile.end_seconds) - Number(hookProfile.start_seconds || 0)
+      : 60,
   )
     .map((plan, index) => {
       const planSignals = semanticTokens([
@@ -2421,6 +2429,11 @@ function templateEvidenceLevel(performance) {
   return strong ? "strong" : medium ? "medium" : "weak";
 }
 
+function isPreRollHook(record) {
+  return record.getString("source_class") === "external_material" ||
+    (record.getString("source_class") === "narration_opening" && record.getString("usage_role") === "pre_roll");
+}
+
 function hookSemanticSnapshot(record) {
   const conflict = record.getString("conflict"),
     promise = record.getString("narrative_promise"),
@@ -2431,6 +2444,8 @@ function hookSemanticSnapshot(record) {
     id: record.id,
     title: record.getString("title"),
     source_class: record.getString("source_class"),
+    usage_role: record.getString("usage_role"),
+    opening_constraints: jsonObject(record, "analysis").identityConstraint || "",
     material: record.getString("material"),
     drama: record.getString("drama"),
     start_seconds: record.getFloat("start_seconds"),
@@ -2479,7 +2494,42 @@ function hookSemanticSnapshot(record) {
   };
 }
 
+// Retrieval never needs transcript rows, frame evidence or safe-boundary
+// objects. Avoid materializing those large JSON columns for every candidate.
+function hookRetrievalSnapshot(record) {
+  const analysis = jsonObject(record, "analysis");
+  return {
+    id: record.id,
+    title: record.getString("title"),
+    source_class: record.getString("source_class"),
+    usage_role: record.getString("usage_role"),
+    opening_constraints: analysis.identityConstraint || "",
+    material: record.getString("material"),
+    drama_title: "",
+    boundary_status: record.getString("boundary_status"),
+    review_status: record.getString("review_status"),
+    hook_type: record.getString("hook_type"),
+    themes: jsonArray(record, "themes"),
+    content_tags: jsonArray(record, "content_tags"),
+    ontology_tags: jsonArray(record, "ontology_tags"),
+    relationships: jsonArray(record, "relationships"),
+    conflict: record.getString("conflict"),
+    emotion: record.getString("emotion"),
+    narrative_promise: record.getString("narrative_promise"),
+    information_gap: record.getString("information_gap"),
+    spoken_summary: record.getString("spoken_summary"),
+    visual_summary: record.getString("visual_summary"),
+    // A verified boundary can only exist after evidence review. Unverified
+    // narration candidates intentionally receive zero truth-safety credit.
+    evidence: record.getString("boundary_status") === "verified" ? { present: true } : {},
+  };
+}
+
 function externalHookFragmentSnapshot(record) {
+  const importedOpening = record.getString("source_class") === "narration_opening" &&
+    record.getString("usage_role") === "pre_roll" &&
+    record.getString("import_key").startsWith("narration:") &&
+    jsonObject(record, "analysis").schemaVersion === "narration-opening-v1";
   const start = record.getFloat("start_seconds"),
     end = record.getFloat("end_seconds"),
     raw = jsonObject(record, "evidence"),
@@ -2496,14 +2546,14 @@ function externalHookFragmentSnapshot(record) {
         Number.isFinite(rowEnd) &&
         rowStart >= start - 0.05 &&
         rowEnd <= end + 0.05 &&
-        confidence >= 0.5
+        (confidence >= 0.5 || (importedOpening && item.confidence == null))
       );
     })
     .map((item) => ({
       start: Number(item.start),
       end: Number(item.end),
       text: String(item.text || "").trim(),
-      confidence: Number(item.confidence || 0),
+      confidence: item.confidence == null ? null : Number(item.confidence),
       verification: String(item.verification || "unverified"),
     }));
   const spoken = evidence.map((item) => item.text).join(" / ");
@@ -2511,6 +2561,9 @@ function externalHookFragmentSnapshot(record) {
     contract_version: "lumina-fragment-grounded-v1",
     id: record.id,
     source_class: record.getString("source_class"),
+    usage_role: record.getString("usage_role"),
+    evidence_status: importedOpening ? "cached_asr_unscored_review_required" : "scored_evidence",
+    identity_constraint: importedOpening ? jsonObject(record, "analysis").identityConstraint : "",
     material: record.getString("material"),
     start_seconds: start,
     end_seconds: end,
@@ -2790,6 +2843,7 @@ function verifyFactoryRenderArtifact(render) {
 }
 
 module.exports = {
+  isPreRollHook,
   authorizeWorker,
   authorizeUi,
   authorizeReviewUi,
@@ -2808,6 +2862,7 @@ module.exports = {
   generateTemplateAdaptationPlans,
   storyNeedFromPlans,
   scoreHookCandidate,
+  hookRetrievalSnapshot,
   templateEvidenceLevel,
   hookSemanticSnapshot,
   externalHookFragmentSnapshot,

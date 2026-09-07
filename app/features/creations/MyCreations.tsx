@@ -132,7 +132,7 @@ export function MyCreations({ drafts, favorites = favoriteMocks, initialTab = "f
   };
 
   return <section className={styles.creations} aria-label="我的创作">
-    <header><div><span>MY CREATIONS</span><h1>我的创作</h1><p>管理可复用创意资产与内容工厂自动保存的全部生产版本。</p></div><div className={styles.saveState}><i>✓</i><span><b>自动保存已开启</b><small>{localDrafts.length} 个草稿已同步</small></span></div></header>
+    <header><div><span>MY CREATIONS</span><h1>我的创作</h1><p>管理可复用创意资产与内容工厂自动保存的全部生产版本。</p></div><div className={styles.saveState}><i>✓</i><span><b>浏览器草稿</b><small>{localDrafts.length} 个当前可见草稿</small></span></div></header>
     <nav className={styles.tabs}><button type="button" className={tab === "favorites" ? styles.active : ""} onClick={() => setTab("favorites")}><i>01</i> 我的收藏 <em>{localFavorites.length}</em></button><button type="button" className={tab === "drafts" ? styles.active : ""} onClick={() => setTab("drafts")}><i>02</i> 我的草稿 <em>{localDrafts.length}</em></button></nav>
     <div className={styles.libraryTools}><label><span>⌕</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tab === "favorites" ? "搜索标题、主题、类型或钩子" : "搜索草稿、剧目、钩子或语种"}/>{query && <button onClick={() => setQuery("")}>×</button>}</label></div>
 

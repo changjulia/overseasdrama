@@ -1,0 +1,123 @@
+name: lumina-business
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+      GOMEMLIMIT: 64MiB
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./deploy/Caddyfile.business:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    mem_limit: 128m
+  auth:
+    image: lumina-business-auth:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.auth
+    restart: unless-stopped
+    environment:
+      AUTH_ORIGIN: https://${DOMAIN}
+    volumes: ["./deploy/runtime/auth:/data"]
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+  web:
+    image: lumina-production-web:latest
+    restart: unless-stopped
+    environment:
+      VINEXT_TRUSTED_HOSTS: ${DOMAIN}
+      POCKETBASE_URL: http://pocketbase:8090
+      LUMINA_UI_GATEWAY_TOKEN: ${LUMINA_UI_GATEWAY_TOKEN}
+      LUMINA_POCKETBASE_SUPERUSER_IDENTITY: ${LUMINA_POCKETBASE_SUPERUSER_IDENTITY}
+      LUMINA_POCKETBASE_SUPERUSER_PASSWORD: ${LUMINA_POCKETBASE_SUPERUSER_PASSWORD}
+      LUMINA_SEMANTIC_ENDPOINT: ${LUMINA_SEMANTIC_ENDPOINT}
+      LUMINA_SEMANTIC_API_KEY: ${LUMINA_SEMANTIC_API_KEY}
+      LUMINA_SEMANTIC_MODEL: ${LUMINA_SEMANTIC_MODEL}
+      LUMINA_PREROLL_MODEL: ${LUMINA_PREROLL_MODEL}
+      EXTERNAL_OPEN_API_BASE_URL: ${EXTERNAL_OPEN_API_BASE_URL}
+      EXTERNAL_OPEN_API_KEY: ${EXTERNAL_OPEN_API_KEY}
+      LUMINA_FACTORY_RENDER_DIR: /app/dist/client/renders
+    ports: ["127.0.0.1:3200:3000"]
+    volumes: ["factory_renders:/app/dist/client/renders:ro"]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+  pocketbase:
+    image: lumina-production-pocketbase:latest
+    command: ["pocketbase", "serve", "--http=0.0.0.0:8090", "--dir=/pb/pb_data", "--hooksDir=/pb/pb_hooks", "--migrationsDir=/pb/pb_migrations", "--hooksWatch=false", "--automigrate=false", "--hooksPool=2"]
+    restart: unless-stopped
+    environment:
+      GOMEMLIMIT: 192MiB
+      GOGC: "50"
+      LUMINA_DB_MAX_CONNECTIONS: "2"
+      LUMINA_MEDIA_SIGNING_URL: http://media:8080/sign
+      LUMINA_WORKER_TOKEN: ${LUMINA_WORKER_TOKEN}
+      LUMINA_UI_GATEWAY_TOKEN: ${LUMINA_UI_GATEWAY_TOKEN}
+      LUMINA_UI_MODE: local-loopback
+      LUMINA_UI_ORIGINS: https://${DOMAIN}
+    ports: ["127.0.0.1:8190:8090"]
+    volumes: ["./deploy/runtime/pb_data:/pb/pb_data"]
+    mem_limit: 640m
+    memswap_limit: 1280m
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8090/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+  worker:
+    image: lumina-business-worker:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    environment:
+      COS_BUCKET: ${COS_BUCKET}
+      COS_REGION: ${COS_REGION}
+      COS_ENDPOINT: ${COS_ENDPOINT}
+      COS_ACCESS_KEY_ID: ${COS_ACCESS_KEY_ID}
+      COS_SECRET_ACCESS_KEY: ${COS_SECRET_ACCESS_KEY}
+      NEXT_PUBLIC_POCKETBASE_URL: http://pocketbase:8090
+      LUMINA_WORKER_TOKEN: ${LUMINA_WORKER_TOKEN}
+      LUMINA_SEMANTIC_PROVIDER: openai-chat-completions
+      LUMINA_SEMANTIC_ENDPOINT: ${LUMINA_SEMANTIC_ENDPOINT}
+      LUMINA_SEMANTIC_API_KEY: ${LUMINA_SEMANTIC_API_KEY}
+      LUMINA_SEMANTIC_MODEL: ${LUMINA_SEMANTIC_MODEL}
+      LUMINA_SEMANTIC_TIMEOUT: "180"
+      LUMINA_WHISPER_MODEL: base
+      LUMINA_WHISPER_CPU_THREADS: "1"
+      LUMINA_OCR_WORKERS: "1"
+      LUMINA_QWEN_SEGMENT_WORKERS: "1"
+      LUMINA_INTERACTIVE_MATERIAL_FALLBACK: "0"
+      LUMINA_TEMP_DIR: /work/tmp
+      LUMINA_FACTORY_RENDER_DIR: /shared/renders
+    volumes: ["worker_cache:/root/.cache", "worker_tmp:/work/tmp", "factory_renders:/shared/renders"]
+    mem_limit: 896m
+    memswap_limit: 1792m
+    cpus: 1.0
+  media:
+    image: lumina-business-worker:latest
+    command: ["python", "-m", "processor.media_gateway"]
+    restart: unless-stopped
+    mem_limit: 96m
+    environment:
+      LUMINA_WORKER_TOKEN: ${LUMINA_WORKER_TOKEN}
+      COS_BUCKET: ${COS_BUCKET}
+      COS_REGION: ${COS_REGION}
+      COS_ENDPOINT: ${COS_ENDPOINT}
+      COS_ACCESS_KEY_ID: ${COS_ACCESS_KEY_ID}
+      COS_SECRET_ACCESS_KEY: ${COS_SECRET_ACCESS_KEY}
+volumes:
+  caddy_data:
+  caddy_config:
+  worker_cache:
+  worker_tmp:
+  factory_renders:

@@ -235,6 +235,8 @@ export type FactorySourceContext = {
   availableEpisodes?: number[];
   hookAssetId?: string;
   hookSourceClass?: "episode_highlight" | "narration_opening" | "external_material";
+  hookUsageRole?: string;
+  hookMaterialType?: string;
   hookMaterialId?: string;
   hookMaterialPlatform?: string;
   hookMaterialExposure?: number;
@@ -286,6 +288,7 @@ export type FactorySourceContext = {
 };
 
 export type FactoryWorkspaceProps = {
+  onOpenLibrary?: () => void;
   initialMode?: FactoryMode;
   editingDraft?: Draft | null;
   sourceContext?: FactorySourceContext | null;

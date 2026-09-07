@@ -1,8 +1,12 @@
+import { getChatGPTUser } from "@/app/chatgpt-auth";
 import { externalApiErrorResponse, queryAdxMaterials, successResponse, type MaterialQuery } from "../../../lib/server/external-open-api";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function POST(request: Request) {
+  if (!await getChatGPTUser()) {
+    return Response.json({ code: 401, message: "请先登录", data: null }, { status: 401 });
+  }
   const requestId = request.headers.get("X-Request-Id") || crypto.randomUUID();
   let body: MaterialQuery;
   try {

@@ -1,7 +1,8 @@
 "use client";
+import { isPreRollSource } from "../../lib/pre-roll-eligibility";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { strToU8, Zip, ZipPassThrough } from "fflate";
+import { usePersistentState } from "../../hooks/usePersistentState";
 import { formatDurationZh } from "../../lib/time-format";
 import { createInitialFactoryWorkflow, factoryModes } from "./mock-data";
 import type { Draft, FactoryMode, FactoryWorkspaceProps } from "./types";
@@ -13,11 +14,13 @@ import ExternalHookAnalysis, {
   type HighlightRecommendation,
 } from "./components/ExternalHookAnalysis";
 import ExternalHookDelivery from "./components/ExternalHookDelivery";
+import PreRollWorkshop from "./components/PreRollWorkshop";
 import baseStyles from "./factory.module.css";
 import enhancementStyles from "./factory-enhancements.module.css";
 import { listPocketBaseDramas } from "../../lib/pocketbase-drama-store";
 import {
   listSelectableExternalHooks,
+  listSelectableExternalHooksByIds,
   type HookAsset,
 } from "../../lib/hook-asset-store";
 import {
@@ -216,76 +219,6 @@ const downloadMedia = async (
     fileName,
   );
 };
-type VerifiedZipEntry = {
-  renderId: string;
-  fileName: string;
-  outputUrl: string;
-  outputSha256: string;
-  exportedAt: string;
-};
-const buildVerifiedZip = async (entries: VerifiedZipEntry[]) => {
-  const chunks: ArrayBuffer[] = [];
-  let resolveArchive!: (blob: Blob) => void;
-  let rejectArchive!: (error: Error) => void;
-  const archive = new Promise<Blob>((resolve, reject) => {
-    resolveArchive = resolve;
-    rejectArchive = reject;
-  });
-  const zip = new Zip((error, data, final) => {
-    if (error) {
-      rejectArchive(error);
-      return;
-    }
-    chunks.push(
-      data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer,
-    );
-    if (final)
-      resolveArchive(new Blob(chunks, { type: "application/zip" }));
-  });
-  const manifest: Array<Record<string, unknown>> = [];
-  const usedNames = new Set<string>();
-  try {
-    for (const [index, entry] of entries.entries()) {
-      const media = await fetchVerifiedMedia(
-        entry.outputUrl,
-        entry.outputSha256,
-      );
-      const requestedName = safeDownloadName(entry.fileName) ||
-        `factory-version-${index + 1}.mp4`;
-      const extension = requestedName.toLowerCase().endsWith(".mp4")
-        ? ""
-        : ".mp4";
-      const baseName = `${requestedName}${extension}`;
-      let uniqueName = baseName;
-      let suffix = 2;
-      while (usedNames.has(uniqueName.toLowerCase())) {
-        uniqueName = `${baseName.replace(/\.mp4$/i, "")}-${suffix}.mp4`;
-        suffix += 1;
-      }
-      usedNames.add(uniqueName.toLowerCase());
-      const file = new ZipPassThrough(uniqueName);
-      zip.add(file);
-      file.push(media.bytes, true);
-      manifest.push({
-        renderId: entry.renderId,
-        fileName: uniqueName,
-        sha256: media.sha256,
-        bytes: media.bytes.byteLength,
-        exportedAt: entry.exportedAt,
-      });
-    }
-    const manifestFile = new ZipPassThrough("manifest.json");
-    zip.add(manifestFile);
-    manifestFile.push(
-      strToU8(JSON.stringify({ generatedAt: new Date().toISOString(), files: manifest }, null, 2)),
-      true,
-    );
-    zip.end();
-    return await archive;
-  } catch (error) {
-    throw error instanceof Error ? error : new Error("批量归档失败");
-  }
-};
 const highlightSelectionKey = (item: {
   id: string | number;
   episode: number;
@@ -301,6 +234,8 @@ const hookOptionFromAsset = (
   id: item.id,
   hookAssetId: item.id,
   hookSourceClass: item.sourceClass,
+                  hookUsageRole: item.usageRole,
+                  hookMaterialType: item.materialType,
   hookMaterialId: item.materialId,
   hookMaterialPlatform: item.materialPlatform,
   hookMaterialExposure: item.materialExposure,
@@ -876,6 +811,7 @@ function HookAssemblyPreview({
 }
 
 export function FactoryWorkspace({
+  onOpenLibrary,
   initialMode = "episode-splice",
   editingDraft,
   sourceContext,
@@ -943,10 +879,14 @@ export function FactoryWorkspace({
   const [savedAt, setSavedAt] = useState(editingDraft?.updatedAt ?? "尚未保存");
   const [autoSaveCountdown, setAutoSaveCountdown] = useState(15);
   const [dirty, setDirty] = useState(false);
-  const [activeStep, setActiveStep] = useState(
+  const viewCacheKey = `lumina:factory-view:${dramaSource?.id || legacySource?.id || "none"}:${mode}:${editingDraft?.id || "new"}`;
+  const [activeStep, setActiveStep] = usePersistentState(
+    `${viewCacheKey}:step`,
     editingDraft?.isHistorySnapshot ? 5 : 0,
   );
   const goal = "停滑与点击";
+  // Script authoring shares story selection, but never starts a hook-match/render job.
+  const [preRollWorkflow, setPreRollWorkflow] = usePersistentState(`${viewCacheKey}:pre-roll`, false);
   const [matchStrategy, setMatchStrategy] = useState<ExternalMatchStrategy>(
     () => {
       const saved = editingDraft?.factorySnapshot?.transition?.matchStrategy;
@@ -1044,7 +984,9 @@ export function FactoryWorkspace({
   const [storylineError, setStorylineError] = useState("");
   const [storylineRequestToken, setStorylineRequestToken] = useState(0);
   const [hookThemeFilter, setHookThemeFilter] = useState("全部主题");
+  const [hookFormatFilter, setHookFormatFilter] = useState("all");
   const [hookTagQuery, setHookTagQuery] = useState("");
+  const [hookVisibleLimit, setHookVisibleLimit] = useState(48);
   const [hookQueryDimension, setHookQueryDimension] =
     useState<OntologyDimension>("theme");
   // Current paid-media delivery is standardized at 5–15 minutes. Keep this
@@ -1294,7 +1236,9 @@ export function FactoryWorkspace({
   ];
   const steps =
     mode === "external-hook"
-      ? matchStrategy === "story_to_hook"
+      ? preRollWorkflow
+        ? ["选择剧目与高光", "选择正片故事线", "生成买量钩子与脚本"]
+        : matchStrategy === "story_to_hook"
         ? storyToHookSteps
         : matchStrategy === "template_reuse"
           ? templateReuseSteps
@@ -1767,14 +1711,14 @@ export function FactoryWorkspace({
       });
     if (
       hookSourceInput &&
-      hookSourceInput.hookSourceClass !== "external_material"
+      !isPreRollSource(hookSourceInput.hookSourceClass, hookSourceInput.hookUsageRole)
     )
       findings.push({
         id: "hook-source",
         severity: "阻断",
         category: "货不对板",
-        title: "钩子不是外搭素材片段",
-        detail: "此模式只允许匹配从外搭素材中定位出的具体钩子。",
+        title: "钩子未登记为可用前置片段",
+        detail: "请选择外搭素材钩子或已登记用途的解说开头。",
       });
     if (hookSourceInput && hookSourceInput.hookBoundaryStatus !== "verified")
       findings.push({
@@ -1866,7 +1810,7 @@ export function FactoryWorkspace({
       });
     if (
       selectedTransition.id === "hard-cut" &&
-      hookSourceInput?.hookSourceClass === "external_material"
+      isPreRollSource(hookSourceInput?.hookSourceClass, hookSourceInput?.hookUsageRole)
     )
       findings.push({
         id: "transition-risk",
@@ -1912,7 +1856,7 @@ export function FactoryWorkspace({
           "匹配结果包含具体剧集区间、承接证据及双端安全边界；故事完整度单独作为创意建议。",
       });
     const sourceScore =
-      dramaSource && hookSourceInput?.hookSourceClass === "external_material"
+      dramaSource && isPreRollSource(hookSourceInput?.hookSourceClass, hookSourceInput?.hookUsageRole)
         ? 20
         : 0;
     const playableScore = selectedRecommendation?.videoUrl ? 20 : 0;
@@ -3274,7 +3218,7 @@ export function FactoryWorkspace({
     const controller = new AbortController();
     const timeout = window.setTimeout(
       () => controller.abort("素材读取超时"),
-      15000,
+      45000,
     );
     setPickerLoading(true);
     setPickerError("");
@@ -3300,7 +3244,6 @@ export function FactoryWorkspace({
             ),
           )
         : (async () => {
-            const items = await listSelectableExternalHooks(controller.signal);
             let recommendations: StrategyHookRecommendation[] = [];
             if (
               dramaSource?.id &&
@@ -3330,6 +3273,17 @@ export function FactoryWorkspace({
               recommendations = result.items;
               setStrategyStoryNeed(result.storyNeed);
             } else setStrategyStoryNeed(null);
+            // Story-led modes first rank the full asset pool inside PocketBase,
+            // then return only the top IDs. The browser never downloads 1,000+
+            // records merely to discard all but 50 of them.
+            const items = recommendations.length
+              ? await listSelectableExternalHooksByIds(
+                  recommendations.map((item) => item.hookId),
+                  controller.signal,
+                )
+              : matchStrategy === "hook_to_story"
+                ? await listSelectableExternalHooks(controller.signal)
+                : [];
             const ranked = new Map(
               recommendations.map((item) => [item.hookId, item]),
             );
@@ -3350,6 +3304,8 @@ export function FactoryWorkspace({
                   id: item.id,
                   hookAssetId: item.id,
                   hookSourceClass: item.sourceClass,
+                  hookUsageRole: item.usageRole,
+                  hookMaterialType: item.materialType,
                   hookMaterialId: item.materialId,
                   hookMaterialPlatform: item.materialPlatform,
                   hookMaterialExposure: item.materialExposure,
@@ -3435,6 +3391,7 @@ export function FactoryWorkspace({
         .some((value) => String(value).toLowerCase().includes(normalizedQuery));
       return (
         themeMatch &&
+        (hookFormatFilter === "all" || (hookFormatFilter === "narration" ? option.hookSourceClass === "narration_opening" : option.hookSourceClass === "external_material")) &&
         (!normalizedQuery ||
           textMatch ||
           dimensionLabels.some((label) =>
@@ -3545,6 +3502,7 @@ export function FactoryWorkspace({
   useEffect(() => {
     if (
       mode !== "external-hook" ||
+      preRollWorkflow ||
       matchRequestToken === 0 ||
       !hookSourceInput?.hookAssetId ||
       !dramaSource?.id ||
@@ -3713,6 +3671,7 @@ export function FactoryWorkspace({
     matchRequestToken,
     matchRetryToken,
     matchStrategy,
+    preRollWorkflow,
     mode,
     targetDurationSeconds,
   ]);
@@ -3958,12 +3917,16 @@ export function FactoryWorkspace({
       [next[index], next[target]] = [next[target], next[index]];
       return next;
     });
+  useEffect(() => {
+    setHookVisibleLimit(48);
+  }, [sourcePicker, hookFormatFilter, hookThemeFilter, hookTagQuery, hookQueryDimension, activeStorylinePlan?.id]);
     touch();
   };
 
   const episodeSpliceWorkflow = !source ? (
     <div className={styles.emptyState}>
       <h2>尚未带入剧目与片源</h2>
+      <button onClick={onOpenLibrary}>从剧库选择片源</button>
       <p>请从剧库目标剧目进入内容工厂，再选择正片高光起点。</p>
     </div>
   ) : (
@@ -4087,10 +4050,10 @@ export function FactoryWorkspace({
           <div>
             <small>NEXT-STAGE MATCHING</small>
             <h2>选择制作入口</h2>
-            <p>入口决定分析方向，后续沿用当前 6 步制作流程。</p>
+            <p>选择素材匹配、模板复用，或从高光与正片故事生成买量前贴脚本。</p>
           </div>
         </header>
-        <div className={styles.matchStrategyGrid}>
+        <div className={`${styles.matchStrategyGrid} ${enhancementStyles.fourWorkflowGrid}`}>
           {(
             [
               [
@@ -4113,8 +4076,10 @@ export function FactoryWorkspace({
             <button
               type="button"
               key={id}
-              className={matchStrategy === id ? styles.matchStrategyActive : ""}
+              className={!preRollWorkflow && matchStrategy === id ? styles.matchStrategyActive : ""}
+              aria-pressed={!preRollWorkflow && matchStrategy === id}
               onClick={() => {
+                setPreRollWorkflow(false);
                 clearStoryToHookDerivedState();
                 setMatchStrategy(id);
                 setHookOptions([]);
@@ -4126,10 +4091,27 @@ export function FactoryWorkspace({
               <span>{description}</span>
             </button>
           ))}
+          <button
+            type="button"
+            className={preRollWorkflow ? styles.matchStrategyActive : ""}
+            aria-pressed={preRollWorkflow}
+            onClick={() => {
+              if (preRollWorkflow) return;
+              clearStoryToHookDerivedState();
+              setMatchStrategy("story_to_hook");
+              setPreRollWorkflow(true);
+              setMatchRequestToken(0);
+              setSourcePicker(null);
+              setActiveStep(0);
+            }}
+          >
+            <b>前贴脚本</b>
+            <span>从高光与后续正片出发，设计买量钩子，输出可用于 Seedance 的分镜提示词。</span>
+          </button>
         </div>
         <footer>
-          <b>内部匹配维度</b>
-          {matchingDimensions.map((item) => (
+          <b>{preRollWorkflow ? "买量钩子走向" : "内部匹配维度"}</b>
+          {(preRollWorkflow ? ["欺压反杀", "身份反差", "背叛复仇", "危险救援", "关系悬念"] : matchingDimensions).map((item) => (
             <span key={item}>{item}</span>
           ))}
         </footer>
@@ -4550,6 +4532,17 @@ export function FactoryWorkspace({
             )}
           </section>
         )}
+        {preRollWorkflow && (
+          <PreRollWorkshop
+            drama={dramaSource?.title || "当前短剧"}
+            episodeMedia={dramaSource?.episodeMedia}
+            plans={selectedStorylinePlans}
+            entryPointIds={storylineEntryPointIds}
+            understanding={storyUnderstanding}
+            language={language}
+            ratio={ratio}
+          />
+        )}
         {activeStep === 1 && matchStrategy !== "story_to_hook" && (
           <section className={styles.panel}>
             <div className={styles.panelHeader}>
@@ -4818,7 +4811,7 @@ export function FactoryWorkspace({
               )}
             </section>
           )}
-        {activeStep >= 2 && activeStep <= 4 && (
+        {!preRollWorkflow && activeStep >= 2 && activeStep <= 4 && (
           <section className={styles.panel}>
             <div className={styles.panelHeader}>
               <div>
@@ -5480,8 +5473,8 @@ export function FactoryWorkspace({
                     onNotify?.("请先批量生成至少一个真实成片版本");
                     return;
                   }
-                  onNotify?.(`正在校验并归档 ${completed.length} 个成片，请勿关闭页面…`);
-                  const exportedEntries: VerifiedZipEntry[] = [];
+                  onNotify?.(`正在校验并下载 ${completed.length} 个 MP4 成片，请勿关闭页面…`);
+                  const usedNames = new Set<string>();
                   for (const [planId, render] of completed) {
                     const plan = selectedStorylinePlans.find((item) => item.id === planId);
                     const customName = config.versionFileNames?.[planId]?.trim();
@@ -5494,17 +5487,18 @@ export function FactoryWorkspace({
                     );
                     if (!exported.outputSha256)
                       throw new Error(`${plan?.title || planId} 缺少成片 SHA-256，已停止批量导出`);
-                    exportedEntries.push(exported);
+                    const requestedName = safeDownloadName(exported.fileName) || `${plan?.title || planId}.mp4`;
+                    const baseName = requestedName.toLowerCase().endsWith(".mp4") ? requestedName : `${requestedName}.mp4`;
+                    let uniqueName = baseName;
+                    let suffix = 2;
+                    while (usedNames.has(uniqueName.toLowerCase())) {
+                      uniqueName = `${baseName.replace(/\.mp4$/i, "")}-${suffix}.mp4`;
+                      suffix += 1;
+                    }
+                    usedNames.add(uniqueName.toLowerCase());
+                    await downloadMedia(exported.outputUrl, uniqueName, exported.outputSha256);
                   }
-                  const archive = await buildVerifiedZip(exportedEntries);
-                  const archiveBase = safeDownloadName(
-                    config.fileName.replace(/\.[^.]+$/, ""),
-                  ) || "factory-export";
-                  triggerBlobDownload(
-                    archive,
-                    `${archiveBase}_${completed.length}个版本.zip`,
-                  );
-                  onNotify?.(`已校验并打包 ${completed.length} 个成片；ZIP 内含 SHA-256 清单`);
+                  onNotify?.(`已通过 SHA-256 校验并开始下载 ${completed.length} 个独立 MP4 文件`);
                   return;
                 }
                 if (!factoryRender?.outputUrl) {
@@ -5528,7 +5522,13 @@ export function FactoryWorkspace({
           </section>
         )}
       </div>
-      <div className={styles.externalFlowActions}>
+      {preRollWorkflow ? <div className={styles.externalFlowActions}>
+        <button type="button" disabled={activeStep === 0} onClick={() => setActiveStep(step => Math.max(0, step - 1))}>上一步</button>
+        <span>第 {activeStep + 1} 步 / 共 3 步 · 前贴脚本</span>
+        {activeStep < 2 ? <button type="button" disabled={!stepReady[activeStep]} onClick={() => setActiveStep(step => Math.min(2, step + 1))}>
+          {activeStep === 0 ? "理解高光与后续正片" : "创作买量钩子与脚本"}
+        </button> : <span>选择走向后生成，支持全文与逐镜复制</span>}
+      </div> : <div className={styles.externalFlowActions}>
         <button
           type="button"
           disabled={activeStep === 0}
@@ -5668,6 +5668,7 @@ export function FactoryWorkspace({
                 : "下一步"}
         </button>
       </div>
+      }
       {sourcePicker && (
         <div
           className={styles.sourcePickerMask}
@@ -5710,6 +5711,11 @@ export function FactoryWorkspace({
             </header>
             {sourcePicker === "hook" && (
               <div className={styles.hookPickerFilters}>
+                <select aria-label="钩子素材类型" value={hookFormatFilter} onChange={(event) => setHookFormatFilter(event.target.value)}>
+                  <option value="all">全部钩子</option>
+                  <option value="narration">解说开头</option>
+                  <option value="external">外部素材钩子</option>
+                </select>
                 <select
                   value={hookQueryDimension}
                   onChange={(event) =>
@@ -5749,7 +5755,11 @@ export function FactoryWorkspace({
             )}
             <div className={styles.sourcePickerList}>
               {pickerLoading ? (
-                <div className={styles.sourcePickerState}>正在读取素材…</div>
+                <div className={styles.sourcePickerState}>
+                  {sourcePicker === "hook" && matchStrategy !== "hook_to_story"
+                    ? "后台正在批量筛选钩子，完成后只返回前 50 条候选…"
+                    : "正在分页读取素材…"}
+                </div>
               ) : pickerError ? (
                 <div className={styles.sourcePickerState}>
                   <p>{pickerError}</p>
@@ -5775,7 +5785,7 @@ export function FactoryWorkspace({
               ) : (
                 (sourcePicker === "drama"
                   ? dramaOptions
-                  : filteredHookOptions
+                  : filteredHookOptions.slice(0, hookVisibleLimit)
                 ).map((option) => {
                   const previewHighlight = activeStorylinePlan?.segments?.[0];
                   const previewHighlightUrl = previewHighlight
@@ -5972,6 +5982,15 @@ export function FactoryWorkspace({
                 })
               )}
             </div>
+            {sourcePicker === "hook" && !pickerLoading && !pickerError && filteredHookOptions.length > hookVisibleLimit && (
+              <button
+                type="button"
+                className={styles.sourcePickerLoadMore}
+                onClick={() => setHookVisibleLimit((value) => value + 48)}
+              >
+                加载更多钩子（已显示 {hookVisibleLimit} / {filteredHookOptions.length}）
+              </button>
+            )}
           </aside>
         </div>
       )}
@@ -6028,6 +6047,7 @@ export function FactoryWorkspace({
       ) : !source ? (
         <div className={styles.emptyState}>
           <h2>尚未带入剧目与片源</h2>
+      <button onClick={onOpenLibrary}>从剧库选择片源</button>
           <p>
             请返回剧库，在目标短剧详情中点击“进入内容工厂”。内容工厂不会再自动填入示例剧目或虚构分析。
           </p>
@@ -6527,7 +6547,7 @@ export function FactoryWorkspace({
                 )
               }
             >
-              生成成片（待接入）
+              {!source ? "请选择片源后生成" : "此解说模式暂不支持生成成片"}
             </button>
           </div>
         </footer>

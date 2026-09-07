@@ -2,7 +2,7 @@
   --ink: #263247;
   --muted: #7b8798;
   --line: #dfe6ef;
-  --blue: #1769e0;
+  --blue: var(--lumina-primary);
   --blue-soft: #edf5ff;
   color: var(--ink);
   display: grid;
@@ -202,7 +202,7 @@
 }
 
 .progressTrack i {
-  background: linear-gradient(90deg, #1769e0, #62a5f3);
+  background: linear-gradient(90deg, var(--lumina-primary), #62a5f3);
   border-radius: inherit;
   display: block;
   height: 100%;
@@ -323,7 +323,7 @@
 .version_approved { background: #e8f7f0; color: #26785b; }
 .version_rejected { background: #ffeded; color: #b84a4a; }
 .version_failed { background: #fff0f0; color: #b84a4a; }
-.version_exported { background: #eaf3ff; color: #1769e0; }
+.version_exported { background: #eaf3ff; color: var(--lumina-primary); }
 
 .exportFields {
   display: grid;

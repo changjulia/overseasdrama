@@ -12,7 +12,7 @@
 .panelTitle + span {
   font-size: 8px;
   letter-spacing: 1.5px;
-  color: #1769e0;
+  color: var(--lumina-primary);
   font-weight: 800;
 }
 .pageHeader h1 {
@@ -27,7 +27,7 @@
 }
 .primary {
   border: 0 !important;
-  background: #1769e0 !important;
+  background: var(--lumina-primary) !important;
   color: #fff !important;
   box-shadow: 0 5px 14px #1769e024;
 }
@@ -98,7 +98,7 @@
 .toolbar button.selected {
   background: #eaf2ff;
   border-color: #9fc2ec;
-  color: #1769e0;
+  color: var(--lumina-primary);
 }
 .sourceGrid {
   display: grid;
@@ -126,7 +126,7 @@
   height: 38px;
   border-radius: 9px;
   background: #eaf2ff;
-  color: #1769e0;
+  color: var(--lumina-primary);
   display: grid;
   place-items: center;
   font-weight: 800;
@@ -199,7 +199,7 @@
 .taskProgress > i em {
   display: block;
   height: 100%;
-  background: #1769e0;
+  background: var(--lumina-primary);
   border-radius: 4px;
 }
 .card footer,
@@ -285,7 +285,7 @@
   height: 36px;
   background: #edf3fc;
   border-radius: 8px;
-  color: #1769e0;
+  color: var(--lumina-primary);
   display: grid;
   place-items: center;
   font-style: normal;
@@ -331,7 +331,7 @@
 .detailProgress {
   margin: 16px 0 20px;
   padding: 13px 14px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--lumina-border);
   border-radius: 10px;
   background: #f8fafc;
 }
@@ -346,27 +346,27 @@
   font-size: 10px;
 }
 .detailProgress b {
-  color: #1769e0;
+  color: var(--lumina-primary);
 }
 .detailProgress > i {
   display: block;
   height: 8px;
   overflow: hidden;
   border-radius: 999px;
-  background: #e2e8f0;
+  background: var(--lumina-border);
 }
 .detailProgress > i em {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg,#3b82f6,#1769e0);
+  background: linear-gradient(90deg,#3b82f6,var(--lumina-primary));
   transition: width .35s ease;
 }
 .detailProgress > small {
   display: block;
   margin-top: 7px;
   font-size: 8px;
-  color: #64748b;
+  color: var(--lumina-muted);
 }
 .detailProgress[data-status="失败"] > i em { background: #ef4444; }
 .detailProgress[data-status="已暂停"] > i em { background: #f59e0b; }
@@ -408,7 +408,7 @@
 }
 .pipeline .running > i {
   background: #dceaff;
-  color: #1769e0;
+  color: var(--lumina-primary);
 }
 .pipeline span {
   display: flex;
@@ -515,7 +515,7 @@
   width: 29px;
   height: 29px;
   background: #eaf2ff;
-  color: #1769e0;
+  color: var(--lumina-primary);
   border-radius: 7px;
   display: grid;
   place-items: center;
@@ -591,7 +591,7 @@
 .rules em {
   font-style: normal;
   font-size: 8px;
-  color: #1769e0;
+  color: var(--lumina-primary);
 }
 .auditButton {
   width: 100%;
@@ -623,7 +623,7 @@
 }
 .modal header small {
   font-size: 7px;
-  color: #1769e0;
+  color: var(--lumina-primary);
   letter-spacing: 1.2px;
 }
 .modal h2 {
@@ -761,7 +761,7 @@
   border-bottom: 1px solid #e8edf2;
 }
 .detailDrawer header small {
-  color: #1769e0;
+  color: var(--lumina-primary);
   font-size: 7px;
   font-weight: 800;
   letter-spacing: 1.4px;

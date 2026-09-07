@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from processor.semantic_analysis import AnalysisFailed, _executable
+from processor.object_storage import publish_render
+from processor.pre_roll_eligibility import is_pre_roll_hook, narration_boundaries_verified
 
 
 def _download(url: str, target: Path) -> None:
@@ -369,8 +371,14 @@ def render_factory_project(response: dict[str, Any], base_url: str, workspace: P
     render = dict(response.get("render") or {})
     episodes = [dict(item) for item in response.get("episodes") or []]
     is_episode_splice = project.get("mode") == "episode-splice"
-    if not is_episode_splice and hook.get("source_class") != "external_material":
+    if not is_episode_splice and not is_pre_roll_hook(hook):
         raise AnalysisFailed("render requires an external hook asset")
+    if not is_episode_splice and not narration_boundaries_verified(hook):
+        raise AnalysisFailed("解说开头仅完成局部核对；请先复核完整对白与画面切点")
+    if not is_episode_splice and hook.get("source_class") == "narration_opening":
+        context = match.get("match_context") if isinstance(match.get("match_context"), dict) else {}
+        if not hook.get("analysis_version") or context.get("hookAnalysisVersion") != hook.get("analysis_version"):
+            raise AnalysisFailed("解说钩子已变更，旧高光匹配不可用于生产；请重新匹配")
     segments = match.get("segments") if isinstance(match.get("segments"), list) else []
     if not is_episode_splice and not segments:
         raise AnalysisFailed("story match contains no segments")
@@ -564,6 +572,9 @@ def render_factory_project(response: dict[str, Any], base_url: str, workspace: P
     if not render_quality["passed"]:
         raise AnalysisFailed(f"rendered output quality check failed: {', '.join(render_quality['failureCodes'])}")
     digest = _sha256_file(output)
+    stored_in_cos = publish_render(output)
     if on_progress:
         on_progress(96, "验证成片编码、音轨与边界台账")
+    if stored_in_cos:
+        output.unlink()
     return {"preview_url": f"/renders/{urllib.parse.quote(output.name)}", "output_url": f"/renders/{urllib.parse.quote(output.name)}", "output_sha256": digest, "boundary_ledger": ledger, "validation": {**render_quality, "technical": technical, "file": str(output), "ratio": ratio, "language": str(project.get("language") or "英语"), "transition": transition_id, "transitionConfig": transition_settings}, "unsupportedFeatures": unsupported_features, "logs": {"clips": len(rendered), "flashTailDetection": tail_starts, "timelineOrder": [int(item.get("episode") or 0) for item in segments], "unsupportedFeatures": unsupported_features}}

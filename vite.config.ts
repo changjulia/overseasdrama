@@ -4,6 +4,7 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
+import { localAuth } from "./build/local-auth-vite-plugin";
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   "00000000-0000-4000-8000-000000000000";
@@ -108,6 +109,7 @@ export default defineConfig(async () => {
         : {}),
     },
     plugins: [
+      localAuth(),
       localRenderFiles(),
       vinext(),
       sites(),

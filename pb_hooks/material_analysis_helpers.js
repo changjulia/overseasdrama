@@ -285,6 +285,7 @@ function syncMaterialHookAssets(app, material, result, projection) {
       && claimText(endBoundary.status || endBoundary.verification) === "verified";
     const scores = objectValue(hook.qualityScores || hook.quality_scores || hook.scores);
     const record = existing.find((candidate) => !reusedIds.includes(candidate.id)
+      && !candidate.getString("import_key")
       && candidate.getString("source_class") === sourceClass
       && Math.abs(candidate.getFloat("start_seconds") - start) <= .25
       && Math.abs(candidate.getFloat("end_seconds") - end) <= .25) || new Record(collection);
@@ -339,7 +340,7 @@ function syncMaterialHookAssets(app, material, result, projection) {
     app.save(record);
     created.push({ id: record.id, start, end });
   });
-  existing.filter((record) => !reusedIds.includes(record.id) && record.getString("review_status") !== "approved").forEach((record) => app.delete(record));
+  existing.filter((record) => !reusedIds.includes(record.id) && !record.getString("import_key") && record.getString("review_status") !== "approved").forEach((record) => app.delete(record));
   return created.map((item) => item.id);
 }
 

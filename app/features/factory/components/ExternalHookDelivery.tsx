@@ -300,7 +300,7 @@ export function ExternalHookDelivery({
           </div>}
           <div className={styles.exportActions}>
             <button type="button" onClick={() => { onSaveDraft?.(); onNotify?.("草稿与交付配置已保存"); }} disabled={disabled || isExporting}>保存草稿</button>
-            <button className={styles.exportButton} type="button" aria-busy={isExporting} onClick={() => void submitExport()} disabled={isExporting || !canExport || (versions.some(version=>version.outputUrl) && !selectedVersionIds.length)} title={isExporting ? "正在校验并打包成片" : !canExport ? "渲染服务尚未返回真实文件" : undefined}>{isExporting ? `正在导出 ${versions.some(version=>version.outputUrl) ? selectedVersionIds.length : Math.max(exportableVersionCount, hasPlayablePreview ? 1 : 0)} 个版本…` : `批量导出 ${versions.some(version=>version.outputUrl) ? selectedVersionIds.length : Math.max(exportableVersionCount, hasPlayablePreview ? 1 : 0)} 个版本`}</button>
+            <button className={styles.exportButton} type="button" aria-busy={isExporting} onClick={() => void submitExport()} disabled={isExporting || !canExport || (versions.some(version=>version.outputUrl) && !selectedVersionIds.length)} title={isExporting ? "正在校验并下载 MP4 成片" : !canExport ? "渲染服务尚未返回真实文件" : undefined}>{isExporting ? `正在导出 ${versions.some(version=>version.outputUrl) ? selectedVersionIds.length : Math.max(exportableVersionCount, hasPlayablePreview ? 1 : 0)} 个 MP4…` : `批量导出 ${versions.some(version=>version.outputUrl) ? selectedVersionIds.length : Math.max(exportableVersionCount, hasPlayablePreview ? 1 : 0)} 个 MP4`}</button>
           </div>
           {!canExport && <small className={styles.exportHint}>等待至少一个真实预览文件后开放批量导出</small>}
         </section>

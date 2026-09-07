@@ -6,7 +6,8 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "vinext dev",
+    "dev": "node scripts/dev-with-auth.mjs",
+    "dev:app": "vinext dev",
     "dev:full": "bash scripts/dev-with-services.sh",
     "pocketbase:setup": "bash scripts/setup-pocketbase.sh",
     "pocketbase:start": "bash scripts/start-pocketbase.sh",

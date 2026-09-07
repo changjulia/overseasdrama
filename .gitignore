@@ -66,6 +66,7 @@ pb-hook-test.*.log
 # local runtime logs and browser profiles
 /*.log
 /.runtime/
+/.codex-runtime/
 /.worker-logs/
 /deploy/runtime/
 /deploy/backups/

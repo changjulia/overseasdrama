@@ -1,4 +1,5 @@
 "use client";
+import { boundedFetch as fetch } from "./bounded-fetch";
 
 import { normalizeTag, type OntologyDimension } from "./ontology/normalization";
 
@@ -223,10 +224,9 @@ async function pbFetch(path: string, init?: RequestInit) {
   let response: Response;
   try {
     response = await fetch(`${PB_URL}${path}`, { cache: "no-store", ...init });
-  } catch {
-    throw new Error(
-      `无法连接 PocketBase（${PB_URL}），请先启动本项目的 PocketBase 服务`,
-    );
+  } catch (error) {
+    if (init?.signal?.aborted || (error instanceof Error && error.message.includes("请求超时"))) throw error;
+    throw new Error("暂时无法连接数据服务，请检查网络后重试。已有记录不会被删除。");
   }
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as {
@@ -1143,7 +1143,7 @@ export function fromRecord(
           : 1),
     ),
     review: text(record.review_status, "待复核"),
-    analysis: analysisLabel(status, progress),
+    analysis: status === "idle" && object(record.opening_analysis).scope === "opening_only" ? "开头已核对 · 整片未分析" : analysisLabel(status, progress),
     analysisStatus: status,
     analysisProgress: progress,
     analysisStage: text(
@@ -1266,6 +1266,7 @@ export async function listInspirationMaterials(
     "rights_status",
     "analysis_result",
     "source_attribution",
+    "opening_analysis",
   ].join(",");
   try {
     const [materialResponse, jobResponse] = await Promise.all([
@@ -1347,10 +1348,18 @@ export async function getInspirationMaterialStats(
   return { total, completed, longRunning, pendingReview };
 }
 
+export function materialTypeFilter(type?: string): string {
+  const known = ["正片剧集拼接", "正片剧集解说", "外搭钩子＋本剧正片"];
+  if (known.includes(type || "")) return `(analysis_status="succeeded" && material_format="${type}") || (analysis_status!="succeeded" && type="${type}")`;
+  if (type === "未确定") return `(analysis_status="succeeded" && ${known.map((value) => `material_format!="${value}"`).join(" && ")}) || (analysis_status!="succeeded" && ${known.map((value) => `type!="${value}"`).join(" && ")})`;
+  return "";
+}
+
 export async function listInspirationMaterialsPage(
   page = 1,
   perPage = 24,
   signal?: AbortSignal,
+  type?: string,
 ): Promise<InspirationMaterialPage> {
   const materialFields = [
     "id",
@@ -1384,11 +1393,13 @@ export async function listInspirationMaterialsPage(
     "rights_status",
     "analysis_result",
     "source_attribution",
+    "opening_analysis",
   ].join(",");
   const boundedPage = Math.max(1, Math.floor(page)),
     boundedPerPage = Math.max(1, Math.min(60, Math.floor(perPage)));
+  const typeQuery = materialTypeFilter(type);
   const response = await pbFetch(
-    `/api/collections/ad_materials/records?page=${boundedPage}&perPage=${boundedPerPage}&sort=-id&fields=${materialFields}`,
+    `/api/collections/ad_materials/records?page=${boundedPage}&perPage=${boundedPerPage}&sort=-id&fields=${materialFields}${typeQuery ? `&filter=${encodeURIComponent(typeQuery)}` : ""}`,
     { signal },
   );
   const payload = (await response.json()) as {

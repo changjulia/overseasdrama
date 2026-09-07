@@ -1,0 +1,43 @@
+.panel { margin: 22px 0; padding: 24px; border: 1px solid var(--lumina-border); border-radius: var(--lumina-panel-radius); background: var(--lumina-surface); color: var(--lumina-text); font-family: inherit; }
+.header, .actions, .batchBar, .historyBar, .scriptTabs, .cardActions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.header, .historyBar { justify-content: space-between; }
+.header h2 { margin: 6px 0; }
+.eyebrow { font-size: var(--font-caption); color: var(--lumina-primary); font-weight: 700; }
+.panel p { line-height: 1.7; }
+.muted { color: var(--lumina-muted); font-size: 13px; }
+.controls { display: flex; gap: 14px; flex-wrap: wrap; margin: 18px 0; }
+.panel label { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.controls label:first-child, .historyBar label { flex: 1; min-width: 220px; }
+.panel select, .panel textarea { font: inherit; padding: 10px 12px; border: 1px solid var(--lumina-border); border-radius: var(--lumina-control-radius); color: inherit; background: var(--lumina-surface); max-width: 100%; }
+.panel textarea { resize: vertical; min-height: 75px; }
+.panel button { cursor: pointer; font: inherit; border-radius: var(--lumina-control-radius); padding: 9px 14px; background: var(--lumina-surface); border: 1px solid var(--lumina-border); color: var(--lumina-primary); }
+.panel button:hover:not(:disabled) { background: var(--lumina-primary-soft); border-color: var(--lumina-primary); }
+.panel button:disabled { opacity: .5; cursor: not-allowed; }
+.panel button:focus-visible, .panel input:focus-visible, .panel select:focus-visible, .panel textarea:focus-visible { outline: 2px solid var(--lumina-primary); outline-offset: 3px; }
+.panel .primary { color: #fff; background: var(--lumina-primary); border-color: var(--lumina-primary); }
+.panel .primary:hover:not(:disabled) { background: var(--lumina-primary-hover); }
+.actions { margin-top: 16px; }
+.grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; margin-top: 20px; }
+.card { display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--lumina-border); border-radius: var(--lumina-panel-radius); padding: 18px; background: var(--lumina-surface); overflow-wrap: anywhere; }
+.panel .selected { border-color: var(--lumina-primary); box-shadow: 0 0 0 1px var(--lumina-primary); background: var(--lumina-primary-soft); }
+.storyText { white-space: pre-wrap; line-height: 1.85; font-size: var(--font-body); margin: 16px 0; }
+.card h3 { margin: 9px 0 15px; }
+.cardActions { margin-top: auto; padding-top: 16px; }
+.output { margin-top: 22px; border-top: 1px solid var(--lumina-border); padding-top: 20px; }
+.script { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; font-size: var(--font-body); line-height: 1.85; padding: 20px; background: var(--lumina-surface-muted); border-radius: var(--lumina-panel-radius); max-height: 650px; overflow-y: auto; }
+.error { color: #a42e42; background: #fff2f3; padding: 12px; border-radius: var(--lumina-control-radius); }
+.panel summary { cursor: pointer; padding: 12px 0; font-weight: 600; }
+.patterns { border: 0; padding: 0; margin: 20px 0; min-width: 0; }
+.patterns legend { font-size: var(--font-body); font-weight: 700; }
+.patternGrid { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: 10px; }
+.patternGrid button { display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.patternGrid span { font-size: var(--font-caption); line-height: 1.65; color: var(--lumina-muted); }
+.warning { color: #79591f; background: #fff8e7; padding: 12px; border-radius: var(--lumina-control-radius); line-height: 1.7; overflow-wrap: anywhere; }
+.warning button { margin-left: 12px; }
+.panel .mixed { flex-direction: row; align-items: center; flex-wrap: wrap; }
+.panel input[type="checkbox"] { min-height: 0 !important; width: 16px; height: 16px; accent-color: var(--lumina-primary); flex-shrink: 0; }
+.historyBar, .batchBar { padding: 16px; background: var(--lumina-surface-muted); border: 1px solid var(--lumina-border); border-radius: var(--lumina-panel-radius); margin: 18px 0; }
+.badge { margin-left: auto; font-size: var(--font-caption); color: var(--lumina-muted); }
+.scriptTabs { margin-top: 20px; }
+@media(max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
+@media(max-width: 760px) { .panel { padding: 16px; } .batchBar { align-items: stretch; } .historyBar label { min-width: 0; width: 100%; } .batchBar button { width: 100%; } }

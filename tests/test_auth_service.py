@@ -59,6 +59,23 @@ class AccountTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.store.login('admin', 'test-password-strong', 'attacker')
 
+    def test_first_self_registered_account_is_active_admin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            empty_store = Accounts(Path(directory) / 'users.sqlite', allow_first_admin=True)
+            created = empty_store.register('owner', '首位管理员', 'owner-password-strong', 'local')
+            with empty_store.db() as db:
+                row = db.execute('SELECT active, role FROM users WHERE id=?', (created,)).fetchone()
+            self.assertEqual((row['active'], row['role']), (1, 'admin'))
+            _, _, user = empty_store.login('owner', 'owner-password-strong', 'local')
+            self.assertEqual((user['active'], user['role']), (1, 'admin'))
+
+    def test_six_character_password_is_accepted(self):
+        user_id = self.store.create('sixchar', '六位密码', 'abc123')
+        _, _, user = self.store.login('sixchar', 'abc123', 'local')
+        self.assertEqual(user['id'], user_id)
+        with self.assertRaisesRegex(ValueError, '6–128'):
+            self.store.create('tooshort', '过短密码', '12345')
+
     def test_http_csrf_cookie_roles_and_registration_injection(self):
         server = make_server('127.0.0.1', 0, self.store.path, 'https://app.example')
         thread = threading.Thread(target=server.serve_forever, daemon=True)

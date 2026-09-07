@@ -1,4 +1,5 @@
 "use client";
+import { boundedFetch as fetch } from "../../lib/bounded-fetch";
 
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { saveExternalInspirationReference } from "../../lib/inspiration-material-store";
@@ -177,7 +178,7 @@ export function ExternalDataConsole({onNotify}:{onNotify?:(message:string)=>void
 
   const switchMode=(next:QueryMode)=>{setMode(next);setResult(null);setError("")};
   return <section className={styles.console} aria-label="外部短剧数据手动查询">
-    <header><div><small>EXTERNAL OPEN API</small><h2>外部短剧数据 · 查询与入库</h2><p>ADX 广告素材加入灵感大屏；短剧全集加入剧库。两类资产分开管理。</p></div><span className={styles.connected}><i/> 已连接</span></header>
+    <header><div><small>EXTERNAL OPEN API</small><h2>外部短剧数据 · 查询与入库</h2><p>ADX 广告素材加入灵感大屏；短剧全集加入剧库。两类资产分开管理。</p></div><span className={styles.connected}><i/> {error ? "查询失败" : result ? "查询成功" : "待查询验证"}</span></header>
     <nav>{([['rankings','月度短剧榜'],['playback','全集播放地址'],['materials','ADX 素材']] as const).map(([key,label])=><button key={key} className={mode===key?styles.active:""} onClick={()=>switchMode(key)}>{label}</button>)}</nav>
     <form onSubmit={run}>
       {mode==="rankings"&&<label><span>榜单月份</span><input type="month" required value={month} onChange={event=>setMonth(event.target.value)}/></label>}

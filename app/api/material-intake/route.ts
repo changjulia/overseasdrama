@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getChatGPTUser } from "@/app/chatgpt-auth";
 
 const PB_URL=(process.env.POCKETBASE_URL||process.env.NEXT_PUBLIC_POCKETBASE_URL||"http://127.0.0.1:8090").replace(/\/$/,"");
 
@@ -16,6 +17,7 @@ async function sha256(blob:Blob){
 }
 
 export async function POST(request:NextRequest){
+  if (!await getChatGPTUser()) return NextResponse.json({message:"请先登录"},{status:401});
   try{
     const input=await request.json() as Record<string,unknown>;
     const sourceUrl=String(input.sourceUrl||"");

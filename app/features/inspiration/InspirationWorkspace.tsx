@@ -27,6 +27,7 @@ import {
 } from "../../lib/inspiration-material-store";
 import {
   listInspirationHookAssets,
+  isSelectableExternalHook,
   reviewHookBoundary,
   type HookAsset,
 } from "../../lib/hook-asset-store";
@@ -137,6 +138,7 @@ export function InspirationWorkspace({
     [uploadOpen, setUploadOpen] = useState(false),
     [toast, setToast] = useState(""),
     [error, setError] = useState(""),
+    [initialLoading, setInitialLoading] = useState(true),
     [detailError, setDetailError] = useState(""),
     [favorites, setFavorites] = useState<string[]>([]),
     [deletingId, setDeletingId] = useState(""),
@@ -146,7 +148,9 @@ export function InspirationWorkspace({
     [totalPages, setTotalPages] = useState(1),
     [loadingMore, setLoadingMore] = useState(false),
     [stats, setStats] = useState<InspirationMaterialStats | null>(null);
-  const refreshBusy = useRef(false);
+  const refreshGeneration = useRef(0);
+  const currentType = useRef(type);
+  currentType.current = type;
   const mergeMaterials = (next: Material[], replace = false) =>
     setMaterials((current) => {
       const previous = new Map(current.map((item) => [item.id, item]));
@@ -161,34 +165,35 @@ export function InspirationWorkspace({
       return [...current.filter((item) => !ids.has(item.id)), ...merged];
     });
   const refresh = async (signal?: AbortSignal, includeHooks = false) => {
-    if (refreshBusy.current) return materials;
-    refreshBusy.current = true;
+    const generation = ++refreshGeneration.current;
     try {
       const pages = await Promise.all(
         Array.from({ length: loadedPages }, (_, index) =>
-          listInspirationMaterialsPage(index + 1, 24, signal),
+          listInspirationMaterialsPage(index + 1, 24, signal, type),
         ),
       );
       const nextMaterials = pages.flatMap((value) => value.items);
+      if (signal?.aborted || generation !== refreshGeneration.current || currentType.current !== type) return undefined;
       mergeMaterials(nextMaterials, true);
       setTotalItems(pages[0]?.totalItems ?? nextMaterials.length);
       setTotalPages(pages[0]?.totalPages ?? 1);
       const [nextHooks, nextStats] = await Promise.all([
         includeHooks
-          ? listInspirationHookAssets(signal).catch(() => [])
+          ? listInspirationHookAssets(signal)
           : Promise.resolve(null),
-        getInspirationMaterialStats(signal).catch(() => null),
+        getInspirationMaterialStats(signal),
       ]);
+      if (signal?.aborted || generation !== refreshGeneration.current || currentType.current !== type) return undefined;
       if (nextHooks) setHooks(nextHooks);
       if (nextStats) setStats(nextStats);
       setError("");
       return nextMaterials;
     } catch (reason) {
-      if (!signal?.aborted)
+      if (!signal?.aborted && generation === refreshGeneration.current && currentType.current === type)
         setError(reason instanceof Error ? reason.message : "素材读取失败");
       return undefined;
     } finally {
-      refreshBusy.current = false;
+      if (!signal?.aborted && generation === refreshGeneration.current && currentType.current === type) setInitialLoading(false);
     }
   };
   useEffect(() => {
@@ -217,12 +222,13 @@ export function InspirationWorkspace({
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", visible);
     };
-  }, [loadedPages]);
+  }, [loadedPages, type]);
   const loadMore = async () => {
     if (loadingMore || loadedPages >= totalPages) return;
     setLoadingMore(true);
     try {
-      const page = await listInspirationMaterialsPage(loadedPages + 1, 24);
+      const page = await listInspirationMaterialsPage(loadedPages + 1, 24, undefined, type);
+      if (currentType.current !== type) return;
       mergeMaterials(page.items);
       setLoadedPages(page.page);
       setTotalItems(page.totalItems);
@@ -246,7 +252,7 @@ export function InspirationWorkspace({
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
-  }, [tab, loadingMore, loadedPages, totalPages]);
+  }, [tab, loadingMore, loadedPages, totalPages, type]);
   const completed = materials.filter(done),
     selected =
       materials.find((v) => v.id === selectedId) ?? completed[0] ?? materials[0];
@@ -471,7 +477,9 @@ export function InspirationWorkspace({
           </button>
         ))}
       </nav>
-      {tab === "feed" && (
+      {initialLoading && <div role="status">正在读取素材与复核状态…</div>}
+      {error && <div role="alert"><p>素材同步失败：{error}。暂时无法确认素材数量和复核状态。</p><button onClick={() => void refresh(undefined, true)}>重新加载</button></div>}
+      {!initialLoading && !error && tab === "feed" && (
         <>
           <div className={styles.stats}>
             {[
@@ -496,7 +504,14 @@ export function InspirationWorkspace({
               onChange={(e) => setQuery(e.target.value)}
               placeholder="搜索标题、平台或题材"
             />
-            <select value={type} onChange={(e) => setType(e.target.value)}>
+            <select value={type} onChange={(e) => {
+              refreshGeneration.current += 1;
+              setType(e.target.value);
+              setLoadedPages(1);
+              setTotalPages(1);
+              setMaterials([]);
+              setInitialLoading(true);
+            }}>
               <option>全部类型</option>
               <option>未确定</option>
               <option>正片剧集拼接</option>
@@ -592,7 +607,7 @@ export function InspirationWorkspace({
           )}
         </>
       )}
-      {tab === "prototypes" &&
+      {!initialLoading && !error && tab === "prototypes" &&
         (prototypes.length ? (
           <HookPrototypePanel
             groups={prototypes}
@@ -605,7 +620,7 @@ export function InspirationWorkspace({
             detail="素材分析完成并定位到可复用片段后，钩子会按原型展示在这里。"
           />
         ))}
-      {tab === "analysis" &&
+      {!initialLoading && !error && tab === "analysis" &&
         (openingId ? (
           <State
             title="正在读取分析详情"
@@ -644,7 +659,7 @@ export function InspirationWorkspace({
             }
           />
         ))}
-      {tab === "review" &&
+      {!initialLoading && !error && tab === "review" &&
         (selectedHookId || hookReviewItems.length ? (
           <HookReview
             hooks={hooks}
@@ -730,6 +745,8 @@ function HookPrototypePanel({
     [emotion, setEmotion] = useState("全部情绪"),
     [boundary, setBoundary] = useState("全部边界"),
     [advanced, setAdvanced] = useState(false);
+  const [visibleLimit, setVisibleLimit] = useState(24);
+  useEffect(() => setVisibleLimit(24), [sourceClass, attribution, hookType, theme, relation, emotion, boundary]);
   const all = groups.flatMap((group) => group.items);
   const ontologyValues = (dimension: string) =>
     [
@@ -904,7 +921,7 @@ function HookPrototypePanel({
         )}
       </div>
       <div className={styles.hookAssetGrid}>
-        {visible.map((hook) => (
+        {visible.slice(0, visibleLimit).map((hook) => (
           <HookAssetCard
             key={hook.id}
             hook={hook}
@@ -913,6 +930,10 @@ function HookPrototypePanel({
           />
         ))}
       </div>
+      {visible.length > visibleLimit && <div className={styles.prototypeResultBar}>
+        <span>已显示 {visibleLimit} / {visible.length} · 筛选覆盖全部素材</span>
+        <button type="button" onClick={() => setVisibleLimit((count) => count + 24)}>加载更多钩子</button>
+      </div>}
       {!visible.length && (
         <State
           title="没有符合筛选条件的钩子"
@@ -934,23 +955,48 @@ function HookAssetCard({
 }) {
   const video = useRef<HTMLVideoElement>(null),
     durationSeconds = Math.max(0, hook.end - hook.start),
-    eligible =
-      hook.sourceClass === "external_material" &&
-      hook.boundaryStatus === "verified" &&
-      ["已获授权可制作", "已获授权可投放"].includes(hook.rightsStatus);
+    eligible = isSelectableExternalHook(hook);
+  const [previewState, setPreviewState] = useState<"idle" | "loading" | "playing" | "paused" | "error">("idle");
+  const [previewError, setPreviewError] = useState("");
+  const playRequest = useRef(0);
+  useEffect(() => {
+    if (previewState !== "loading") return;
+    const timeout = window.setTimeout(() => {
+      playRequest.current += 1;
+      video.current?.pause();
+      setPreviewError("视频加载超时，请重试");
+      setPreviewState("error");
+    }, 20000);
+    return () => window.clearTimeout(timeout);
+  }, [previewState]);
   const startPreview = () => {
     const element = video.current;
     if (!element) return;
-    element.dataset.hovering = "true";
-    element.currentTime = hook.start;
-    void element.play().catch(() => undefined);
+    if (previewState === "playing" || previewState === "loading") {
+      playRequest.current += 1;
+      element.pause();
+      setPreviewState("paused");
+      return;
+    }
+    const request = ++playRequest.current;
+    setPreviewError("");
+    setPreviewState("loading");
+    if (previewState === "error") element.load();
+    if (element.readyState >= 1 && (element.currentTime < hook.start || element.currentTime >= hook.end))
+      element.currentTime = hook.start;
+    void element.play().catch((error: unknown) => {
+      if (request !== playRequest.current) return;
+      setPreviewError(error instanceof Error && error.name === "NotAllowedError"
+        ? "浏览器阻止了播放，请再次点击重试" : "视频暂时无法播放，请重试");
+      setPreviewState("error");
+    });
   };
   const stopPreview = () => {
     const element = video.current;
     if (!element) return;
-    element.dataset.hovering = "false";
+    playRequest.current += 1;
     element.pause();
-    element.currentTime = hook.start;
+    setPreviewState("paused");
   };
   const compactTags = [
     canonicalHookType(hook),
@@ -969,27 +1015,28 @@ function HookAssetCard({
     <article className={styles.hookAssetCard}>
       <div
         className={styles.hookAssetPreview}
-        onMouseEnter={startPreview}
-        onMouseLeave={stopPreview}
       >
         {hook.materialVideoUrl ? (
           <video
             ref={video}
             src={`${hook.materialVideoUrl}#t=${hook.start},${hook.end}`}
-            muted
             playsInline
             preload="metadata"
             onLoadedMetadata={(event) => {
               event.currentTarget.currentTime = hook.start;
             }}
-            onCanPlay={(event) => {
-              if (event.currentTarget.dataset.hovering === "true")
-                void event.currentTarget.play().catch(() => undefined);
+            onPlaying={() => setPreviewState("playing")}
+            onWaiting={() => setPreviewState((state) => state === "playing" ? "loading" : state)}
+            onError={() => {
+              playRequest.current += 1;
+              setPreviewError("视频加载失败，请检查网络后重试");
+              setPreviewState("error");
             }}
+            onEnded={stopPreview}
             onSeeking={(event) => {
               if (
                 event.currentTarget.currentTime < hook.start ||
-                event.currentTarget.currentTime > hook.end
+                event.currentTarget.currentTime > hook.end + 0.25
               )
                 event.currentTarget.currentTime = hook.start;
             }}
@@ -1000,11 +1047,29 @@ function HookAssetCard({
         ) : (
           <span>无可播放来源</span>
         )}
-        <button type="button" onClick={startPreview}>
-          ▶ 预览钩子 {duration(hook.start)}–{duration(hook.end)}
-        </button>
+        {hook.materialVideoUrl && <>
+          {(previewState === "loading" || previewState === "error" || previewState === "idle") &&
+            <span className={styles.hookPreviewStatus} role="status">
+              {previewState === "error" ? previewError : previewState === "loading" ? "正在加载视频…" : "点击预览开头片段"}
+            </span>}
+          <button type="button" onClick={startPreview}>
+            {previewState === "playing" ? "Ⅱ 暂停" : previewState === "loading" ? "取消加载" : previewState === "error" ? "↻ 重试预览" : "▶ 预览钩子"} {duration(hook.start)}–{duration(hook.end)}
+          </button>
+        </>}
       </div>
       <div className={styles.hookAssetBody}>
+        <dl>
+          <div>
+            <dt>开头剧情摘要</dt>
+            <dd>{hook.sourceClass !== "narration_opening" ? hook.spokenSummary || "暂无开头剧情摘要" : /[\u3400-\u9fff]/.test(hook.spokenSummary) ? hook.spokenSummary : "中文摘要待生成"}</dd>
+          </div>
+        </dl>
+        <details className={styles.hookAssetDetails}>
+          <summary aria-label={`${hook.title}的详情`}>
+            <span className={styles.hookDetailsExpand}>展开详情</span>
+            <span className={styles.hookDetailsCollapse}>收起详情</span>
+          </summary>
+          <div className={styles.hookAssetDetailsContent}>
         <header>
           <span>{hookAttribution(hook)}</span>
           <em
@@ -1040,13 +1105,15 @@ function HookAssetCard({
             <dd>{hook.conflict || "待分析"}</dd>
           </div>
           <div>
-            <dt>叙事承诺</dt>
+            <dt>{hook.sourceClass === "narration_opening" ? "承接需求" : "叙事承诺"}</dt>
             <dd>{hook.narrativePromise || "待分析"}</dd>
           </div>
-          <div>
-            <dt>口播提炼</dt>
-            <dd>{hook.spokenSummary || "无持续解说"}</dd>
-          </div>
+          {hook.sourceClass === "narration_opening" && <>
+            <div><dt>身份／事实约束</dt><dd>{hook.identityConstraints || "待核对"}</dd></div>
+            <div><dt>分析范围</dt><dd>开头{hook.openingSemanticStatus === "ready" ? "已提炼" : "待提炼"} · 整片{hook.materialAnalysisStatus === "succeeded" ? "已分析" : "未完成分析"}；仅用于候选初筛</dd></div>
+            <div><dt>钩子终点</dt><dd>{hook.boundarySelection?.status === "candidate" ? `候选 ${duration(hook.boundarySelection.end || hook.end)} · 待复核镜头和动作` : hook.boundarySelection?.status === "budget_limited" ? "预算内无法确认 · 待人工复核" : hook.boundarySelection?.status === "media_failed" ? "媒体证据不可用 · 待复核" : "尚未确认 · 当前预览范围不代表完整钩子"}{hook.boundarySelection?.reason && <p>{hook.boundarySelection.reason}</p>}</dd></div>
+            {hook.tokenBudget && <div><dt>分析预算</dt><dd>{hook.tokenBudget.used ?? 0} / {hook.tokenBudget.cap ?? 2079} token（含历史消耗或未决请求预留）</dd></div>}
+          </>}
           <div>
             <dt>安全边界</dt>
             <dd>
@@ -1065,14 +1132,16 @@ function HookAssetCard({
             disabled={!eligible}
             title={
               !eligible
-                ? "仅允许边界已验证且授权可制作的外搭钩子进入该模式"
+                ? "此钩子未登记前置用途或已被拒绝"
                 : undefined
             }
             onClick={onFactory}
           >
-            用此钩子创作 →
+            用此钩子匹配高光 →
           </button>
         </footer>
+          </div>
+        </details>
       </div>
     </article>
   );

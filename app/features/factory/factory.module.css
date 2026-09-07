@@ -13,7 +13,7 @@
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 1.4px;
-  color: #1769e0;
+  color: var(--lumina-primary);
 }
 .header h1 {
   font-size: 28px;
@@ -28,7 +28,7 @@
   border: 1px solid #d9e4f3;
   border-radius: 9px;
   background: #fff;
-  color: #1769e0;
+  color: var(--lumina-primary);
   padding: 10px 14px;
   font-weight: 700;
 }
@@ -79,7 +79,7 @@
 }
 .modeTabs .active > i {
   background: #dcecff;
-  color: #1769e0;
+  color: var(--lumina-primary);
 }
 .stepper {
   display: flex;
@@ -121,11 +121,11 @@
   font-style: normal;
 }
 .stepper .current {
-  color: #1769e0;
+  color: var(--lumina-primary);
   font-weight: 800;
 }
 .stepper .current i {
-  background: #1769e0;
+  background: var(--lumina-primary);
   color: #fff;
 }
 .stepper .done {
@@ -193,7 +193,7 @@
 }
 .aiSummary > b {
   font-size: 9px;
-  color: #1769e0;
+  color: var(--lumina-primary);
 }
 .aiSummary p {
   font-size: 9px;
@@ -235,7 +235,7 @@
   right: 3px;
   top: 3px;
   font-size: 6px;
-  color: #1769e0;
+  color: var(--lumina-primary);
 }
 .optionGrid .selected {
   border-color: #7db0ed;
@@ -324,7 +324,7 @@
 .scriptRow button {
   border: 0;
   background: #e6f0ff;
-  color: #1769e0;
+  color: var(--lumina-primary);
   border-radius: 5px;
   padding: 5px;
 }
@@ -426,7 +426,7 @@
 }
 .qualityTitle span {
   font-size: 9px;
-  color: #1769e0;
+  color: var(--lumina-primary);
   font-weight: 800;
   letter-spacing: 1px;
 }
@@ -465,7 +465,7 @@
   font-size: 7px;
 }
 .metrics b {
-  color: #1769e0;
+  color: var(--lumina-primary);
 }
 .metrics i {
   display: block;
@@ -477,7 +477,7 @@
 .metrics em {
   display: block;
   height: 100%;
-  background: #1769e0;
+  background: var(--lumina-primary);
   border-radius: 4px;
 }
 .reviewGrid {
@@ -531,7 +531,7 @@
 .diagnosis button {
   border: 0;
   background: #edf4ff;
-  color: #1769e0;
+  color: var(--lumina-primary);
   border-radius: 6px;
   padding: 7px;
   font-size: 7px;
@@ -557,9 +557,9 @@
   margin-left: 6px;
 }
 .qualityGate footer .generate {
-  background: #1769e0;
+  background: var(--lumina-primary);
   color: #fff;
-  border-color: #1769e0;
+  border-color: var(--lumina-primary);
 }
 .qualityGate footer .generate:disabled {
   background: #8a93a0;

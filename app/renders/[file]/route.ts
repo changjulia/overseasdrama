@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import type { NextRequest } from "next/server";
+import { getChatGPTUser } from "@/app/chatgpt-auth";
 
 const RENDER_DIR = path.resolve(
   process.env.LUMINA_FACTORY_RENDER_DIR || path.join(process.cwd(), "public", "renders"),
@@ -38,12 +39,14 @@ function baseHeaders(size: number) {
 }
 
 export async function HEAD(_request: NextRequest, context: RouteContext) {
+  if (!await getChatGPTUser()) return new Response(null, { status: 401 });
   const file = await renderFile(context);
   if (!file) return new Response(null, { status: 404 });
   return new Response(null, { status: 200, headers: baseHeaders(file.size) });
 }
 
 export async function GET(request: NextRequest, context: RouteContext) {
+  if (!await getChatGPTUser()) return new Response("请先登录", { status: 401 });
   const file = await renderFile(context);
   if (!file) return new Response("Not found", { status: 404 });
 

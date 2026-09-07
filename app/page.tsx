@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import AccountMenu from "./AccountMenu";
 import { formatDurationZh } from "./lib/time-format";
 import InspirationWorkspace from "./features/inspiration";
 import DramaLibraryWorkspace from "./features/library";
@@ -34,12 +35,12 @@ const navItems: Array<{
   label: string;
   count?: string;
 }> = [
-  { id: "inspiration", icon: "✦", label: "灵感大屏", count: "128" },
-  { id: "library", icon: "▣", label: "剧库", count: "36" },
+  { id: "inspiration", icon: "✦", label: "灵感大屏" },
+  { id: "library", icon: "▣", label: "剧库" },
   { id: "factory", icon: "⇄", label: "内容工厂" },
   { id: "creations", icon: "♡", label: "我的创作" },
-  { id: "sources", icon: "◈", label: "数据源管理", count: "4" },
-  { id: "tasks", icon: "◫", label: "任务中心", count: "8" },
+  { id: "sources", icon: "◈", label: "数据源管理" },
+  { id: "tasks", icon: "◫", label: "任务中心" },
 ];
 
 function resolveFactoryMode(mode: string): FactoryMode {
@@ -67,6 +68,12 @@ function favoriteFromMaterial(material: InspirationMaterial): Favorite {
 
 export default function Home() {
   const [workspace, setWorkspace] = usePersistentState<Workspace>("lumina:workspace", "inspiration");
+  const [factoryVisited, setFactoryVisited] = useState(false);
+  const factoryContainer = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (workspace === "factory") setFactoryVisited(true);
+    else factoryContainer.current?.querySelectorAll("video").forEach(video => video.pause());
+  }, [workspace]);
   const [creationsInitialTab, setCreationsInitialTab] = useState<"favorites" | "drafts">("favorites");
   const [factoryMode, setFactoryMode] = usePersistentState<FactoryMode>("lumina:factory-mode", "episode-splice");
   const [editingDraft, setEditingDraft] = useState<Draft | null>(null);
@@ -78,13 +85,11 @@ export default function Home() {
   const [favorites, setFavorites] = usePersistentState<Favorite[]>("lumina:favorites", favoriteMocks);
   const [tasks, setTasks, tasksReady] = usePersistentState<PipelineTask[]>("lumina:tasks", initialTasks);
   const [toast, setToast] = useState("");
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [accountNotifications,setAccountNotifications]=useState(true);
-  const [accountAutoSave,setAccountAutoSave]=useState(true);
-  const profileRef=useRef<HTMLDivElement>(null);
+  const [taskSync, setTaskSync] = useState("尚未同步");
+  const [historySync, setHistorySync] = useState("尚未同步");
+  const [syncRevision, setSyncRevision] = useState(0);
   const deletedFactoryProjectKey = deletedFactoryProjects.join("|");
 
-  useEffect(()=>{if(!profileOpen)return;const close=(event:MouseEvent)=>{if(!profileRef.current?.contains(event.target as Node))setProfileOpen(false)};const escape=(event:KeyboardEvent)=>{if(event.key==="Escape")setProfileOpen(false)};document.addEventListener("mousedown",close);document.addEventListener("keydown",escape);return()=>{document.removeEventListener("mousedown",close);document.removeEventListener("keydown",escape)}},[profileOpen]);
 
   useEffect(() => {
     if (!tasksReady) return;
@@ -118,21 +123,24 @@ export default function Home() {
   useEffect(() => {
     if (!tasksReady) return;
     const controller = new AbortController();
+    let timer = 0;
     const sync = async () => {
-      try { setTasks(await listPocketBaseAnalysisTasks(controller.signal)); }
-      catch (error) { if (!controller.signal.aborted) console.error("PocketBase task sync failed", error); }
+      if (document.visibilityState === "hidden") { timer = window.setTimeout(sync, 15000); return; }
+      try { const next = await listPocketBaseAnalysisTasks(controller.signal); if (!controller.signal.aborted) { setTasks(next); setTaskSync("同步成功 · " + new Date().toLocaleTimeString("zh-CN")); } }
+      catch (error) { if (!controller.signal.aborted) setTaskSync(error instanceof Error ? error.message : "任务同步失败"); }
+      if (!controller.signal.aborted) timer = window.setTimeout(sync, 15000);
     };
     void sync();
-    const timer = window.setInterval(sync, 3000);
-    return () => { controller.abort(); window.clearInterval(timer); };
-  }, [setTasks, tasksReady]);
+    return () => { controller.abort(); window.clearTimeout(timer); };
+  }, [setTasks, tasksReady, syncRevision]);
 
   useEffect(() => {
     if (!tasksReady) return;
     const controller = new AbortController();
     const syncHistory = async () => {
+      setHistorySync("正在读取创作历史…");
       try {
-        const [history, dramas, hooks] = await Promise.all([listFactoryHistory(controller.signal), listPocketBaseDramas(), listHookAssets(controller.signal)]);
+        const [history, dramas, hooks] = await Promise.all([listFactoryHistory(controller.signal), listPocketBaseDramas(controller.signal), listHookAssets(controller.signal)]);
           const deletedProjectIds = new Set(deletedFactoryProjectKey ? deletedFactoryProjectKey.split("|") : []);
           const historicalDrafts: Draft[] = history.filter((project) => !deletedProjectIds.has(project.id)).map((project) => {
           const drama = dramas.find((item) => item.recordId === project.drama);
@@ -146,15 +154,16 @@ export default function Home() {
           const renderQcCurrent = !render || validation?.schemaVersion === "factory-render-qc-v1";
           const qualityPassed = selfQcCurrent && renderQcCurrent && storedQuality?.hardFailureCount === 0 && validation?.passed !== false;
           const dramaSource: FactorySourceContext | null = drama ? {kind:"library",id:drama.recordId,title:drama.title,dramaTitle:drama.title,dramaCn:drama.cn,genre:drama.genre,language:drama.language,episodes:drama.totalEpisodes,freeEpisodes:drama.freeEpisodes,availableEpisodes:Object.keys(drama.episodeMedia).map(Number),episodeMedia:drama.episodeMedia,description:`${drama.cn} · ${drama.genre} · 历史生产片源`} : null;
-          const hookSource: FactorySourceContext | null = hook ? {kind:"inspiration",id:hook.id,hookAssetId:hook.id,hookSourceClass:hook.sourceClass,hookMaterialId:hook.materialId,hookMediaUrl:hook.materialVideoUrl,hookStart:hook.start,hookEnd:hook.end,hookStartFrame:hook.startFrame,hookEndFrame:hook.endFrame,hookBoundaryStatus:hook.boundaryStatus,hookType:hook.hookType,themes:hook.themes,contentTags:hook.contentTags,relationships:hook.relationships,conflict:hook.conflict,emotion:hook.emotion,narrativePromise:hook.narrativePromise,informationGap:hook.informationGap,rightsStatus:hook.rightsStatus,title:hook.title,description:`${hook.materialTitle??"灵感大屏"} · ${formatDurationZh(hook.start,2)}–${formatDurationZh(hook.end,2)}`} : null;
+          const hookSource: FactorySourceContext | null = hook ? {kind:"inspiration",id:hook.id,hookAssetId:hook.id,hookSourceClass:hook.sourceClass,hookUsageRole:hook.usageRole,hookMaterialType:hook.materialType,hookMaterialId:hook.materialId,hookMediaUrl:hook.materialVideoUrl,hookStart:hook.start,hookEnd:hook.end,hookStartFrame:hook.startFrame,hookEndFrame:hook.endFrame,hookBoundaryStatus:hook.boundaryStatus,hookType:hook.hookType,themes:hook.themes,contentTags:hook.contentTags,relationships:hook.relationships,conflict:hook.conflict,emotion:hook.emotion,narrativePromise:hook.narrativePromise,informationGap:hook.informationGap,rightsStatus:hook.rightsStatus,title:hook.title,description:`${hook.materialTitle??"灵感大屏"} · ${formatDurationZh(hook.start,2)}–${formatDurationZh(hook.end,2)}`} : null;
           return {id:`project-${project.id}`,title:project.title,mode:(project.mode==="external-hook"?"external-hook":project.mode==="episode-narration"?"episode-narration":"episode-splice"),drama:drama?.title??"历史剧目",hook:hook?.title??"历史钩子",episodeRange:project.selected_episodes.map((episode)=>`EP ${String(episode).padStart(2,"0")}`).join("、"),transition:String(project.transition.title||project.transition.type||"已保存过渡"),language:project.language||(drama?.language??"英语"),duration:seconds?`${Math.floor(seconds/60)}:${String(Math.round(seconds%60)).padStart(2,"0")}`:"未生成",ratio:project.ratio||"9:16",qualityStatus:qualityPassed&&project.status==="approved"?"可以直接生成":"建议优化后生成",updatedAt:project.updated?new Date(project.updated).toLocaleString("zh-CN"):"历史版本",autoSaved:true,thumbnailTone:"blue",thumbnailUrl:render?.preview_url||hook?.materialVideoUrl,progress:render?.progress??0,productionStatus:exported?"已导出":qualityPassed&&project.status==="approved"?"通过":render?.status==="succeeded"?"待审核":"编辑中",version:render?.version??project.version,sourceContext:dramaSource,hookSourceContext:hookSource,selectedEpisodes:project.selected_episodes,outputUrl:render?.output_url||undefined,outputName:typeof exported?.fileName==="string"?exported.fileName:undefined,factoryProjectId:project.id,parentFactoryProjectId:project.parent_project||undefined,factoryRenderId:render?.id,renderVersions:project.render_versions.map((item)=>({id:item.id,version:item.version,status:item.status,previewUrl:item.preview_url||undefined,outputUrl:item.output_url||undefined,created:item.created||undefined})),storyMatchId:project.story_match,isHistorySnapshot:true,factorySnapshot:{timeline:project.timeline,transition:project.transition,qualityReport:project.quality_report,review:project.review,projectStatus:project.status}};
         });
         setDrafts((current) => [...historicalDrafts, ...current.filter((draft) => !draft.factoryProjectId || !history.some((project) => project.id === draft.factoryProjectId))]);
-      } catch (error) { if (!controller.signal.aborted) console.error("Factory history sync failed", error); }
+      setHistorySync("同步成功 · " + new Date().toLocaleTimeString("zh-CN"));
+      } catch (error) { if (!controller.signal.aborted) setHistorySync(error instanceof Error ? error.message : "创作历史同步失败"); }
     };
     void syncHistory();
     return () => controller.abort();
-  }, [deletedFactoryProjectKey, setDrafts, tasksReady, workspace]);
+  }, [deletedFactoryProjectKey, setDrafts, tasksReady, workspace, syncRevision]);
 
   const notify = (message: string) => {
     setToast(message);
@@ -219,9 +228,11 @@ export default function Home() {
             <div key={item.id} className="nav-entry">
             {index === 4 && <p className="nav-group">运营与系统</p>}
             <button
+              aria-label={item.label}
+              title={item.label}
               className={workspace === item.id ? "active" : ""}
               onClick={() => {
-                if (item.id === "factory") openFactory("episode-splice");
+                if (item.id === "factory") setWorkspace("factory");
                 else {
                   if (item.id === "creations") setCreationsInitialTab("favorites");
                   setWorkspace(item.id);
@@ -238,15 +249,16 @@ export default function Home() {
           ))}
         </nav>
         <div className="side-bottom">
-          <div className="sync"><span><i /> 数据同步正常</span><small>最后更新 2 分钟前</small></div>
-          <div className="profile" ref={profileRef}><div>陈</div><span><b>陈佳</b><small>内容负责人</small></span><button type="button" aria-label={profileOpen?"收起个人账号面板":"展开个人账号面板"} aria-expanded={profileOpen} onClick={() => setProfileOpen((value) => !value)}>{profileOpen ? "⌃" : "⌄"}</button>{profileOpen&&<section className="account-panel" aria-label="个人账号面板"><header><div className="account-avatar">陈</div><div><h2>陈佳</h2><p>内容负责人 · Lumina 工作区</p><small>本地工作账号</small></div><span>正常</span></header><div className="account-summary"><div><b>{drafts.length}</b><small>创作草稿</small></div><div><b>{tasks.length}</b><small>处理任务</small></div><div><b>{favorites.length}</b><small>我的收藏</small></div></div><div className="account-section"><h3>账号与工作区</h3><button type="button" onClick={()=>notify("账号资料编辑将在身份系统接入后开放")}><span><b>账号资料</b><small>姓名、头像与联系方式</small></span><em>›</em></button><button type="button" onClick={()=>notify("当前工作区：Lumina 短剧智能工作台")}><span><b>当前工作区</b><small>Lumina · 内容负责人</small></span><em>›</em></button></div><div className="account-section"><h3>个人偏好</h3><label><span><b>任务通知</b><small>任务完成或异常时提醒</small></span><input type="checkbox" checked={accountNotifications} onChange={event=>{setAccountNotifications(event.target.checked);notify(event.target.checked?"任务通知已开启":"任务通知已关闭")}}/><i/></label><label><span><b>自动保存</b><small>编辑草稿时持续保存</small></span><input type="checkbox" checked={accountAutoSave} onChange={event=>{setAccountAutoSave(event.target.checked);notify(event.target.checked?"自动保存偏好已开启":"自动保存偏好已关闭")}}/><i/></label></div><div className="account-service"><i/><span><b>数据服务正常</b><small>PocketBase · 本地连接</small></span><em>在线</em></div><footer><button type="button" onClick={()=>notify("帮助中心将在文档服务接入后开放")}>帮助与反馈</button><button type="button" disabled title="尚未接入账号认证系统">退出登录</button></footer></section>}</div>
+          <div className="sync"><span>任务数据</span><small>{taskSync}</small></div>
+          <AccountMenu />
         </div>
       </aside>
 
       <main className="content">
+        {(workspace === "tasks" || workspace === "creations") && <div className="sync-status" role="status"><span>{workspace === "tasks" ? taskSync : historySync}。页面保留已有记录；读取失败不代表没有数据。</span><button onClick={() => setSyncRevision(value => value + 1)}>重新同步</button></div>}
         {workspace === "inspiration" && (
           <InspirationWorkspace
-            onOpenFactory={(hook) => openFactory("external-hook", null, { kind: "inspiration", id: hook.id, hookAssetId: hook.id, hookSourceClass: hook.sourceClass, hookMaterialId: hook.materialId, hookMediaUrl: hook.materialVideoUrl, hookStart: hook.start, hookEnd: hook.end, hookStartFrame: hook.startFrame, hookEndFrame: hook.endFrame, hookBoundaryStatus: hook.boundaryStatus, hookType: hook.hookType, themes: hook.themes, contentTags: hook.contentTags, relationships: hook.relationships, conflict: hook.conflict, emotion: hook.emotion, narrativePromise: hook.narrativePromise, informationGap: hook.informationGap, rightsStatus: hook.rightsStatus, title: hook.title, description: `${hook.materialTitle ?? "灵感大屏"} · ${formatDurationZh(hook.start,2)}–${formatDurationZh(hook.end,2)} · ${hook.narrativePromise || hook.conflict || "片段级钩子"}` })}
+            onOpenFactory={(hook) => openFactory("external-hook", null, { kind: "inspiration", id: hook.id, hookAssetId: hook.id, hookSourceClass: hook.sourceClass, hookUsageRole: hook.usageRole, hookMaterialType: hook.materialType, hookMaterialId: hook.materialId, hookMediaUrl: hook.materialVideoUrl, hookStart: hook.start, hookEnd: hook.end, hookStartFrame: hook.startFrame, hookEndFrame: hook.endFrame, hookBoundaryStatus: hook.boundaryStatus, hookType: hook.hookType, themes: hook.themes, contentTags: hook.contentTags, relationships: hook.relationships, conflict: hook.conflict, emotion: hook.emotion, narrativePromise: hook.narrativePromise, informationGap: hook.informationGap, rightsStatus: hook.rightsStatus, title: hook.title, description: `${hook.materialTitle ?? "灵感大屏"} · ${formatDurationZh(hook.start,2)}–${formatDurationZh(hook.end,2)} · ${hook.narrativePromise || hook.conflict || "片段级钩子"}` })}
             onFavoriteChange={(material, favorite) => {
               if (favorite) setFavorites((current) => [favoriteFromMaterial(material), ...current.filter(item=>item.id!==material.id)]);
               else setFavorites((current) => current.filter(item=>item.id!==material.id));
@@ -263,9 +275,11 @@ export default function Home() {
             onEnterFactory={({ dramaId, dramaRecordId, mode, sourceId, title, cn, genre, language, episodes, freeEpisodes, availableEpisodes, episodeMedia, ontologyTags, highlightCandidates }) => openFactory(resolveFactoryMode(mode), null, { kind: "library", id: dramaRecordId ?? (sourceId ? `${dramaId}-${sourceId}` : String(dramaId)), title, dramaTitle: title, dramaCn: cn, genre, language, episodes, freeEpisodes, availableEpisodes, episodeMedia, ontologyTags, highlightCandidates, description: sourceId ? `${cn} · ${genre} · 已带入可投放区间 ${sourceId}` : mode.includes("外搭") ? `${cn} · 已带入 ${ontologyTags.length} 个规范标签，用于候选召回与排序` : `${cn} · ${genre} · 共 ${episodes} 集 · 已连接 ${availableEpisodes.length} 集真实片源` })}
           />
         </div>
-        {workspace === "factory" && (
+        <div ref={factoryContainer} hidden={workspace !== "factory"}>
+        {(workspace === "factory" || factoryVisited) && (
           <FactoryWorkspace
             key={`${factoryMode}-${editingDraft?.id ?? "new"}-${factoryDramaSource?.id ?? factorySource?.id ?? "direct"}`}
+            onOpenLibrary={() => setWorkspace("library")}
             initialMode={factoryMode}
             editingDraft={editingDraft}
             sourceContext={factorySource}
@@ -279,6 +293,7 @@ export default function Home() {
             onNotify={notify}
           />
         )}
+        </div>
         {workspace === "creations" && (
           <MyCreations
             drafts={drafts}
