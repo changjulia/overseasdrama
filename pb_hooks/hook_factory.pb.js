@@ -533,9 +533,10 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
         spoken_summary:row.spoken_summary,visual_summary:row.visual_summary,
         evidence:row.boundary_status==="verified"?{present:true}:{}};
     });
+    const preparedStoryNeed = helpers.prepareHookCandidateStoryNeed(storyNeed);
     const candidates = retrievalHooks
       .map((hook) => {
-        const retrieval = helpers.scoreHookCandidate(hook, storyNeed);
+        const retrieval = helpers.scoreHookCandidate(hook, storyNeed, preparedStoryNeed);
         return {
           hook_id: hook.id,
           material_id: hook.material,

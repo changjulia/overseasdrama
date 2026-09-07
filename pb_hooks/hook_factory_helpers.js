@@ -328,7 +328,9 @@ function ontologyProfile(value) {
   ].filter((item, index, values) => values.findIndex((other) => other.code === item.code) === index);
 }
 function compareOntologyProfiles(leftValue, rightValue) {
-  const left = ontologyProfile(leftValue), right = ontologyProfile(rightValue);
+  return compareOntologyProfileLists(ontologyProfile(leftValue), ontologyProfile(rightValue));
+}
+function compareOntologyProfileLists(left, right) {
   const pairs = { exact: [], compatible: [], bridgeable: [], contradictory: [], unknown: [] };
   left.forEach((a) => right.forEach((b) => pairs[ontologyRelation(a, b)].push({ left: a.code, right: b.code })));
   const hardConflicts = [...new Set(pairs.contradictory.map((item) => ontologyPairKey(item.left, item.right)))];
@@ -343,6 +345,28 @@ function compareOntologyProfiles(leftValue, rightValue) {
     productionEligible: false,
     hardConflicts,
     matches: pairs,
+  };
+}
+
+function prepareHookCandidateStoryNeed(storyNeed) {
+  return {
+    focusTokens: semanticTokens([
+      storyNeed && storyNeed.corePlot,
+      storyNeed && storyNeed.causalChain,
+      storyNeed && storyNeed.comprehensionGaps,
+    ]).filter((token) => token.length <= 12),
+    contextTokens: semanticTokens([
+      storyNeed && storyNeed.contentTags,
+      storyNeed && storyNeed.relationshipState,
+    ]).filter((token) => token.length <= 12),
+    dramaTitleTokens: semanticTokens(storyNeed && storyNeed.dramaTitle),
+    ontologyProfile: ontologyProfile(storyNeed),
+    directions: (storyNeed && Array.isArray(storyNeed.extendDirections)
+      ? storyNeed.extendDirections
+      : []).map((direction) => ({
+        ...direction,
+        tokens: semanticTokens(direction.query),
+      })),
   };
 }
 
@@ -2253,16 +2277,8 @@ function generateTemplateAdaptationPlans(template, drama, episodes, deliveryGoal
   }).sort((left, right) => right.acquisitionScore - left.acquisitionScore).slice(0, 10);
 }
 
-function scoreHookCandidate(hook, storyNeed) {
-  const focusTokens = semanticTokens([
-    storyNeed && storyNeed.corePlot,
-    storyNeed && storyNeed.causalChain,
-    storyNeed && storyNeed.comprehensionGaps,
-  ]);
-  const contextTokens = semanticTokens([
-    storyNeed && storyNeed.contentTags,
-    storyNeed && storyNeed.relationshipState,
-  ]);
+function scoreHookCandidate(hook, storyNeed, preparedStoryNeed) {
+  const prepared = preparedStoryNeed || prepareHookCandidateStoryNeed(storyNeed);
   const hookTokens = semanticTokens([
     hook && hook.title,
     hook && hook.hook_type,
@@ -2276,7 +2292,7 @@ function scoreHookCandidate(hook, storyNeed) {
     hook && hook.spoken_summary,
     hook && hook.visual_summary,
   ]);
-  const dramaTitleTokens = semanticTokens(storyNeed && storyNeed.dramaTitle);
+  const dramaTitleTokens = prepared.dramaTitleTokens;
   const hookIdentityTokens = semanticTokens([
     hook && hook.title,
     hook && hook.drama_title,
@@ -2287,8 +2303,8 @@ function scoreHookCandidate(hook, storyNeed) {
   const titleAffinity = dramaTitleTokens.length
     ? Math.min(1, titleOverlap.length / Math.min(6, dramaTitleTokens.length))
     : 0;
-  const comparableFocusTokens = focusTokens.filter((token) => token.length <= 12);
-  const comparableContextTokens = contextTokens.filter((token) => token.length <= 12);
+  const comparableFocusTokens = prepared.focusTokens;
+  const comparableContextTokens = prepared.contextTokens;
   const matching = (tokens) => ({
     exact: tokens.filter((token) => hookTokens.includes(token)),
     fuzzy: tokens.filter(
@@ -2317,7 +2333,7 @@ function scoreHookCandidate(hook, storyNeed) {
   const focusCoverage = coverageFor(comparableFocusTokens, focusMatch);
   const contextCoverage = coverageFor(comparableContextTokens, contextMatch);
   const textCoverage = focusCoverage * 0.82 + contextCoverage * 0.18;
-  const tagRecall = compareOntologyProfiles(hook, storyNeed);
+  const tagRecall = compareOntologyProfileLists(ontologyProfile(hook), prepared.ontologyProfile);
   const ontologyCoverage = tagRecall.decision === "allow_recall" ? Math.max(0, tagRecall.score) : 0;
   const coverage = Math.min(
     1,
@@ -2365,14 +2381,10 @@ function scoreHookCandidate(hook, storyNeed) {
       (calculatedScore - (tagRecall.decision === "blocked" ? 20 : 0)) * 10,
     ) / 10,
   );
-  const directions = (
-    storyNeed && Array.isArray(storyNeed.extendDirections)
-      ? storyNeed.extendDirections
-      : []
-  )
+  const directions = prepared.directions
     .map((direction) => ({
       ...direction,
-      overlap: semanticTokens(direction.query).filter((token) =>
+      overlap: direction.tokens.filter((token) =>
         hookTokens.includes(token),
       ).length,
     }))
@@ -2862,6 +2874,7 @@ module.exports = {
   generateTemplateAdaptationPlans,
   storyNeedFromPlans,
   scoreHookCandidate,
+  prepareHookCandidateStoryNeed,
   hookRetrievalSnapshot,
   templateEvidenceLevel,
   hookSemanticSnapshot,
