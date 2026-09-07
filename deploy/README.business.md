@@ -34,7 +34,7 @@ sudo docker compose --env-file .env.business -f compose.business.yml up -d
 
 访问 `/login` 登录，访问 `/register` 自助注册，访问 `/account` 修改密码或管理成员。
 首次管理员沿用原网站 `lumina` 账号及原密码；首次启动使用一次性 `deploy/runtime/auth/bootstrap.json` 初始化并立即删除该文件。
-新注册账号固定为未启用的成员，管理员审核启用后才能访问工作区。没有公开的管理员注册入口。
+新注册账号自动启用为普通成员，注册成功后即可直接登录，无需管理员审核。没有公开的管理员注册入口。
 管理员可创建账号、变更角色、停用账号和重置密码；系统保留至少一名启用的管理员。
 密码使用带随机盐的 scrypt，服务端仅存会话令牌摘要。Cookie 为 HttpOnly、Secure、SameSite=Lax；普通会话 12 小时，保持登录为 7 天。
 退出登录、停用、重置密码会撤销相关会话。所有修改请求校验同源，登录和注册设有频率限制。

@@ -18,17 +18,15 @@ class AccountTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_registration_approval_password_and_disable(self):
+    def test_registration_immediate_login_password_and_disable(self):
         member = self.store.register('tester', '测试成员', 'member-password-strong', 'one')
-        with self.assertRaisesRegex(ValueError, '账号尚未启用'):
-            self.store.login('tester', 'member-password-strong', 'one')
         with self.assertRaisesRegex(ValueError, '账号或密码错误'):
             self.store.login('tester', 'wrong-password', 'one')
         with self.assertRaisesRegex(ValueError, '账号或密码错误'):
             self.store.login('unknown-user', 'member-password-strong', 'one')
-        self.store.update(self.admin, member, {'active': True})
         token, ttl, user = self.store.login('tester', 'member-password-strong', 'one')
         self.assertEqual(user['role'], 'member')
+        self.assertEqual(user['active'], 1)
         self.assertEqual(ttl, 43200)
         # Sessions survive a gateway restart without storing plaintext tokens.
         other = Accounts(self.store.path)
@@ -42,6 +40,8 @@ class AccountTests(unittest.TestCase):
         token, _, _ = self.store.login('tester', 'updated-password-strong', 'one')
         self.store.update(self.admin, member, {'active': False})
         self.assertIsNone(self.store.user(token))
+        with self.assertRaisesRegex(ValueError, '账号已停用'):
+            self.store.login('tester', 'updated-password-strong', 'one')
         with self.assertRaises(ValueError):
             self.store.update(self.admin, self.admin, {'active': False})
 
@@ -92,15 +92,19 @@ class AccountTests(unittest.TestCase):
             return response.status, response.headers, json.loads(response.read())
 
         try:
-            status, _, _ = request('/auth/register', {'username': 'new-user', 'name': 'New', 'password': 'password-for-new-user', 'role': 'admin', 'active': True})
+            status, _, registered = request('/auth/register', {'username': 'new-user', 'name': 'New', 'password': 'password-for-new-user', 'role': 'admin', 'active': False})
             self.assertEqual(status, 201)
+            self.assertTrue(registered['active'])
+            self.assertIn('现在可以直接登录', registered['message'])
+            self.assertNotIn('管理员', registered['message'])
             with self.store.db() as db:
                 row = db.execute("SELECT * FROM users WHERE username='new-user'").fetchone()
-                self.assertEqual((row['role'], row['active']), ('member', 0))
+                self.assertEqual((row['role'], row['active']), ('member', 1))
             status, headers, payload = request('/auth/login', {'username': 'new-user', 'password': 'password-for-new-user'})
-            self.assertEqual(status, 400)
-            self.assertIn('账号尚未启用', payload['message'])
-            self.assertIsNone(headers.get('Set-Cookie'))
+            self.assertEqual(status, 200)
+            self.assertEqual(payload['user']['role'], 'member')
+            self.assertTrue(headers.get('Set-Cookie'))
+            self.assertEqual(request('/auth/users', cookie=headers['Set-Cookie'].split(';')[0])[0], 403)
             data = {'username': 'admin', 'password': 'test-password-strong'}
             self.assertEqual(request('/auth/login', data, origin='https://evil.example')[0], 403)
             status, headers, payload = request('/auth/login', data)

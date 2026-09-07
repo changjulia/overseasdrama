@@ -104,7 +104,7 @@ class Accounts:
                 db.execute('INSERT INTO registrations VALUES(?,?)', (ip, now))
                 first_account = self.allow_first_admin and db.execute('SELECT count(*) FROM users').fetchone()[0] == 0
                 role = 'admin' if first_account else 'member'
-                active = 1 if first_account else 0
+                active = 1
                 db.execute('INSERT INTO users VALUES(?,?,?,?,?,?)', (user_id, username, name, encoded, role, active))
         except sqlite3.IntegrityError:
             raise ValueError('该账号已存在') from None
@@ -130,7 +130,7 @@ class Accounts:
         if not user or not valid:
             raise ValueError('账号或密码错误')
         if not user['active']:
-            raise ValueError('账号尚未启用，请联系管理员审核或启用后再登录')
+            raise ValueError('账号已停用，请联系管理员重新启用后再登录')
         token = secrets.token_urlsafe(32)
         ttl = 7 * 86400 if remember else 12 * 3600
         with self.db() as db:
@@ -140,7 +140,7 @@ class Accounts:
             if not current or current['password'] != encoded:
                 raise ValueError('账号或密码错误')
             if not current['active']:
-                raise ValueError('账号尚未启用，请联系管理员审核或启用后再登录')
+                raise ValueError('账号已停用，请联系管理员重新启用后再登录')
             db.execute('INSERT INTO sessions VALUES(?,?,?)', (hashlib.sha256(token.encode()).hexdigest(), user['id'], now + ttl))
             db.execute('DELETE FROM attempts WHERE ip=? AND username=?', (ip, username))
         return token, ttl, public_user(current)
@@ -278,9 +278,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/auth/register':
                 created_id = accounts.register(data.get('username', ''), data.get('name', ''), data.get('password'), self.headers.get('X-Real-IP', self.client_address[0]))
                 with accounts.db() as db:
-                    created = db.execute('SELECT active FROM users WHERE id=?', (created_id,)).fetchone()
+                    created = db.execute('SELECT active, role FROM users WHERE id=?', (created_id,)).fetchone()
                 active = bool(created['active'])
-                message = '首个账号已创建为管理员，现在可以登录' if active else '注册成功，请等待管理员启用账号后登录'
+                message = '首个账号已创建为管理员，现在可以登录' if created['role'] == 'admin' else '注册成功，账号已启用，现在可以直接登录'
                 return self.reply(201, {'message': message, 'active': active})
             if path == '/auth/login':
                 # Caddy replaces this header with the actual client address.
