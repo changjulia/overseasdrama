@@ -1,0 +1,6 @@
+[Unit]
+Description=Reload Nginx for renewed Lumina certificate
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nginx -t
+ExecStart=/bin/systemctl reload nginx

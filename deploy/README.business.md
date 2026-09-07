@@ -62,3 +62,13 @@ COS 存储不替代数据库备份。现有桶也不应清空：它包含此次�
 - 任务轮询使用 `/api/lumina/task-summaries/{collection}`，SQL 只选择列表需要的字段，不加载 result、logs 或完整关联分析 JSON；日志仍按需读取。
 - 当前部署只运行一个 `processor.job_worker`，解析、匹配和渲染在同一任务循环中串行执行，内部数值计算线程和 CPU 已受限。增加 Worker 副本前必须重新做容量验证。
 - 调试期间的 GODEBUG=gctrace=1 已从正式 compose 移除。不要将 COS 当作 RAM 或数据库备份的替代品。
+
+## 2026-09-07 恢复部署
+
+原安装目录、业务数据库、账号数据库和 Docker 数据卷在本次部署前已不存在，服务器保留了旧版镜像。此次从本地一致性快照恢复 1,937 条素材、1,059 条钩子资产、10 集剧集，以及 125 条成功的素材分析结果。旧成员账号无备份，只恢复此前保存的初始管理员；其他成员需要重新注册并由管理员启用。
+
+服务器已有 Nginx 占用 80/443，原 IP 站点配置保持不变。短剧域名单独使用 `/etc/nginx/conf.d/lumina.conf`，转发至 Caddy 的回环端口 3280/32443。实际 `/opt/lumina/compose.business.yml` 因此将 Caddy 端口绑定为 `127.0.0.1:3280:80` 和 `127.0.0.1:32443:443`；更新时须保留此服务器适配，不能直接用默认公网端口配置覆盖。
+
+Caddy 通过 HTTP-01 管理域名证书；Nginx 复用该证书并校验上游 TLS（校验深度 3）。`lumina-cert-reload.timer` 每天重新加载 Nginx，以读取 Caddy 续期后的证书。Web 健康检查使用 `/favicon.svg`，避免未登录首页跳转被误判为不健康。
+
+迁移时未完成和已失败任务暂停自动重试，用户可在站点中手动重试。初始快照保存在私有 COS 的 `releases/20260907/business-data.tar.gz`，恢复后的账号与业务库备份位于 `deploy/backups/release-20260907/`。素材校验清单见 `deploy/releases/20260907/assets-manifest.json`。
