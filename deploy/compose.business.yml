@@ -19,7 +19,7 @@ services:
       dockerfile: Dockerfile.auth
     restart: unless-stopped
     environment:
-      AUTH_ORIGIN: https://${DOMAIN}
+      AUTH_ORIGIN: https://${DOMAIN},${AUTH_EXTRA_ORIGINS:-}
     volumes: ["./deploy/runtime/auth:/data"]
     mem_limit: 128m
     healthcheck:

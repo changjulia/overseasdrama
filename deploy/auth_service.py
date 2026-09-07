@@ -242,7 +242,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/health':
             return self.reply(200, {'status': 'ok'})
         if path == '/auth/verify' and self.headers.get('X-Forwarded-Method', 'GET') not in ('GET', 'HEAD', 'OPTIONS'):
-            if self.headers.get('Origin') != self.server.origin or self.headers.get('Sec-Fetch-Site', 'same-origin') != 'same-origin':
+            if self.headers.get('Origin') not in self.server.origins or self.headers.get('Sec-Fetch-Site', 'same-origin') != 'same-origin':
                 return self.reply(403, {'message': '不允许跨站请求'})
         user = self.server.accounts.user(self.token())
         if not user:
@@ -265,7 +265,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
-            if self.headers.get('Origin') != self.server.origin or self.headers.get('Sec-Fetch-Site', 'same-origin') != 'same-origin':
+            if self.headers.get('Origin') not in self.server.origins or self.headers.get('Sec-Fetch-Site', 'same-origin') != 'same-origin':
                 return self.reply(403, {'message': '不允许跨站请求'})
             length = int(self.headers.get('Content-Length', '0'))
             if length <= 0 or length > 16384 or not self.headers.get('Content-Type', '').startswith('application/json'):
@@ -323,7 +323,7 @@ class Handler(BaseHTTPRequestHandler):
 def make_server(host, port, db_path, origin, secure=True, allow_first_admin=False):
     server = ThreadingHTTPServer((host, port), Handler)
     server.accounts = Accounts(db_path, allow_first_admin=allow_first_admin)
-    server.origin = origin.rstrip('/')
+    server.origins = {item.strip().rstrip('/') for item in origin.split(',') if item.strip()}
     server.secure = secure
     return server
 
