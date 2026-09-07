@@ -540,10 +540,25 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
         conflict:row.conflict,emotion:row.emotion,narrative_promise:row.narrative_promise,information_gap:row.information_gap,
         evidence:row.boundary_status==="verified"?{present:true}:{}};
     });
-    const preparedStoryNeed = helpers.prepareHookCandidateStoryNeed(storyNeed);
     const candidates = retrievalHooks
       .map((hook) => {
-        const retrieval = helpers.scoreHookCandidateFast(hook, storyNeed, preparedStoryNeed);
+        const verified = hook.boundary_status === "verified";
+        const approved = hook.review_status === "approved";
+        const hasPromise = Boolean(hook.narrative_promise);
+        const retrieval = {
+          score: (verified ? 55 : 30) + (approved ? 25 : 10) + (hasPromise ? 20 : 0),
+          recallEligible: true,
+          direction: "parallel",
+          directionLabel: "平行故事",
+          storyNeedCoverage: 0,
+          titleAffinity: 0,
+          truthSafety: verified ? 100 : 45,
+          bridgeCost: hasPromise ? 45 : 65,
+          spoilerRisk: 25,
+          matchedSignals: [],
+          tagRecall: { stage: "recall_only", decision: "needs_evidence", relation: "unknown", score: 0, productionEligible: false, hardConflicts: [], matches: {} },
+          reasons: ["按审核状态与边界可信度进入候选池；选中后执行完整故事匹配"],
+        };
         return {
           hook_id: hook.id,
           material_id: hook.material,

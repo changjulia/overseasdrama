@@ -90,7 +90,8 @@ test("scores reverse hook candidates with explicit retrieval evidence", () => {
 test("bounds synchronous hook ranking before semantic scoring", () => {
   assert.match(hookRouteSource, /ORDER BY \(review_status='approved'\) DESC,[\s\S]*LIMIT 60/);
   assert.match(hookRouteSource, /if \(selectedStorylines\.length\) \{[\s\S]*analysis: \{\},[\s\S]*highlights: \[\]/);
-  assert.match(hookRouteSource, /scoreHookCandidateFast\(hook, storyNeed, preparedStoryNeed\)/);
+  assert.doesNotMatch(hookRouteSource, /scoreHookCandidateFast\(hook, storyNeed, preparedStoryNeed\)/);
+  assert.match(hookRouteSource, /选中后执行完整故事匹配/);
 });
 
 test("prioritizes an attributable same-title hook over a generic thematic hook", () => {
