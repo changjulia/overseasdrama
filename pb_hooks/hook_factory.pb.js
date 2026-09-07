@@ -506,8 +506,7 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
       id:"",title:"",source_class:"",usage_role:"",material:"",
       boundary_status:"",review_status:"",hook_type:"",themes:"[]",
       content_tags:"[]",ontology_tags:"[]",relationships:"[]",conflict:"",
-      emotion:"",narrative_promise:"",information_gap:"",spoken_summary:"",
-      visual_summary:"",
+      emotion:"",narrative_promise:"",information_gap:"",
     }));
     e.app.concurrentDB().newQuery(
       `SELECT id,COALESCE(title,'') title,COALESCE(source_class,'') source_class,
@@ -517,8 +516,7 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
        COALESCE(content_tags,'[]') content_tags,COALESCE(ontology_tags,'[]') ontology_tags,
        COALESCE(relationships,'[]') relationships,COALESCE(conflict,'') conflict,
        COALESCE(emotion,'') emotion,COALESCE(narrative_promise,'') narrative_promise,
-       COALESCE(information_gap,'') information_gap,COALESCE(spoken_summary,'') spoken_summary,
-       COALESCE(visual_summary,'') visual_summary
+       COALESCE(information_gap,'') information_gap
        FROM hook_assets
        WHERE (source_class='external_material' OR (source_class='narration_opening' AND usage_role='pre_roll'))
          AND boundary_status!='rejected' AND review_status!='rejected'
@@ -530,7 +528,6 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
         boundary_status:row.boundary_status,review_status:row.review_status,hook_type:row.hook_type,
         themes:values("themes"),content_tags:values("content_tags"),ontology_tags:values("ontology_tags"),relationships:values("relationships"),
         conflict:row.conflict,emotion:row.emotion,narrative_promise:row.narrative_promise,information_gap:row.information_gap,
-        spoken_summary:row.spoken_summary,visual_summary:row.visual_summary,
         evidence:row.boundary_status==="verified"?{present:true}:{}};
     });
     const preparedStoryNeed = helpers.prepareHookCandidateStoryNeed(storyNeed);

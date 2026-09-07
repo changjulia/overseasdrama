@@ -354,11 +354,11 @@ function prepareHookCandidateStoryNeed(storyNeed) {
       storyNeed && storyNeed.corePlot,
       storyNeed && storyNeed.causalChain,
       storyNeed && storyNeed.comprehensionGaps,
-    ]).filter((token) => token.length <= 12),
+    ]).filter((token) => token.length <= 12).slice(0, 60),
     contextTokens: semanticTokens([
       storyNeed && storyNeed.contentTags,
       storyNeed && storyNeed.relationshipState,
-    ]).filter((token) => token.length <= 12),
+    ]).filter((token) => token.length <= 12).slice(0, 30),
     dramaTitleTokens: semanticTokens(storyNeed && storyNeed.dramaTitle),
     ontologyProfile: ontologyProfile(storyNeed),
     directions: (storyNeed && Array.isArray(storyNeed.extendDirections)
