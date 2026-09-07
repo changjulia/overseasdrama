@@ -1391,9 +1391,6 @@ export async function listInspirationMaterialsPage(
     "content_hash",
     "source_url",
     "rights_status",
-    "analysis_result",
-    "source_attribution",
-    "opening_analysis",
   ].join(",");
   const boundedPage = Math.max(1, Math.floor(page)),
     boundedPerPage = Math.max(1, Math.min(60, Math.floor(perPage)));

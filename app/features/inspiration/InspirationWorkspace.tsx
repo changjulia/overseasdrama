@@ -169,7 +169,7 @@ export function InspirationWorkspace({
     try {
       const pages = await Promise.all(
         Array.from({ length: loadedPages }, (_, index) =>
-          listInspirationMaterialsPage(index + 1, 24, signal, type),
+          listInspirationMaterialsPage(index + 1, 18, signal, type),
         ),
       );
       const nextMaterials = pages.flatMap((value) => value.items);
@@ -177,16 +177,24 @@ export function InspirationWorkspace({
       mergeMaterials(nextMaterials, true);
       setTotalItems(pages[0]?.totalItems ?? nextMaterials.length);
       setTotalPages(pages[0]?.totalPages ?? 1);
-      const [nextHooks, nextStats] = await Promise.all([
-        includeHooks
-          ? listInspirationHookAssets(signal)
-          : Promise.resolve(null),
-        getInspirationMaterialStats(signal),
-      ]);
-      if (signal?.aborted || generation !== refreshGeneration.current || currentType.current !== type) return undefined;
-      if (nextHooks) setHooks(nextHooks);
-      if (nextStats) setStats(nextStats);
+      setInitialLoading(false);
       setError("");
+      // Counters and hook prototypes are secondary to the visible material
+      // grid. Fetch them after the first cards can already be rendered.
+      try {
+        const [nextHooks, nextStats] = await Promise.all([
+          includeHooks
+            ? listInspirationHookAssets(signal)
+            : Promise.resolve(null),
+          getInspirationMaterialStats(signal),
+        ]);
+        if (signal?.aborted || generation !== refreshGeneration.current || currentType.current !== type) return undefined;
+        if (nextHooks) setHooks(nextHooks);
+        if (nextStats) setStats(nextStats);
+      } catch (reason) {
+        if (!signal?.aborted)
+          console.warn("Inspiration counters or hooks failed to refresh", reason);
+      }
       return nextMaterials;
     } catch (reason) {
       if (!signal?.aborted && generation === refreshGeneration.current && currentType.current === type)
@@ -227,7 +235,7 @@ export function InspirationWorkspace({
     if (loadingMore || loadedPages >= totalPages) return;
     setLoadingMore(true);
     try {
-      const page = await listInspirationMaterialsPage(loadedPages + 1, 24, undefined, type);
+      const page = await listInspirationMaterialsPage(loadedPages + 1, 18, undefined, type);
       if (currentType.current !== type) return;
       mergeMaterials(page.items);
       setLoadedPages(page.page);
@@ -1185,6 +1193,8 @@ function MaterialCard({
               className={styles.materialPoster}
               src={item.coverUrl}
               alt={`${item.title} 视频封面`}
+              loading="lazy"
+              decoding="async"
               onError={() => setPosterFailed(true)}
             />
           ) : url ? (
@@ -1193,7 +1203,7 @@ function MaterialCard({
               src={`${url}#t=0.1`}
               muted
               playsInline
-              preload="metadata"
+              preload="none"
               aria-label={`${item.title} 视频首帧`}
             />
           ) : (

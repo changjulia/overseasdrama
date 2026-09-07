@@ -67,7 +67,9 @@ function favoriteFromMaterial(material: InspirationMaterial): Favorite {
 }
 
 export default function Home() {
-  const [workspace, setWorkspace] = usePersistentState<Workspace>("lumina:workspace", "inspiration");
+  // A new page load is the start of a new session view. Always land on the
+  // inspiration dashboard instead of restoring the last workspace visited.
+  const [workspace, setWorkspace] = useState<Workspace>("inspiration");
   const [factoryVisited, setFactoryVisited] = useState(false);
   const factoryContainer = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -99,7 +101,7 @@ export default function Home() {
   }, [setDrafts, setFavorites, setTasks, tasksReady]);
 
   useEffect(() => {
-    if (!tasksReady || !favorites.length) return;
+    if (!tasksReady || !favorites.length || workspace !== "creations") return;
     const controller = new AbortController();
     void listInspirationMaterials(controller.signal).then((materials) => {
       const byId = new Map(materials.map((material) => [material.id, material]));
@@ -118,10 +120,10 @@ export default function Home() {
       });
     }).catch((error) => { if (!controller.signal.aborted) console.error("Favorite media hydration failed", error); });
     return () => controller.abort();
-  }, [favorites.length, setFavorites, tasksReady]);
+  }, [favorites.length, setFavorites, tasksReady, workspace]);
 
   useEffect(() => {
-    if (!tasksReady) return;
+    if (!tasksReady || workspace !== "tasks") return;
     const controller = new AbortController();
     let timer = 0;
     const sync = async () => {
@@ -132,10 +134,10 @@ export default function Home() {
     };
     void sync();
     return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [setTasks, tasksReady, syncRevision]);
+  }, [setTasks, tasksReady, syncRevision, workspace]);
 
   useEffect(() => {
-    if (!tasksReady) return;
+    if (!tasksReady || (workspace !== "creations" && workspace !== "factory")) return;
     const controller = new AbortController();
     const syncHistory = async () => {
       setHistorySync("正在读取创作历史…");
