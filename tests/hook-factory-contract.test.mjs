@@ -87,6 +87,10 @@ test("scores reverse hook candidates with explicit retrieval evidence", () => {
   assert.equal(typeof result.bridgeCost, "number");
 });
 
+test("bounds synchronous hook ranking before semantic scoring", () => {
+  assert.match(hookRouteSource, /ORDER BY \(review_status='approved'\) DESC,[\s\S]*LIMIT 120/);
+});
+
 test("prioritizes an attributable same-title hook over a generic thematic hook", () => {
   const need = deriveStoryNeed(
     { id: "lycan", title: "The Rise of the Lycan Queen" },

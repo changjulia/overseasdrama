@@ -520,7 +520,10 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
        FROM hook_assets
        WHERE (source_class='external_material' OR (source_class='narration_opening' AND usage_role='pre_roll'))
          AND boundary_status!='rejected' AND review_status!='rejected'
-       ORDER BY id DESC`
+       ORDER BY (review_status='approved') DESC,
+                (boundary_status='verified') DESC,
+                id DESC
+       LIMIT 120`
     ).all(hooks);
     const retrievalHooks = hooks.map((row) => {
       const values = (name) => { try { const value=JSON.parse(String(row[name]||"[]")); return Array.isArray(value)?value:[]; } catch (_) { return []; } };
