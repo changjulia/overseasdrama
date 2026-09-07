@@ -325,6 +325,9 @@ routerAdd("POST", "/api/lumina/hook-driven-storyline-plans", (e) => {
           { length: Math.max(0, drama.getInt("free_episodes")) },
           (_, index) => index + 1,
         );
+    const selectedStorylines = Array.isArray(body.selected_storylines)
+      ? body.selected_storylines.slice(0, 10)
+      : [];
     const episodes = e.app
       .findRecordsByFilter(
         "drama_episodes",
@@ -466,6 +469,13 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
       )
       .filter((episode) => scope.includes(episode.getInt("episode_number")))
       .map((episode) => {
+        if (selectedStorylines.length) {
+          return {
+            episode: episode.getInt("episode_number"),
+            analysis: {},
+            highlights: [],
+          };
+        }
         const highlights = e.app
           .findRecordsByFilter(
             "hook_assets",
@@ -492,9 +502,6 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
       episodes,
       body.delivery_goal,
     );
-    const selectedStorylines = Array.isArray(body.selected_storylines)
-      ? body.selected_storylines.slice(0, 10)
-      : [];
     const storyNeed = helpers.storyNeedFromPlans(
       baseStoryNeed,
       selectedStorylines,
