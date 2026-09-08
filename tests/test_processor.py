@@ -17,7 +17,7 @@ from processor.pack import group_phrases, pack_transcripts
 from processor.scribe import is_cache_valid, source_fingerprint
 from processor.batch_transcribe import select_free_episodes
 from processor.job_worker import ApiRequestError, DownloadIntegrityError, api_request, classify_failure, download, envelope_from_dict, execute_entry_precision_job, execute_semantic_job, process_available, process_one_endpoint
-from processor.factory_render import _boundary_state, _leading_blank_metrics, _output_filename, _render_clip, _transition_settings, _unsupported_features, _validate_sequential_duration, build_render_quality_report
+from processor.factory_render import _boundary_state, _download as render_download, _leading_blank_metrics, _output_filename, _render_clip, _transition_settings, _unsupported_features, _validate_sequential_duration, build_render_quality_report, pocketbase_media_url
 from processor.semantic_analysis import AnalysisFailed, AnalysisEnvelope, Evidence, Timecode, _apply_material_evidence_gate, _compact_hook_highlight, _complete_sentence_limit, _downgrade_unsupported_external_hook, _enrich_material_hooks, _external_hook_fragment_evidence, _external_hook_match_input, _extract_chat_stream, _extract_provider_result, _material_evidence_timestamps, _material_output_contract_issues, _material_output_contract_valid, _material_semantic_analysis, _material_story_consistency_issues, _material_story_quality_issues, _material_story_synthesis_request, _normalize_material_format, _normalize_material_output_shape, _normalize_precision_hooks, _openai_request_body, _opening_preface_boundary, _precision_candidates, _read_analysis_cache, _reconstruct_storyline, _reconstruct_highlights, _restore_material_observations, _sanitize_material_provider_input, _semantic_frame_base64, _semantic_request, _story_duration_validation, _storyboard_quality_issues, _storyboard_units_from_event_ledger, _strict_safety_provider_input, _target_duration_spec, _validate_semantic_claims, _write_analysis_cache, analyze_coarse, analyze_detail, analyze_hook_entry_points, analyze_hook_story_match, analyze_material, failed_envelope, transcribe
 
 MATERIAL_CONTRACT = {
@@ -29,6 +29,23 @@ MATERIAL_CONTRACT = {
 
 
 class ProcessorTests(unittest.TestCase):
+    def test_worker_media_url_uses_internal_gateway_when_configured(self):
+        with patch.dict(os.environ, {"LUMINA_MEDIA_INTERNAL_BASE_URL": "http://media:8080/"}):
+            url = pocketbase_media_url("http://pocketbase:8090", "pbc_lumepisodes", "episode-1", "EP 01.mp4")
+        self.assertEqual(url, "http://media:8080/media/pbc_lumepisodes/episode-1/EP%2001.mp4")
+
+    def test_worker_media_url_falls_back_to_pocketbase_for_local_development(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("LUMINA_MEDIA_INTERNAL_BASE_URL", None)
+            url = pocketbase_media_url("http://localhost:8090/", "episodes", "one", "EP01.mp4")
+        self.assertEqual(url, "http://localhost:8090/api/files/episodes/one/EP01.mp4")
+
+    @patch("processor.factory_render.urllib.request.urlopen")
+    def test_render_download_reports_the_missing_episode_without_leaking_its_url(self, open_mock):
+        open_mock.side_effect = urllib.error.HTTPError("https://signed.example/secret", 404, "Not Found", {}, None)
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaisesRegex(AnalysisFailed, "第 1 集源文件不可用（HTTP 404）"):
+            render_download("https://signed.example/secret", Path(tmp) / "episode.mp4", "第 1 集源文件")
+
     def test_analysis_cache_allows_eight_concurrent_writers(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache = Path(tmp) / "semantic-segments-v6.json"

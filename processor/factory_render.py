@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -14,10 +16,32 @@ from processor.object_storage import publish_render
 from processor.pre_roll_eligibility import is_pre_roll_hook, narration_boundaries_verified
 
 
-def _download(url: str, target: Path) -> None:
-    with urllib.request.urlopen(url, timeout=180) as response, target.open("wb") as output:
-        while chunk := response.read(1024 * 1024):
-            output.write(chunk)
+def pocketbase_media_url(base_url: str, collection_id: Any, record_id: Any, filename: Any) -> str:
+    """Route worker media reads through the internal COS gateway when configured.
+
+    PocketBase redirects migrated video files to the public ``/media`` route.
+    A worker connected directly to PocketBase cannot resolve that relative
+    redirect through Caddy, so production uses the internal media service.
+    """
+    parts = [str(collection_id or ""), str(record_id or ""), str(filename or "")]
+    encoded = "/".join(urllib.parse.quote(part, safe="") for part in parts)
+    media_base = os.getenv("LUMINA_MEDIA_INTERNAL_BASE_URL", "").strip().rstrip("/")
+    if media_base:
+        return f"{media_base}/media/{encoded}"
+    return f"{base_url.rstrip('/')}/api/files/{encoded}"
+
+
+def _download(url: str, target: Path, label: str = "媒体文件") -> None:
+    try:
+        with urllib.request.urlopen(url, timeout=180) as response, target.open("wb") as output:
+            while chunk := response.read(1024 * 1024):
+                output.write(chunk)
+    except urllib.error.HTTPError as exc:
+        target.unlink(missing_ok=True)
+        raise AnalysisFailed(f"{label}不可用（HTTP {exc.code}）") from exc
+    except urllib.error.URLError as exc:
+        target.unlink(missing_ok=True)
+        raise AnalysisFailed(f"{label}下载失败（{type(exc.reason).__name__}）") from exc
 
 
 def _duration(path: Path) -> float:
@@ -388,22 +412,21 @@ def render_factory_project(response: dict[str, Any], base_url: str, workspace: P
     if not is_episode_splice:
         material_name = str(material.get("video") or "")
         remote_source = str(material.get("source_url") or "").strip()
-        source_url = (
-            f"{base_url.rstrip('/')}/api/files/{material.get('collectionId')}/{material.get('id')}/{urllib.parse.quote(material_name)}"
-            if material_name
-            else remote_source
-        )
+        source_url = pocketbase_media_url(base_url, material.get("collectionId"), material.get("id"), material_name) if material_name else remote_source
         if not source_url or urllib.parse.urlparse(source_url).scheme not in {"http", "https"}:
             raise AnalysisFailed("hook material has no playable local file or remote source URL")
         source_suffix = Path(urllib.parse.urlparse(source_url).path).suffix or ".mp4"
         material_path = workspace / f"hook-source{source_suffix}"
-        _download(source_url, material_path)
+        _download(source_url, material_path, "钩子源文件")
     episode_paths: dict[int, Path] = {}
     for episode in episodes:
         number = int(episode.get("episode_number") or 0)
         video = str(episode.get("video") or "")
         target = workspace / f"episode-{number:03d}{Path(video).suffix or '.mp4'}"
-        _download(f"{base_url.rstrip('/')}/api/files/{episode.get('collectionId')}/{episode.get('id')}/{urllib.parse.quote(video)}", target)
+        if not number or not video or not episode.get("id"):
+            raise AnalysisFailed(f"第 {number or '?'} 集缺少源文件记录")
+        source_url = pocketbase_media_url(base_url, episode.get("collectionId"), episode.get("id"), video)
+        _download(source_url, target, f"第 {number} 集源文件")
         episode_paths[number] = target
     if on_progress:
         on_progress(24, "检测剧集闪光结尾与安全边界")

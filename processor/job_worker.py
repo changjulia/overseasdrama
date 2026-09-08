@@ -22,7 +22,7 @@ from typing import Any, Callable
 from PIL import Image, ImageFilter, ImageStat
 
 from processor.semantic_analysis import AnalysisEnvelope, analyze_coarse, analyze_detail, analyze_hook_entry_points, analyze_hook_story_match, analyze_material, analyze_precision, extract_frames
-from processor.factory_render import render_factory_project
+from processor.factory_render import pocketbase_media_url, render_factory_project
 
 
 class ApiRequestError(RuntimeError):
@@ -246,7 +246,7 @@ def execute_semantic_job(job: dict[str, Any], base_url: str, workspace: Path, on
             source = workspace / f"detail-episode-{episode_number}{suffix}"
             if on_progress:
                 on_progress(8 + round(asset_index / asset_total * 24), f"下载并抽取第 {episode_number} 集画面证据")
-            asset_url = f"{base_url.rstrip('/')}/api/files/{asset.get('collection_id')}/{asset['id']}/{urllib.parse.quote(str(asset['video']))}"
+            asset_url = pocketbase_media_url(base_url, asset.get("collection_id"), asset["id"], asset["video"])
             download(asset_url, source)
             extracted = extract_frames(source, workspace / f"detail-frames-{episode_number}", frame_interval)
             if len(extracted) > max_frames_per_episode:
@@ -261,7 +261,7 @@ def execute_semantic_job(job: dict[str, Any], base_url: str, workspace: Path, on
         raise RuntimeError(f"{stage} job is missing its PocketBase episode video")
     suffix = Path(video_name).suffix or ".video"
     source = workspace / f"source{suffix}"
-    asset_url = f"{base_url.rstrip('/')}/api/files/{job['collection_id']}/{job['episode']}/{urllib.parse.quote(video_name)}"
+    asset_url = pocketbase_media_url(base_url, job["collection_id"], job["episode"], video_name)
     if on_progress:
         on_progress(8, "下载剧集片源")
     download(asset_url, source)
@@ -300,8 +300,7 @@ def execute_material_job(response: dict[str, Any], base_url: str, workspace: Pat
     source_name = video_name or Path(urllib.parse.unquote(parsed_source.path)).name
     suffix = Path(source_name).suffix or ".video"
     source = workspace / f"material-source{suffix}"
-    asset_url = (f"{base_url.rstrip('/')}/api/files/{collection_id}/{material_id}/{urllib.parse.quote(video_name)}"
-                 if video_name else source_url)
+    asset_url = pocketbase_media_url(base_url, collection_id, material_id, video_name) if video_name else source_url
     if on_progress:
         on_progress(8, "下载素材")
     def report_download_progress(written: int, expected: int | None, _elapsed: float) -> None:
@@ -440,7 +439,7 @@ def execute_entry_precision_job(response: dict[str, Any], base_url: str, workspa
         source = sources.get(episode_number)
         if source is None:
             source = workspace / f"entry-{episode_number}{Path(video_name).suffix or '.video'}"
-            download(f"{base_url.rstrip('/')}/api/files/{collection_id}/{episode_id}/{urllib.parse.quote(video_name)}", source)
+            download(pocketbase_media_url(base_url, collection_id, episode_id, video_name), source)
             sources[episode_number] = source
         if on_progress:
             on_progress(45 + index * 15, f"密集抽取第 {episode_number} 集接点前后画面")
@@ -470,7 +469,7 @@ def execute_supplemental_highlight_job(response: dict[str, Any], base_url: str, 
     if not episode_id or not video_name or episode_number <= 0:
         raise RuntimeError("supplemental highlight job is missing episode media")
     source = workspace / f"supplemental-{episode_number}{Path(video_name).suffix or '.video'}"
-    download(f"{base_url.rstrip('/')}/api/files/{collection_id}/{episode_id}/{urllib.parse.quote(video_name)}", source)
+    download(pocketbase_media_url(base_url, collection_id, episode_id, video_name), source)
     if on_progress:
         on_progress(20, "补充分析剧集对白与高光候选")
     # Reuse the persisted episode-local candidates and coarse transcript first.

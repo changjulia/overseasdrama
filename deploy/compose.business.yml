@@ -32,6 +32,7 @@ services:
     restart: unless-stopped
     environment:
       VINEXT_TRUSTED_HOSTS: ${DOMAIN}
+      LUMINA_PUBLIC_ORIGINS: ${LUMINA_PUBLIC_ORIGINS:-https://${DOMAIN}}
       POCKETBASE_URL: http://pocketbase:8090
       LUMINA_UI_GATEWAY_TOKEN: ${LUMINA_UI_GATEWAY_TOKEN}
       LUMINA_POCKETBASE_SUPERUSER_IDENTITY: ${LUMINA_POCKETBASE_SUPERUSER_IDENTITY}
@@ -79,6 +80,8 @@ services:
       context: .
       dockerfile: Dockerfile.worker
     restart: unless-stopped
+    deploy:
+      replicas: 3
     environment:
       COS_BUCKET: ${COS_BUCKET}
       COS_REGION: ${COS_REGION}
@@ -86,6 +89,7 @@ services:
       COS_ACCESS_KEY_ID: ${COS_ACCESS_KEY_ID}
       COS_SECRET_ACCESS_KEY: ${COS_SECRET_ACCESS_KEY}
       NEXT_PUBLIC_POCKETBASE_URL: http://pocketbase:8090
+      LUMINA_MEDIA_INTERNAL_BASE_URL: http://media:8080
       LUMINA_WORKER_TOKEN: ${LUMINA_WORKER_TOKEN}
       LUMINA_SEMANTIC_PROVIDER: openai-chat-completions
       LUMINA_SEMANTIC_ENDPOINT: ${LUMINA_SEMANTIC_ENDPOINT}
