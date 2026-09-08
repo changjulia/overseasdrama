@@ -4,6 +4,7 @@ import { isPreRollSource } from "../../lib/pre-roll-eligibility";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePersistentState } from "../../hooks/usePersistentState";
 import { formatDurationZh } from "../../lib/time-format";
+import { bodyFirstStorylineTitle } from "../../lib/storyline-card-copy";
 import { createInitialFactoryWorkflow, factoryModes } from "./mock-data";
 import type { Draft, FactoryMode, FactoryWorkspaceProps } from "./types";
 import ExternalHookAnalysis, {
@@ -4454,7 +4455,7 @@ export function FactoryWorkspace({
                         </span>
                         <strong>起量潜力 {plan.acquisitionScore}</strong>
                       </header>
-                      <h3>{plan.title}</h3>
+                      <h3>{bodyFirstStorylineTitle(plan)}</h3>
                       <div className={styles.storylineMeta}>
                         <span>
                           {plan.episodeScope.length
