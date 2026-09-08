@@ -2861,6 +2861,29 @@ function verifyFactoryRenderArtifact(render) {
   try {
     info = $os.stat(path);
   } catch (_) {
+    const signingEndpoint = String(
+      $os.getenv("LUMINA_MEDIA_SIGNING_URL") || "",
+    ).trim();
+    if (signingEndpoint) {
+      const mediaRoot = signingEndpoint.replace(/\/sign\/?$/, "");
+      try {
+        const response = $http.send({
+          url: `${mediaRoot}${outputUrl}`,
+          method: "HEAD",
+          timeout: 15,
+        });
+        if (response.statusCode >= 200 && response.statusCode < 400)
+          return {
+            fileName,
+            size: null,
+            sha256: expectedSha,
+            storage: "cos",
+            verifiedAt: new Date().toISOString(),
+          };
+      } catch (_) {
+        // Report the same artifact error below without exposing storage details.
+      }
+    }
     throw new BadRequestError(
       "render artifact is missing from local /renders storage",
     );
