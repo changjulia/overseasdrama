@@ -4311,24 +4311,55 @@ export function FactoryWorkspace({
             </div>
             {storyUnderstanding?.storylines.length ? (
               <div className={styles.strategyEvidence}>
-                <b>所选剧集剧情理解</b>
-                <div className={styles.storylineMetrics}>
-                  {storyUnderstanding.storylines.map((storyline) => (
-                    <button
-                      key={storyline.id}
-                      type="button"
-                      onClick={() => {
-                        setActiveStoryThreadId(storyline.id);
-                        setSelectedStorylineIds([]);
-                      }}
-                    >
-                      {storyline.id === activeStoryThread?.id ? "✓ " : ""}
-                      {storyline.title}
-                    </button>
-                  ))}
+                <div className={styles.storyThreadPickerHeader}>
+                  <div>
+                    <b>选择剧情主线</b>
+                    <span>共 {storyUnderstanding.storylines.length} 条，根据人物与因果关系整理</span>
+                  </div>
+                </div>
+                <div className={styles.storyThreadPicker}>
+                  {storyUnderstanding.storylines.map((storyline, index) => {
+                    const active = storyline.id === activeStoryThread?.id;
+                    const firstBeat = storyline.progression[0];
+                    const lastBeat = storyline.progression.at(-1);
+                    return (
+                      <button
+                        key={storyline.id}
+                        type="button"
+                        className={active ? styles.storyThreadCardActive : ""}
+                        aria-pressed={active}
+                        onClick={() => {
+                          setActiveStoryThreadId(storyline.id);
+                          setSelectedStorylineIds([]);
+                        }}
+                      >
+                        <i aria-hidden="true">{active ? "✓" : ""}</i>
+                        <span className={styles.storyThreadCardBody}>
+                          <span className={styles.storyThreadCardHeading}>
+                            <strong>{storyline.title}</strong>
+                            <em>{storyline.type === "main" ? "主线" : "支线"}</em>
+                          </span>
+                          <small>{storyline.summary}</small>
+                          <span className={styles.storyThreadCardMeta}>
+                            <span>
+                              {firstBeat && lastBeat
+                                ? `第${firstBeat.episode}–${lastBeat.episode}集`
+                                : "集数待确认"}
+                            </span>
+                            <span>{storyline.progression.length} 个剧情节点</span>
+                            <span>{storyline.characters.slice(0, 3).join("、") || "人物待确认"}</span>
+                          </span>
+                        </span>
+                        <b className={styles.storyThreadCardAction}>
+                          {active ? "当前查看" : `查看方案 ${index + 1}`}
+                        </b>
+                      </button>
+                    );
+                  })}
                 </div>
                 {activeStoryThread && (
-                  <>
+                  <div className={styles.activeStoryThreadDetail}>
+                    <span>当前剧情主线</span>
                     <h3>{activeStoryThread.summary}</h3>
                     <p>
                       <b>人物：</b>
@@ -4348,7 +4379,7 @@ export function FactoryWorkspace({
                         </li>
                       ))}
                     </ol>
-                  </>
+                  </div>
                 )}
               </div>
             ) : null}
