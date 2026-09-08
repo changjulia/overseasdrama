@@ -1,5 +1,6 @@
 "use client";
 import { boundedFetch as fetch } from "./bounded-fetch";
+import { externalMaterialPoster } from "./material-poster";
 
 import { normalizeTag, type OntologyDimension } from "./ontology/normalization";
 
@@ -1183,10 +1184,9 @@ export function fromRecord(
             url: video ? fileUrl(record, video) : text(record.source_url),
           }
         : undefined,
-    // Only advertise a cover when PocketBase actually stores one. CSV/link
-    // imports commonly have no cover file; inventing a static path here makes
-    // every card render a broken <img> instead of the intentional fallback.
-    coverUrl: fileUrl(record, cover),
+    // Link imports have no PB cover. Supported providers can return a small
+    // real video snapshot; retain lazy image loading instead of fetching videos.
+    coverUrl: fileUrl(record, cover) || externalMaterialPoster(text(record.source_url)),
     createdAt,
     contentHash: text(record.content_hash) || undefined,
     sourceUrl: text(record.source_url) || undefined,
