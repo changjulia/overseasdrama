@@ -5552,9 +5552,9 @@ export function FactoryWorkspace({
       {preRollWorkflow ? <div className={styles.externalFlowActions}>
         <button type="button" disabled={activeStep === 0} onClick={() => setActiveStep(step => Math.max(0, step - 1))}>上一步</button>
         <span>第 {activeStep + 1} 步 / 共 3 步 · 前贴脚本</span>
-        {activeStep < 2 ? <button type="button" disabled={!stepReady[activeStep]} onClick={() => setActiveStep(step => Math.min(2, step + 1))}>
-          {activeStep === 0 ? "理解高光与后续正片" : "创作买量钩子与脚本"}
-        </button> : <span>选择走向后生成，支持全文与逐镜复制</span>}
+        {activeStep === 0 ? <button type="button" disabled={!stepReady[activeStep]} onClick={() => setActiveStep(step => 1)}>
+          理解高光与后续正片
+        </button> : activeStep === 2 ? <span>选择走向后生成，支持全文与逐镜复制</span> : null}
       </div> : <div className={styles.externalFlowActions}>
         <button
           type="button"

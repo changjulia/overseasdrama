@@ -17,6 +17,7 @@
 .panel .primary { color: #fff; background: var(--lumina-primary); border-color: var(--lumina-primary); }
 .panel .primary:hover:not(:disabled) { background: var(--lumina-primary-hover); }
 .actions { margin-top: 16px; }
+.primaryAction { justify-content: flex-end; }
 .grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; margin-top: 20px; }
 .card { display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--lumina-border); border-radius: var(--lumina-panel-radius); padding: 18px; background: var(--lumina-surface); overflow-wrap: anywhere; }
 .panel .selected { border-color: var(--lumina-primary); box-shadow: 0 0 0 1px var(--lumina-primary); background: var(--lumina-primary-soft); }

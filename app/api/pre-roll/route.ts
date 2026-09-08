@@ -6,9 +6,22 @@ import { generatePreRoll } from '@/app/lib/pre-roll-generator';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST(request: NextRequest) {
+function isSameOriginRequest(request: NextRequest): boolean {
   const origin = request.headers.get('origin');
-  if (origin !== request.nextUrl.origin || (request.headers.get('sec-fetch-site') && request.headers.get('sec-fetch-site') !== 'same-origin')) return NextResponse.json({ message: '不允许跨站生成请求' }, { status: 403 });
+  const fetchSite = request.headers.get('sec-fetch-site');
+  if (!origin || (fetchSite && fetchSite !== 'same-origin')) return false;
+  try {
+    const originHost = new URL(origin).host.toLowerCase();
+    const requestHosts = [request.headers.get('host'), request.headers.get('x-forwarded-host'), request.nextUrl.host]
+      .flatMap((value) => (value || '').split(','))
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean);
+    return requestHosts.includes(originHost);
+  } catch { return false; }
+}
+
+export async function POST(request: NextRequest) {
+  if (!isSameOriginRequest(request)) return NextResponse.json({ message: '不允许跨站生成请求' }, { status: 403 });
   if (!await getChatGPTUser()) return NextResponse.json({ message: '请先登录' }, { status: 401 });
   let context: ReturnType<typeof validatePreRollContext>;
   let idea: ReturnType<typeof validatePreRollIdea> | undefined;

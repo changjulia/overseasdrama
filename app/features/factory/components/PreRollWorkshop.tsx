@@ -152,7 +152,7 @@ export default function PreRollWorkshop(props: Props) {
         </button>)}</div>
       </fieldset>
       <label>创作要求（可选）<textarea value={brief} maxLength={2000} onChange={e => setBrief(e.target.value)} placeholder="例如：直接从女主被公开羞辱开场，对方越过底线后她露出反击筹码，让观众等着看对方后悔。" /></label>
-      <div className={styles.actions}><button className={styles.primary} disabled={!!busy} onClick={() => void generate('ideas')}>{busy === 'ideas' ? '正在理解正片并创作…' : current ? '重新生成三个方向' : '生成前贴故事线'}</button>{busy && <button onClick={() => { requestRef.current?.abort(); store.cancelBatch(); setBusy(''); }}>取消生成</button>}<span className={styles.muted}>潜爆方向为创意假设，需投放验证</span></div>
+      <div className={`${styles.actions} ${styles.primaryAction}`}><button className={styles.primary} disabled={!!busy} onClick={() => void generate('ideas')}>{busy === 'ideas' ? '正在理解正片并创作…' : current ? '重新生成三个方向' : '生成前贴故事线'}</button>{busy && <button onClick={() => { requestRef.current?.abort(); store.cancelBatch(); setBusy(''); }}>取消生成</button>}</div>
     </>}
     {error && <p className={current ? styles.warning : styles.error} role="alert">{error}</p>}
     <div role="status" aria-live="polite">{notice}</div>
