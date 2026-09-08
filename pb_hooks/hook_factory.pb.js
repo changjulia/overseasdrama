@@ -458,6 +458,9 @@ routerAdd("POST", "/api/lumina/story-hook-recommendations", (e) => {
           { length: Math.max(0, drama.getInt("free_episodes")) },
           (_, index) => index + 1,
         );
+    const selectedStorylines = Array.isArray(body.selected_storylines)
+      ? body.selected_storylines.slice(0, 10)
+      : [];
     const episodes = e.app
       .findRecordsByFilter(
         "drama_episodes",
