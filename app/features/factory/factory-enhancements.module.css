@@ -53,6 +53,33 @@
 .panelHeader h2 { margin: 3px 0 0; }
 .panelHeader span, .panelHeader small { color: var(--lumina-muted); }
 
+.dramaSelectionBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 16px;
+  border: 1px solid #dbe4f0;
+  border-radius: 12px;
+  background: #f5f9ff;
+}
+.dramaSelectionBar > div { flex: 1 1 240px; min-width: 0; }
+.dramaSelectionBar p { margin: 6px 0; font-weight: 600; overflow-wrap: anywhere; }
+.dramaSelectionBar small { color: var(--lumina-muted); }
+.dramaSelectionBar > button {
+  padding: 10px 18px;
+  border: 1px solid #1764e8;
+  border-radius: 8px;
+  background: #1764e8;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dramaSelectionBar > button:hover { background: #1254c8; }
+.dramaSelectionBar > button:focus-visible { outline: 3px solid #91baff; outline-offset: 3px; }
+
 .optionGrid button > span {
   display: flex;
   align-items: center;

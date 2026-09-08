@@ -4133,13 +4133,22 @@ export function FactoryWorkspace({
               <div>
                 <span>01</span>
                 <h2>{matchStrategy === "story_to_hook" ? "选择剧目与高光候选" : "选择剧集"}</h2>
-                <p className={styles.selectedDramaName}>
-                  {dramaSource
-                    ? `${dramaSource.dramaCn ?? dramaSource.title} / ${dramaSource.dramaTitle ?? dramaSource.title}`
-                    : "尚未选择剧目"}
-                </p>
               </div>
               <small>{matchStrategy === "story_to_hook" ? "先限定剧集范围，再多选有原片证据的高光" : "仅使用已连接的真实视频片源"}</small>
+            </div>
+            <div className={styles.dramaSelectionBar}>
+              <div>
+                <small>选择剧目</small>
+                <p className={styles.selectedDramaName}>
+                  {dramaSource
+                    ? [dramaSource.dramaCn, dramaSource.dramaTitle ?? dramaSource.title].filter((name, index, names) => name && names.indexOf(name) === index).join(" / ")
+                    : "尚未选择剧目"}
+                </p>
+                <small>先从剧库选择剧目，再选择制作集数与高光候选。</small>
+              </div>
+              <button type="button" onClick={openDramaPicker}>
+                {dramaSource ? "切换剧目" : "选择剧目"}
+              </button>
             </div>
             <div className={styles.hookPickerFilters}>
               <label>
@@ -4159,10 +4168,7 @@ export function FactoryWorkspace({
             {!dramaSource ? (
               <div className={styles.emptyState}>
                 <h3>先选择本剧正片</h3>
-                <p>从剧库带入剧目后，可在这里选择实际制作集数。</p>
-                <button type="button" onClick={openDramaPicker}>
-                  从右侧剧库选择
-                </button>
+                <p>点击上方“选择剧目”，从剧库带入正片后选择实际制作集数。</p>
               </div>
             ) : mediaEntries.length ? (
               <div className={styles.episodeSourceGrid}>
