@@ -2861,29 +2861,21 @@ function verifyFactoryRenderArtifact(render) {
   try {
     info = $os.stat(path);
   } catch (_) {
-    const signingEndpoint = String(
-      $os.getenv("LUMINA_MEDIA_SIGNING_URL") || "",
-    ).trim();
-    if (signingEndpoint) {
-      const mediaRoot = signingEndpoint.replace(/\/sign\/?$/, "");
-      try {
-        const response = $http.send({
-          url: `${mediaRoot}${outputUrl}`,
-          method: "HEAD",
-          timeout: 15,
-        });
-        if (response.statusCode >= 200 && response.statusCode < 400)
-          return {
-            fileName,
-            size: null,
-            sha256: expectedSha,
-            storage: "cos",
-            verifiedAt: new Date().toISOString(),
-          };
-      } catch (_) {
-        // Report the same artifact error below without exposing storage details.
-      }
-    }
+    // A successful worker upload stores the immutable /renders URL and SHA
+    // before marking the render succeeded. Avoid calling the media gateway
+    // here: it calls PocketBase again to sign COS URLs, which deadlocks the
+    // single JS hook runtime while this export request is still running.
+    if (
+      String($os.getenv("LUMINA_MEDIA_SIGNING_URL") || "").trim() &&
+      outputUrl.startsWith("/renders/")
+    )
+      return {
+        fileName,
+        size: null,
+        sha256: expectedSha,
+        storage: "cos",
+        verifiedAt: new Date().toISOString(),
+      };
     throw new BadRequestError(
       "render artifact is missing from local /renders storage",
     );
