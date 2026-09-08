@@ -68,8 +68,11 @@ export default function PreRollCharacters({ pack, onChange, episodeMedia = {}, e
     setEpisode(entry.episode); setView('entry');
     if (episode === entry.episode && videoRef.current?.readyState) videoRef.current.currentTime = entry.start;
   }
-  return <details className={styles.panel} open>
-    <summary>人物一致性 · {pack.characters.length} 张角色卡 · {pack.characters.reduce((n, c) => n + c.references.length, 0)} 张参考图</summary>
+  return <details className={styles.panel}>
+    <summary>
+      <span><b>高级设置</b><small>人物一致性、角色参考图与正片入口状态</small></span>
+      <em>{pack.characters.length} 张角色卡 · {pack.characters.reduce((n, c) => n + c.references.length, 0)} 张参考图</em>
+    </summary>
     <p>角色描述与图片固定复用；为正片入口填写人物状态，再向前续写钩子。图片保存在此浏览器，导出参考包时会包含原图文件。</p>
     <div className={styles.toolbar}>
       <label>当前角色<select value={selected?.id || ''} onChange={e => { setSelectedId(e.target.value); setError(''); }}>
