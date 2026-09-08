@@ -24,7 +24,7 @@
         uri /auth/verify
         copy_headers X-Lumina-Account-Id X-Lumina-Account-Name X-Lumina-Account-Email
       }
-      @media path /renders/* /material-covers/* /material-previews/* /material-analysis/*
+      @media path /renders/* /material-covers/* /material-previews/* /material-analysis/* /media/*
       handle @media {
         reverse_proxy media:8080
       }

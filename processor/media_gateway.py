@@ -20,7 +20,56 @@ def object_key(path: str) -> str | None:
     return key
 
 
+def pocketbase_media_key(path: str) -> str | None:
+    """Accept only a single PocketBase collection/record/file object path."""
+    key = unquote(urlsplit(path).path).removeprefix("/media/").lstrip("/")
+    parts = key.split("/")
+    if len(parts) != 3 or parts[0] not in {"pbc_lumepisodes", "pbc_lumadmat001"}:
+        return None
+    if any(part in {"", ".", ".."} or "\\" in part or any(ord(c) < 32 for c in part) for part in parts):
+        return None
+    if not parts[-1].lower().endswith((".mp4", ".mov", ".m4v", ".webm")):
+        return None
+    return "/".join(parts)
+
+
 class Handler(BaseHTTPRequestHandler):
+    def _stream_pocketbase_media(self, key: str, head_only: bool = False):
+        try:
+            client = media_client()
+            kwargs = {"Bucket": os.environ["COS_BUCKET"], "Key": key}
+            requested_range = self.headers.get("Range", "").strip()
+            if requested_range:
+                if not requested_range.startswith("bytes=") or len(requested_range) > 128:
+                    self.send_error(416, "Invalid media range")
+                    return
+                kwargs["Range"] = requested_range
+            if head_only:
+                result = client.head_object(**kwargs)
+                self.send_response(200)
+                self.send_header("Content-Type", result.get("ContentType") or "video/mp4")
+                self.send_header("Content-Length", str(result.get("ContentLength", 0)))
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Cache-Control", "private, no-store")
+                self.end_headers()
+                return
+            result = client.get_object(**kwargs)
+            metadata = result.get("ResponseMetadata", {}).get("HTTPStatusCode", 200)
+            self.send_response(206 if requested_range else metadata)
+            self.send_header("Content-Type", result.get("ContentType") or "video/mp4")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Cache-Control", "private, no-store")
+            for header, field in (("Content-Length", "ContentLength"), ("Content-Range", "ContentRange"), ("ETag", "ETag"), ("Last-Modified", "LastModified")):
+                value = result.get(field)
+                if value is not None:
+                    self.send_header(header, str(value))
+            self.end_headers()
+            body = result["Body"]
+            while chunk := body.read(256 * 1024):
+                self.wfile.write(chunk)
+        except Exception:
+            self.send_error(503, "Media storage unavailable")
+
     def do_POST(self):
         # Called only by PocketBase after its file/record permission checks.
         secret = os.environ.get("LUMINA_WORKER_TOKEN", "")
@@ -55,6 +104,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        media_key = pocketbase_media_key(self.path)
+        if media_key is not None:
+            return self._stream_pocketbase_media(media_key)
         if self.path == "/health":
             self.send_response(204)
             self.end_headers()
@@ -78,7 +130,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    do_HEAD = do_GET
+    def do_HEAD(self):
+        media_key = pocketbase_media_key(self.path)
+        if media_key is not None:
+            return self._stream_pocketbase_media(media_key, head_only=True)
+        return self.do_GET()
 
     def log_message(self, *_args):
         pass

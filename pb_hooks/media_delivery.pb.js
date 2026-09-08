@@ -18,7 +18,16 @@ onFileDownloadRequest((e) => {
       // Unlike router handlers, e.response is not available in Goja here.
       e.requestEvent.response.header().set("Cache-Control", "private, no-store");
       e.requestEvent.response.header().set("Referrer-Policy", "no-referrer");
-      return e.redirect(302, result.json.url);
+      // Do not redirect the browser directly to a private COS signed URL.
+      // Chromium may reject that cross-origin response during media seeking,
+      // leaving a playable record as an opaque "media unavailable" card.
+      // The authenticated same-origin gateway streams bytes and Range replies.
+      const safePath = String(e.servedPath || "")
+        .split("/")
+        .filter(Boolean)
+        .map((part) => encodeURIComponent(part))
+        .join("/");
+      if (safePath) return e.redirect(302, `/media/${safePath}`);
     }
   } catch (_) {
     console.warn("COS video redirect unavailable; using standard file delivery");
