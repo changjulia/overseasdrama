@@ -65,8 +65,9 @@ services:
       LUMINA_UI_GATEWAY_TOKEN: ${LUMINA_UI_GATEWAY_TOKEN}
       LUMINA_UI_MODE: local-loopback
       LUMINA_UI_ORIGINS: https://${DOMAIN}
+      LUMINA_FACTORY_RENDER_DIR: /shared/renders
     ports: ["127.0.0.1:8190:8090"]
-    volumes: ["./deploy/runtime/pb_data:/pb/pb_data"]
+    volumes: ["./deploy/runtime/pb_data:/pb/pb_data", "factory_renders:/shared/renders:ro"]
     mem_limit: 640m
     memswap_limit: 1280m
     healthcheck:
