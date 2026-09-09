@@ -3670,6 +3670,34 @@ export function FactoryWorkspace({
     mode,
     targetDurationSeconds,
   ]);
+  // Older or partially saved drafts can restore the editorial pair without
+  // the analysis job snapshot. Start the missing job instead of showing an
+  // unavailable pair as "waiting" forever.
+  useEffect(() => {
+    if (
+      mode !== "external-hook" ||
+      preRollWorkflow ||
+      matchStrategy !== "story_to_hook" ||
+      !activeStorylineId ||
+      !hookSourceInput?.hookAssetId ||
+      matchJob ||
+      matchRequestToken !== 0
+    )
+      return;
+    const cached = storylineMatchCache[activeStorylineId];
+    if (cached?.hookAssetId === hookSourceInput.hookAssetId && cached.job) return;
+    setMatchRequestToken((current) => current + 1);
+  }, [
+    activeStorylineId,
+    hookSourceInput?.hookAssetId,
+    matchJob,
+    matchRequestToken,
+    matchStrategy,
+    mode,
+    preRollWorkflow,
+    storylineMatchCache,
+  ]);
+
   // Switching between storylines restores the saved job snapshot instead of
   // creating the same analysis again. A queued/running snapshot still needs a
   // live progress subscription, otherwise the restored card remains at 0%
